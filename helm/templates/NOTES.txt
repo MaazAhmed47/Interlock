@@ -1,0 +1,66 @@
+╔══════════════════════════════════════════════════════════════╗
+║          🛡️  LLM FIREWALL DEPLOYED SUCCESSFULLY  🛡️           ║
+╚══════════════════════════════════════════════════════════════╝
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+Chart Version: {{ .Chart.Version }}
+App Version: {{ .Chart.AppVersion }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🌐 ACCESS YOUR FIREWALL:
+
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  Public URL: https://{{ .host }}
+{{- end }}
+{{- else }}
+  Run this to port-forward:
+    kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "llm-firewall.fullname" . }} 8001:80
+  Then visit: http://localhost:8001/docs
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 QUICK TEST:
+
+  curl -X POST https://api.llmfirewall.example.com/v1/chat/completions \
+    -H "x-api-key: lf-dev-key-456" \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "gpt-4o",
+      "messages": [{"role": "user", "content": "Hello!"}]
+    }'
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 MONITORING:
+
+  View pods:        kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "llm-firewall.name" . }}
+  View logs:        kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "llm-firewall.name" . }} -f
+  View HPA:         kubectl get hpa -n {{ .Release.Namespace }}
+  Health check:     kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "llm-firewall.fullname" . }} -- curl localhost:8001/health
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔐 NEXT STEPS:
+
+  1. Configure upstream LLM API keys:
+     kubectl edit secret {{ include "llm-firewall.fullname" . }}-secrets -n {{ .Release.Namespace }}
+
+  2. Set up custom domain & TLS:
+     Update values.yaml -> ingress.hosts
+
+  3. Enable Prometheus monitoring:
+     Set values.yaml -> metrics.serviceMonitor.enabled=true
+
+  4. View dashboard:
+     Open https://api.llmfirewall.example.com/dashboard.html
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📚 DOCUMENTATION: https://docs.llmfirewall.dev
+💬 SUPPORT:       support@llmfirewall.dev
+🔒 SECURITY:      security@llmfirewall.dev
+
