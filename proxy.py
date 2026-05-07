@@ -164,11 +164,13 @@ def run_scan(prompt: str, api_key: str) -> ScanResult:
     result = check_learned_patterns(prompt)
     if result:
         result.scan_time_ms = round((time.time() - start) * 1000, 2)
+        result.risk_score = calculate_risk_score(result)
         return result
 
     result = policy_scan(prompt, api_key)
     if result:
         result.scan_time_ms = round((time.time() - start) * 1000, 2)
+        result.risk_score = calculate_risk_score(result)
         return result
 
     result = rule_based_scan(prompt)
@@ -176,6 +178,7 @@ def run_scan(prompt: str, api_key: str) -> ScanResult:
         result.layer_caught = "Layer 1 — Rule Engine"
         result.confidence = CONFIDENCE_MAP.get(result.threat_level.value, 0.8)
         result.scan_time_ms = round((time.time() - start) * 1000, 2)
+        result.risk_score = calculate_risk_score(result)
         return result
 
     result = pattern_match_scan(prompt)
@@ -183,6 +186,7 @@ def run_scan(prompt: str, api_key: str) -> ScanResult:
         result.layer_caught = "Layer 2 — Pattern Matcher"
         result.confidence = CONFIDENCE_MAP.get(result.threat_level.value, 0.8)
         result.scan_time_ms = round((time.time() - start) * 1000, 2)
+        result.risk_score = calculate_risk_score(result)
         return result
 
     # Layers 1 & 2 returned SAFE if we got here. Pass that context into the judge
@@ -195,6 +199,7 @@ def run_scan(prompt: str, api_key: str) -> ScanResult:
         result.confidence = CONFIDENCE_MAP.get(result.threat_level.value, 0.8)
     result.scan_time_ms = round((time.time() - start) * 1000, 2)
     learn_from_result(prompt, result)
+    result.risk_score = calculate_risk_score(result)
     return result
 
 def trigger_all_alerts(result, api_key, key_record=None):
