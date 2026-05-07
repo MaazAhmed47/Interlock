@@ -1,7 +1,8 @@
+import asyncio
 import httpx
 import time
 import os
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -12,7 +13,7 @@ from collections import defaultdict
 from core.siem import dispatch_to_siems, trigger_siem_dispatch
 from core.router import detect_provider, forward_to_provider, PROVIDERS
 from models.schemas import ScanResult, ThreatLevel
-from core.detector import rule_based_scan
+from core.detector import rule_based_scan, PII_PATTERNS
 from core.pattern_matcher import pattern_match_scan
 from core.llm_judge import llm_judge_scan
 from core.policy import policy_scan
@@ -306,6 +307,16 @@ async def scan(request: ScanRequest, x_api_key: Optional[str] = Header(None)):
     db.log_usage(key_info["id"], "/scan", threat_blocked=result.is_threat)
     if result.is_threat:
         trigger_all_alerts(result, raw_key, key_info)
+    asyncio.get_running_loop().create_task(_broadcast({
+        "type": "scan",
+        "is_threat": result.is_threat,
+        "threat_level": result.threat_level.value,
+        "threat_type": result.threat_type,
+        "prompt_preview": request.prompt[:60],
+        "scan_time_ms": result.scan_time_ms,
+        "layer_caught": result.layer_caught,
+        "confidence": result.confidence,
+    }))
     return result
 
 @app.post("/inspect/tool-call")
@@ -523,3 +534,90 @@ async def mcp_unregister(server_id: str, x_api_key: Optional[str] = Header(None)
         del TRUSTED_MCP_SERVERS[server_id]
         return {"ok": True, "removed": server_id}
     return {"ok": False, "error": "not_found"}
+
+
+# ── Output scanning ───────────────────────────────────────────────────────────
+
+import re as _re
+
+@app.post("/scan/output", response_model=ScanResult)
+async def scan_output(request: ScanRequest, x_api_key: Optional[str] = Header(None)):
+    """Scan an LLM response for PII / data-leak patterns."""
+    key_info, raw_key = verify_key(x_api_key)
+    check_rate(raw_key, key_info["rate_per_min"])
+
+    start = time.time()
+    for pattern in PII_PATTERNS:
+        if _re.search(pattern, request.prompt):
+            result = ScanResult(
+                is_threat=True,
+                threat_level=ThreatLevel.HIGH,
+                threat_type="OUTPUT_DATA_LEAK",
+                reason="LLM response contains sensitive data.",
+                original_prompt=request.prompt,
+                safe_to_proceed=False,
+                confidence=0.95,
+                layer_caught="Output Scanner",
+                scan_time_ms=round((time.time() - start) * 1000, 2),
+            )
+            db.log_usage(key_info["id"], "/scan/output", threat_blocked=True)
+            return result
+
+    result = ScanResult(
+        is_threat=False,
+        threat_level=ThreatLevel.SAFE,
+        threat_type=None,
+        reason="Output scan clean.",
+        original_prompt=request.prompt,
+        safe_to_proceed=True,
+        confidence=0.99,
+        layer_caught="Output Scanner",
+        scan_time_ms=round((time.time() - start) * 1000, 2),
+    )
+    db.log_usage(key_info["id"], "/scan/output", threat_blocked=False)
+    return result
+
+
+# ── Customer usage stats ──────────────────────────────────────────────────────
+
+@app.get("/usage")
+async def usage(x_api_key: Optional[str] = Header(None)):
+    """Return the calling key's own quota consumption for the current month."""
+    key_info, _ = verify_key(x_api_key)
+    used = db.usage_this_month(key_info["id"])
+    limit = key_info["monthly_limit"]
+    return {
+        "plan": key_info["plan"],
+        "used_this_month": used,
+        "monthly_limit": limit,
+        "remaining": None if limit == 0 else max(0, limit - used),
+    }
+
+
+# ── WebSocket live feed ───────────────────────────────────────────────────────
+
+_active_ws: list = []
+
+
+async def _broadcast(message: dict):
+    for conn in list(_active_ws):
+        try:
+            await conn.send_json(message)
+        except Exception:
+            pass
+
+
+@app.websocket("/ws")
+async def websocket_feed(websocket: WebSocket):
+    """Real-time scan-event feed consumed by dashboard.html."""
+    await websocket.accept()
+    _active_ws.append(websocket)
+    try:
+        while True:
+            await asyncio.sleep(30)
+            await websocket.send_json({"type": "ping"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if websocket in _active_ws:
+            _active_ws.remove(websocket)
