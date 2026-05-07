@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     rate_per_min    INTEGER NOT NULL DEFAULT 10,
     fail_mode       TEXT    NOT NULL DEFAULT 'fail_open_safe',
     webhook_url     TEXT,
-    custom_policy   TEXT,                        -- JSON {blocked_keywords, blocked_topics, max_prompt_length}
+    custom_policy   TEXT,                        -- JSON {blocked_keywords, max_prompt_length}
     siem_configs    TEXT,                        -- JSON list of SIEM provider configs
     upstream_key    TEXT,                        -- if customer wants us to forward their LLM key
     is_active       INTEGER NOT NULL DEFAULT 1,
