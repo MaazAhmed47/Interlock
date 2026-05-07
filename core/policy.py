@@ -3,10 +3,8 @@ from typing import Optional
 from core import db
 import re
 
-# ── Custom Policies per API key (static fallback for legacy/seeded keys) ──────
-# DB custom_policy column is checked first; this dict catches keys whose rows
-# were seeded without a custom_policy value (lf-dev-key-456, lf-startup-key-789).
-# Do NOT delete this dict.
+# Fallback only. New per-key policies should be set via /admin/keys with
+# custom_policy in the JSON body. This dict exists for legacy seeded keys.
 CUSTOM_POLICIES = {
     "lf-free-demo-key-123": {
         "blocked_keywords": [],
