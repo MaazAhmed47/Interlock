@@ -26,7 +26,6 @@ k_db = db.generate_key("free", label="db-policy-key")
 RAW_DB = k_db["raw_key"]
 db.update_key(k_db["key_prefix"], custom_policy={
     "blocked_keywords": ["db_forbidden"],
-    "blocked_topics": [],
     "max_prompt_length": 500,
 })
 
@@ -42,13 +41,11 @@ RAW_NONE = k_none["raw_key"]
 # Inject entries into the module-level CUSTOM_POLICIES for test isolation
 CUSTOM_POLICIES[RAW_DICT] = {
     "blocked_keywords": ["dict_forbidden"],
-    "blocked_topics": [],
     "max_prompt_length": 1000,
 }
 # Also add an entry for RAW_DB — DB policy must shadow this
 CUSTOM_POLICIES[RAW_DB] = {
     "blocked_keywords": ["dict_word_that_must_be_ignored"],
-    "blocked_topics": [],
     "max_prompt_length": 9999,
 }
 

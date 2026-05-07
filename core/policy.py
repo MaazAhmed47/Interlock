@@ -1,33 +1,22 @@
 from models.schemas import ScanResult, ThreatLevel
 from typing import Optional
 from core import db
-import re
 
 # Fallback only. New per-key policies should be set via /admin/keys with
 # custom_policy in the JSON body. This dict exists for legacy seeded keys.
 CUSTOM_POLICIES = {
     "lf-free-demo-key-123": {
         "blocked_keywords": [],
-        "blocked_topics": [],
         "max_prompt_length": 4000,
     },
     "lf-dev-key-456": {
         "blocked_keywords": ["competitor", "lawsuit", "confidential"],
-        "blocked_topics": ["politics", "religion"],
         "max_prompt_length": 2000,
     },
     "lf-startup-key-789": {
         "blocked_keywords": ["hack", "crack", "pirate", "warez"],
-        "blocked_topics": ["adult", "gambling"],
         "max_prompt_length": 3000,
     },
-}
-
-TOPIC_PATTERNS = {
-    "politics": [r"\b(election|democrat|republican|vote|politician|congress|senate)\b"],
-    "religion": [r"\b(god|allah|bible|quran|church|mosque|prayer|worship)\b"],
-    "adult":    [r"\b(porn|xxx|nude|naked|sex|erotic)\b"],
-    "gambling": [r"\b(casino|bet|wager|poker|slots|blackjack)\b"],
 }
 
 def policy_scan(prompt: str, api_key: str) -> Optional[ScanResult]:
@@ -50,21 +39,6 @@ def policy_scan(prompt: str, api_key: str) -> Optional[ScanResult]:
                 confidence=0.99,
                 layer_caught="Custom Policy Engine",
             )
-
-    for topic in policy.get("blocked_topics", []):
-        patterns = TOPIC_PATTERNS.get(topic, [])
-        for pattern in patterns:
-            if re.search(pattern, prompt_lower):
-                return ScanResult(
-                    is_threat=True,
-                    threat_level=ThreatLevel.MEDIUM,
-                    threat_type="CUSTOM_POLICY_VIOLATION",
-                    reason=f"Blocked topic detected: '{topic}' (custom policy)",
-                    original_prompt=prompt,
-                    safe_to_proceed=False,
-                    confidence=0.95,
-                    layer_caught="Custom Policy Engine",
-                )
 
     max_len = policy.get("max_prompt_length", 4000)
     if len(prompt) > max_len:
