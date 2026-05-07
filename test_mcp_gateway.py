@@ -4,8 +4,15 @@ Covers: trust registry, tool-name validation, description injection,
         dangerous schema fields, RBAC integration, response PII scanning.
 Run: python test_mcp_gateway.py
 """
-import sys, asyncio
+import sys, asyncio, os, tempfile
 sys.path.insert(0, ".")
+
+# Isolate to a temp DB so these tests don't touch the production firewall.db
+_tmp_db = tempfile.mktemp(suffix="_mcp_gw_test.db")
+import core.db as db
+db.DB_PATH = _tmp_db
+db.init_db()
+db.seed_mcp_servers()  # seeds trusted-filesystem and trusted-search
 
 from core.mcp_gateway import (
     validate_mcp_tool_definition,
@@ -181,21 +188,20 @@ assert out["error"] == "untrusted_mcp_server"
 print(f"  OK — {out['error']}")
 
 print("Test 16: unverified server is rejected ...")
-TRUSTED_MCP_SERVERS["_test_unverified"] = {
+db.register_mcp_server("_test_unverified", {
     "url": "http://localhost:9999/mcp",
     "description": "Test unverified server",
     "allowed_tools": ["search"],
     "blocked_tools": [],
     "rate_limit": 10,
-    "verified": False,
-}
+})  # newly registered servers are unverified by default
 try:
     out = asyncio.run(proxy_mcp_tool_call("_test_unverified", "search", {}))
     assert out["ok"] is False
     assert out["error"] == "unverified_mcp_server"
     print(f"  OK — {out['error']}")
 finally:
-    del TRUSTED_MCP_SERVERS["_test_unverified"]
+    db.unregister_mcp_server("_test_unverified")
 
 # ── proxy_mcp_tool_call — tool allowlist / blocklist ─────────────────────────
 
@@ -306,5 +312,11 @@ assert out["ok"] is True
 assert out["tool_name"] == "read_file"
 assert out["scanned"] is True
 print(f"  OK — clean response forwarded (scanned={out['scanned']})")
+
+for _p in (_tmp_db, _tmp_db + "-wal", _tmp_db + "-shm"):
+    try:
+        os.unlink(_p)
+    except OSError:
+        pass
 
 print("\nAll MCP gateway tests passed. (24/24)")

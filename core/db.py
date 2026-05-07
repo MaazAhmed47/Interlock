@@ -75,6 +75,17 @@ CREATE TABLE IF NOT EXISTS usage_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON usage_log(key_id, ts);
+
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    server_id       TEXT    PRIMARY KEY,
+    url             TEXT    NOT NULL,
+    description     TEXT    NOT NULL DEFAULT '',
+    allowed_tools   TEXT    NOT NULL DEFAULT '[]',  -- JSON list
+    blocked_tools   TEXT    NOT NULL DEFAULT '[]',  -- JSON list
+    rate_limit      INTEGER NOT NULL DEFAULT 60,
+    verified        INTEGER NOT NULL DEFAULT 0,
+    registered_at   TEXT    NOT NULL
+);
 """
 
 
@@ -280,3 +291,125 @@ def seed_legacy_keys() -> None:
                 ),
             )
         logger.info("Seeded legacy key: %s (%s)", raw[:12], plan)
+
+
+# ── MCP server registry ───────────────────────────────────────────────────────
+
+def _mcp_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+    d = dict(row)
+    for col in ("allowed_tools", "blocked_tools"):
+        raw = d.get(col)
+        try:
+            d[col] = json.loads(raw) if raw else []
+        except (json.JSONDecodeError, TypeError):
+            d[col] = []
+    d["verified"] = bool(d.get("verified", 0))
+    return d
+
+
+def register_mcp_server(server_id: str, config: dict) -> bool:
+    """Insert a new MCP server. Returns False if server_id already exists."""
+    try:
+        with _db_lock, get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO mcp_servers
+                  (server_id, url, description, allowed_tools, blocked_tools,
+                   rate_limit, verified, registered_at)
+                VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                """,
+                (
+                    server_id,
+                    config["url"],
+                    config.get("description", ""),
+                    json.dumps(config.get("allowed_tools", [])),
+                    json.dumps(config.get("blocked_tools", [])),
+                    config.get("rate_limit", 60),
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+        logger.info("Registered MCP server: %s", server_id)
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+def lookup_mcp_server(server_id: str) -> Optional[Dict[str, Any]]:
+    """Return a server record by server_id, or None if not found."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM mcp_servers WHERE server_id = ?",
+            (server_id,),
+        ).fetchone()
+    return _mcp_row_to_dict(row) if row else None
+
+
+def list_mcp_servers() -> List[Dict[str, Any]]:
+    """Return all registered MCP servers ordered by registration time."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM mcp_servers ORDER BY registered_at ASC"
+        ).fetchall()
+    return [_mcp_row_to_dict(r) for r in rows]
+
+
+def unregister_mcp_server(server_id: str) -> bool:
+    """Delete a server from the registry. Returns False if not found."""
+    with _db_lock, get_conn() as conn:
+        cursor = conn.execute(
+            "DELETE FROM mcp_servers WHERE server_id = ?",
+            (server_id,),
+        )
+    return cursor.rowcount > 0
+
+
+def verify_mcp_server(server_id: str) -> bool:
+    """Mark a server as verified. Returns False if server_id not found."""
+    with _db_lock, get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE mcp_servers SET verified = 1 WHERE server_id = ?",
+            (server_id,),
+        )
+    return cursor.rowcount > 0
+
+
+def seed_mcp_servers() -> None:
+    """Idempotent seed of the two pre-configured MCP servers. Safe to call on every startup."""
+    seeds = [
+        {
+            "server_id": "trusted-filesystem",
+            "url": "http://localhost:3000/mcp",
+            "description": "Sandboxed file system access",
+            "allowed_tools": ["read_file", "list_directory"],
+            "blocked_tools": ["write_file", "delete_file", "execute"],
+            "rate_limit": 60,
+            "verified": 1,
+        },
+        {
+            "server_id": "trusted-search",
+            "url": "http://localhost:3001/mcp",
+            "description": "Web search MCP",
+            "allowed_tools": ["search", "fetch"],
+            "blocked_tools": [],
+            "rate_limit": 30,
+            "verified": 1,
+        },
+    ]
+    for s in seeds:
+        with _db_lock, get_conn() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO mcp_servers
+                  (server_id, url, description, allowed_tools, blocked_tools,
+                   rate_limit, verified, registered_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    s["server_id"], s["url"], s["description"],
+                    json.dumps(s["allowed_tools"]),
+                    json.dumps(s["blocked_tools"]),
+                    s["rate_limit"], s["verified"],
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+        logger.info("Seeded MCP server: %s", s["server_id"])

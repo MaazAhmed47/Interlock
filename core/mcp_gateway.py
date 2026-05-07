@@ -5,9 +5,10 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from models.schemas import ScanResult, ThreatLevel
 from core.tool_inspector import inspect_tool_call
+from core import db
 
 # ── MCP Server Registry ───────────────────────────────────────────────────────
-# In production, these come from a database
+# Used only as seed data for db.seed_mcp_servers() — never read directly at runtime.
 TRUSTED_MCP_SERVERS = {
     "trusted-filesystem": {
         "url": "http://localhost:3000/mcp",
@@ -222,7 +223,7 @@ async def proxy_mcp_tool_call(
     Validates → inspects → routes to MCP server → scans response.
     """
     # 1. Verify server is trusted
-    server = TRUSTED_MCP_SERVERS.get(server_id)
+    server = db.lookup_mcp_server(server_id)
     if not server:
         return {
             "ok": False,
@@ -324,31 +325,12 @@ async def proxy_mcp_tool_call(
 
 # ── MCP Server Registration ───────────────────────────────────────────────────
 def register_mcp_server(server_id: str, config: dict) -> dict:
-    """Register a new MCP server in the trusted registry."""
-    if server_id in TRUSTED_MCP_SERVERS:
+    """Register a new MCP server in the persistent DB registry."""
+    ok = db.register_mcp_server(server_id, config)
+    if not ok:
         return {"ok": False, "error": "already_exists"}
-
-    TRUSTED_MCP_SERVERS[server_id] = {
-        "url": config["url"],
-        "description": config.get("description", ""),
-        "allowed_tools": config.get("allowed_tools", []),
-        "blocked_tools": config.get("blocked_tools", []),
-        "rate_limit": config.get("rate_limit", 60),
-        "verified": False,  # Must be manually verified
-        "registered_at": datetime.utcnow().isoformat(),
-    }
     return {"ok": True, "server_id": server_id, "verified": False}
 
 def list_mcp_servers() -> list:
-    """List all registered MCP servers."""
-    return [
-        {
-            "server_id": sid,
-            "url": cfg["url"],
-            "description": cfg.get("description", ""),
-            "verified": cfg.get("verified", False),
-            "allowed_tools": cfg.get("allowed_tools", []),
-            "blocked_tools": cfg.get("blocked_tools", []),
-        }
-        for sid, cfg in TRUSTED_MCP_SERVERS.items()
-    ]
+    """List all registered MCP servers from the DB."""
+    return db.list_mcp_servers()

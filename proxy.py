@@ -31,7 +31,6 @@ from core.mcp_gateway import (
     validate_mcp_tool_definition,
     register_mcp_server,
     list_mcp_servers,
-    TRUSTED_MCP_SERVERS,
 )
 from core import db
 from core.admin import router as admin_router
@@ -108,6 +107,7 @@ app.add_middleware(
 def _init_db():
     db.init_db()
     db.seed_legacy_keys()
+    db.seed_mcp_servers()
 
 # Mount admin endpoints
 app.include_router(admin_router)
@@ -530,8 +530,8 @@ async def mcp_call(
 async def mcp_unregister(server_id: str, x_api_key: Optional[str] = Header(None)):
     """Remove an MCP server from the registry."""
     verify_key(x_api_key)
-    if server_id in TRUSTED_MCP_SERVERS:
-        del TRUSTED_MCP_SERVERS[server_id]
+    removed = db.unregister_mcp_server(server_id)
+    if removed:
         return {"ok": True, "removed": server_id}
     return {"ok": False, "error": "not_found"}
 
