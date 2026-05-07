@@ -79,6 +79,7 @@ When working on agent security, edit those modules — not the prompt-scan layer
 - Don't use `asyncio.get_event_loop()`. Use `asyncio.get_running_loop()` inside async, `asyncio.run()` outside. The webhook bug from earlier was exactly this.
 - Don't add features without a test. Tests live at the project root: `test_*.py`.
 - Don't generate marketing copy that says "LLM firewall." See Positioning above.
+- Don't add `Co-Authored-By` trailers to commit messages.
 
 ---
 
@@ -139,3 +140,8 @@ python test_judge_failmodes.py
 - `request_counts = defaultdict(list)` is in-memory. Multiple uvicorn workers will not share state. Run with `--workers 1` until Redis is wired in.
 - Empty files in the rar archive (`detector.py`, `shadow_mode.py`, `webhook.py`, `llm_judge.py`) were a packaging artifact. The real implementations exist on the dev machine. Don't trust an empty file — verify with `wc -l`.
 - The `policy.py` topic blocklist contains `politics → "democrat|republican"` etc. Embarrassing in an enterprise demo. Make opt-in or remove before any pilot.
+
+
+## Git conventions
+- Do NOT add "Co-Authored-By: Claude" trailer to commit messages.
+- Commit messages should attribute work to the human only.
