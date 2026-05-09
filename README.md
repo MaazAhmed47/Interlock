@@ -1,6 +1,6 @@
-# LLM Firewall — Production Deployment Guide
+# Interlock — Production Deployment Guide
 
-Enterprise-grade Kubernetes deployment for LLM Firewall with full HA, auto-scaling, security hardening, and observability.
+Enterprise-grade Kubernetes deployment for Interlock with full HA, auto-scaling, security hardening, and observability.
 
 ---
 
