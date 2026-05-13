@@ -1,0 +1,111 @@
+/* Tailwind v4 — equivalent of @tailwind base/components/utilities */
+@import "tailwindcss";
+
+/* ─── Design tokens ──────────────────────────────────────────────────────── */
+
+:root {
+  /* Background — near black, cool undertone */
+  --bg:   #0a0b0f;
+  --s1:   #0f1014;
+  --s2:   #13141a;
+  --s3:   #18191f;
+  --bd:   #1e2028;
+  --bd2:  #262830;
+  --bd3:  #30323c;
+
+  /* Deep teal-green */
+  --ac:   #0B6E4F;
+  --acd:  #085C40;
+  --acb:  #0D8560;
+  --acs:  rgba(11,110,79,0.10);
+  --acb2: rgba(11,110,79,0.22);
+
+  /* Semantic */
+  --rd:   #EF4444;
+  --rds:  rgba(239,68,68,0.08);
+  --or:   #F59E0B;
+
+  /* Text */
+  --tx:   #F0F0F0;
+  --t2:   #9A9A9A;
+  --t3:   #525252;
+}
+
+/* ─── Tailwind v4 theme bridge ────────────────────────────────────────────── */
+
+@theme inline {
+  --color-bg:  var(--bg);
+  --color-s1:  var(--s1);
+  --color-s2:  var(--s2);
+  --color-s3:  var(--s3);
+  --color-bd:  var(--bd);
+  --color-bd2: var(--bd2);
+  --color-bd3: var(--bd3);
+  --color-ac:  var(--ac);
+  --color-acd: var(--acd);
+  --color-acb: var(--acb);
+  --color-rd:  var(--rd);
+  --color-or:  var(--or);
+  --color-tx:  var(--tx);
+  --color-t2:  var(--t2);
+  --color-t3:  var(--t3);
+
+  --font-family-sans: 'Inter', sans-serif;
+  --font-family-mono: 'JetBrains Mono', monospace;
+}
+
+/* ─── Reset ──────────────────────────────────────────────────────────────── */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 16px; scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--tx);
+  font-family: 'Inter', sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  line-height: 1.6;
+}
+
+/* ─── Font utilities ─────────────────────────────────────────────────────── */
+
+/* Display headlines — Bebas Neue */
+.display {
+  font-family: 'Bebas Neue', sans-serif;
+  letter-spacing: 0.02em;
+  line-height: 1.0;
+}
+
+/* Mono */
+.mono { font-family: 'JetBrains Mono', monospace; }
+
+/* ─── Animations ─────────────────────────────────────────────────────────── */
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.75); }
+}
+.pulse { animation: pulse-dot 2s ease-in-out infinite; }
+
+@keyframes flow {
+  0%   { stroke-dashoffset: 100; }
+  100% { stroke-dashoffset: 0; }
+}
+.flow-line {
+  stroke-dasharray: 8 4;
+  animation: flow 1.5s linear infinite;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--bd2); border-radius: 3px; }
+
+/* ─── Selection ──────────────────────────────────────────────────────────── */
+
+::selection { background: var(--acs); color: var(--tx); }
