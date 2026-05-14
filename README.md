@@ -102,7 +102,7 @@ Looking for teams building with AI agents or MCP who want runtime security visib
 
 **I ask for:**
 
-- 30-minute kickoff call
+- 15-minute kickoff call
 - Honest feedback
 - Short testimonial if it is genuinely useful
 
