@@ -23,7 +23,7 @@ from datetime import datetime
 from threading import Lock
 from typing import Optional, List, Dict, Any
 
-logger = logging.getLogger("llm_firewall.db")
+logger = logging.getLogger("interlock.db")
 
 DB_PATH = os.getenv("FIREWALL_DB_PATH", "data/firewall.db")
 _db_lock = Lock()  # SQLite is fine concurrent-read, one-writer; lock guards writes

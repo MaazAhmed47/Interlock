@@ -4,7 +4,7 @@ import logging
 from models.schemas import ScanResult
 from typing import Optional
 
-logger = logging.getLogger("llm_firewall.webhook")
+logger = logging.getLogger("interlock.webhook")
 
 # Only fire webhooks for these threat levels
 WEBHOOK_TRIGGER_LEVELS = {"HIGH", "CRITICAL"}
@@ -26,7 +26,7 @@ def _resolve_webhook_url(api_key: str) -> Optional[str]:
 def _build_payload(result: ScanResult) -> dict:
     """Slack-compatible payload (also works for generic webhooks)."""
     return {
-        "text": "🚨 *LLM Firewall Alert*",
+        "text": "🚨 *Interlock Alert*",
         "attachments": [{
             "color": "#ff4757",
             "fields": [

@@ -1,10 +1,10 @@
 # ============================================================================
-# LLM Firewall — Production Helm Values
+# Interlock — Production Helm Values
 # ============================================================================
 
 # ── Image Configuration ──────────────────────────────────────────────────────
 image:
-  repository: llmfirewall/firewall
+  repository: getinterlock/interlock
   tag: "1.0.0"
   pullPolicy: IfNotPresent
   pullSecrets: []
@@ -47,20 +47,20 @@ ingress:
     nginx.ingress.kubernetes.io/rate-limit-rps: "100"
     cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
-    - host: api.llmfirewall.example.com
+    - host: api.getinterlock.example.com
       paths:
         - path: /
           pathType: Prefix
   tls:
-    - secretName: llm-firewall-tls
+    - secretName: interlock-tls
       hosts:
-        - api.llmfirewall.example.com
+        - api.getinterlock.example.com
 
 # ── Secrets (for API keys & upstream LLM keys) ───────────────────────────────
 secrets:
   # If true, creates a Kubernetes Secret. If false, you must create it manually.
   create: true
-  name: llm-firewall-secrets
+  name: interlock-secrets
   data:
     GROQ_API_KEY: ""
     GEMINI_API_KEY: ""
@@ -156,7 +156,7 @@ affinity:
               - key: app.kubernetes.io/name
                 operator: In
                 values:
-                  - llm-firewall
+                  - interlock
           topologyKey: kubernetes.io/hostname
 
 # ── Pod Disruption Budget (zero downtime during updates) ─────────────────────

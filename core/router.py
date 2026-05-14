@@ -189,7 +189,7 @@ async def forward_to_provider(
             "choices": [{
                 "message": {
                     "role": "assistant",
-                    "content": f"[LLM Firewall] Prompt scanned ✓ safe. Add {config['key_env']} to .env to forward to {provider}."
+                    "content": f"[Interlock] Prompt scanned ✓ safe. Add {config['key_env']} to .env to forward to {provider}."
                 },
                 "finish_reason": "stop",
                 "index": 0,

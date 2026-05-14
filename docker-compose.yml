@@ -1,14 +1,14 @@
 # ============================================================================
-# LLM Firewall — Docker Compose for Local/Small Production
+# Interlock — Docker Compose for Local/Small Production
 # Use Helm for real production. This is for testing or small deployments.
 # ============================================================================
 version: '3.9'
 
 services:
   firewall:
-    image: llmfirewall/firewall:1.0.0
+    image: getinterlock/interlock:1.0.0
     build: .
-    container_name: llm-firewall
+    container_name: interlock
     restart: unless-stopped
     ports:
       - "8001:8001"

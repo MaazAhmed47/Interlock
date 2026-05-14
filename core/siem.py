@@ -78,13 +78,13 @@ SEVERITY_MAP = {
 }
 
 # ── Format Builders ───────────────────────────────────────────────────────────
-def build_datadog_event(result: ScanResult, api_key_prefix: str, source: str = "llm-firewall") -> dict:
+def build_datadog_event(result: ScanResult, api_key_prefix: str, source: str = "interlock") -> dict:
     sev = SEVERITY_MAP.get(result.threat_level.value, SEVERITY_MAP["MEDIUM"])
     return {
         "ddsource": source,
-        "ddtags": f"env:production,service:llm-firewall,threat:{result.threat_type or 'none'},level:{result.threat_level.value.lower()}",
-        "hostname": "llm-firewall",
-        "service": "llm-firewall",
+        "ddtags": f"env:production,service:interlock,threat:{result.threat_type or 'none'},level:{result.threat_level.value.lower()}",
+        "hostname": "interlock",
+        "service": "interlock",
         "status": sev["datadog"],
         "message": f"[{result.threat_level.value}] {result.threat_type or 'SCAN'}: {result.reason[:200]}",
         "timestamp": int(datetime.utcnow().timestamp() * 1000),
@@ -104,9 +104,9 @@ def build_datadog_event(result: ScanResult, api_key_prefix: str, source: str = "
 def build_splunk_event(result: ScanResult, api_key_prefix: str) -> dict:
     return {
         "time": int(datetime.utcnow().timestamp()),
-        "host": "llm-firewall",
-        "source": "llm-firewall",
-        "sourcetype": "llm_firewall:threat",
+        "host": "interlock",
+        "source": "interlock",
+        "sourcetype": "interlock:threat",
         "index": "main",
         "event": {
             "level": SEVERITY_MAP.get(result.threat_level.value, SEVERITY_MAP["MEDIUM"])["splunk"],
@@ -126,7 +126,7 @@ def build_splunk_event(result: ScanResult, api_key_prefix: str) -> dict:
 def build_elastic_event(result: ScanResult, api_key_prefix: str) -> dict:
     return {
         "@timestamp": datetime.utcnow().isoformat() + "Z",
-        "service": {"name": "llm-firewall", "version": "1.0.0"},
+        "service": {"name": "interlock", "version": "1.0.0"},
         "event": {
             "category": "intrusion_detection",
             "type": "denied" if result.is_threat else "allowed",
@@ -134,11 +134,11 @@ def build_elastic_event(result: ScanResult, api_key_prefix: str) -> dict:
             "outcome": "failure" if result.is_threat else "success",
         },
         "threat": {
-            "framework": "LLM Firewall",
+            "framework": "Interlock",
             "tactic": {"name": result.threat_type or "unknown"},
             "indicator": {"type": result.layer_caught or "unknown"},
         },
-        "llm_firewall": {
+        "interlock": {
             "is_threat": result.is_threat,
             "threat_level": result.threat_level.value,
             "threat_type": result.threat_type,
@@ -170,7 +170,7 @@ def build_slack_event(result: ScanResult, api_key_prefix: str) -> dict:
     }.get(result.threat_level.value, ":question:")
 
     return {
-        "text": f"{emoji} *LLM Firewall Alert — {result.threat_level.value}*",
+        "text": f"{emoji} *Interlock Alert — {result.threat_level.value}*",
         "attachments": [{
             "color": color,
             "fields": [
@@ -183,7 +183,7 @@ def build_slack_event(result: ScanResult, api_key_prefix: str) -> dict:
                 {"title": "API Key",      "value": api_key_prefix, "short": True},
                 {"title": "Time",         "value": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), "short": True},
             ],
-            "footer": "LLM Firewall",
+            "footer": "Interlock",
             "ts": int(datetime.utcnow().timestamp())
         }]
     }
@@ -203,7 +203,7 @@ def build_pagerduty_event(result: ScanResult, integration_key: str, api_key_pref
         "payload": {
             "summary": f"[{result.threat_level.value}] {result.threat_type}: {result.reason[:120]}",
             "severity": sev_map.get(result.threat_level.value, "warning"),
-            "source": "llm-firewall",
+            "source": "interlock",
             "component": "ai-security",
             "group": result.threat_type or "unknown",
             "class": "ai_threat",
@@ -234,7 +234,7 @@ async def send_to_siem(
         if provider == "datadog":
             region = config.get("region", "us")
             url = SIEM_PROVIDERS["datadog"]["url_template"].format(region=region)
-            event = build_datadog_event(result, api_key_prefix, config.get("source", "llm-firewall"))
+            event = build_datadog_event(result, api_key_prefix, config.get("source", "interlock"))
             headers = {
                 "DD-API-KEY": config["api_key"],
                 "Content-Type": "application/json"
@@ -255,7 +255,7 @@ async def send_to_siem(
                 return {"provider": "splunk", "status": resp.status_code, "ok": resp.status_code < 300}
 
         elif provider == "elastic":
-            index = config.get("index", "llm-firewall-logs")
+            index = config.get("index", "interlock-logs")
             url = f"{config['url'].rstrip('/')}/{index}/_doc"
             event = build_elastic_event(result, api_key_prefix)
             headers = {

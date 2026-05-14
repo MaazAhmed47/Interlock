@@ -89,7 +89,7 @@ class MCPToolValidateRequest(BaseModel):
     tool_definition: dict
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="LLM Firewall Proxy",
+    title="Interlock",
     description="OpenAI-compatible reverse proxy with AI security scanning",
     version="1.0.0"
 )
@@ -212,7 +212,7 @@ def trigger_all_alerts(result, api_key, key_record=None):
 @app.get("/")
 def root():
     return {
-        "status": "LLM Firewall Proxy running",
+        "status": "Interlock running",
         "version": "1.0.0",
         "endpoints": {
             "openai_proxy": "POST /v1/chat/completions",
@@ -255,7 +255,7 @@ async def chat_completions(
                 status_code=400,
                 detail={
                     "error": "policy_violation",
-                    "message": "Request blocked by LLM Firewall.",
+                    "message": "Request blocked by Interlock.",
                     "threat_level": result.threat_level.value,
                     "threat_type": result.threat_type,
                     "reason": result.reason,
@@ -438,7 +438,7 @@ async def test_siem(
         is_threat=True,
         threat_level=ThreatLevel.HIGH,
         threat_type="SIEM_TEST",
-        reason="This is a test alert from LLM Firewall to verify SIEM integration.",
+        reason="This is a test alert from Interlock to verify SIEM integration.",
         original_prompt="[TEST] Sample prompt for SIEM verification",
         safe_to_proceed=False,
         confidence=0.95,
@@ -461,7 +461,7 @@ async def list_siem_providers(x_api_key: Optional[str] = Header(None)):
         "config_examples": {
             "datadog": {"provider": "datadog", "api_key": "your-dd-key", "region": "us", "min_severity": "MEDIUM"},
             "splunk_hec": {"provider": "splunk_hec", "url": "https://splunk.company.com:8088", "token": "hec-token", "min_severity": "HIGH"},
-            "elastic": {"provider": "elastic", "url": "https://elastic.company.com:9200", "api_key": "elastic-key", "index": "llm-firewall", "min_severity": "MEDIUM"},
+            "elastic": {"provider": "elastic", "url": "https://elastic.company.com:9200", "api_key": "elastic-key", "index": "interlock", "min_severity": "MEDIUM"},
             "slack": {"provider": "slack", "webhook_url": "https://hooks.slack.com/services/xxx", "min_severity": "HIGH"},
             "pagerduty": {"provider": "pagerduty", "integration_key": "pd-integration-key", "min_severity": "CRITICAL"},
             "webhook": {"provider": "webhook", "url": "https://your-endpoint.com/alerts", "headers": {}, "min_severity": "LOW"},

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from core import db
 
-logger = logging.getLogger("llm_firewall.admin")
+logger = logging.getLogger("interlock.admin")
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")

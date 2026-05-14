@@ -1,16 +1,17 @@
-# LLM Firewall
+# Interlock
 
-MCP-aware AI security gateway. A FastAPI reverse proxy that scans prompts and
-tool calls before they reach LLMs and MCP servers. Differentiator vs.
-Lakera/Protect AI/HiddenLayer: native **MCP gateway** with tool-definition
+Runtime security gateway for AI agents. A FastAPI reverse proxy that scans
+prompts and tool calls before they reach LLMs and MCP servers. Differentiator
+vs. Lakera/Protect AI/HiddenLayer: native **MCP gateway** with tool-definition
 validation, RBAC for agents, and per-key fail-mode policies.
 
 ## Positioning (read before naming things)
 
-Public-facing copy says **"AI Agent Security Gateway with native MCP support"** —
-not "LLM firewall." The firewall layer is commodity (LLM Guard, NeMo). The MCP
-gateway and agent RBAC are the moat. Do not generate landing-page copy or marketing
-material that calls this an "LLM firewall."
+The product is called **Interlock**. Public-facing copy uses the tagline
+**"Runtime security gateway for AI agents."** Do not call it an "LLM firewall."
+The firewall layer is commodity (LLM Guard, NeMo). The MCP gateway and agent
+RBAC are the moat. Do not generate landing-page copy or marketing material that
+calls this an "LLM firewall."
 
 ---
 
@@ -78,7 +79,7 @@ When working on agent security, edit those modules — not the prompt-scan layer
 - Don't store raw API keys. Only sha256 hashes go in the DB. `core/db.py::_hash_key` is the only allowed path.
 - Don't use `asyncio.get_event_loop()`. Use `asyncio.get_running_loop()` inside async, `asyncio.run()` outside. The webhook bug from earlier was exactly this.
 - Don't add features without a test. Tests live at the project root: `test_*.py`.
-- Don't generate marketing copy that says "LLM firewall." See Positioning above.
+- Don't generate marketing copy that says "LLM firewall." The product is Interlock. See Positioning above.
 - Don't add `Co-Authored-By` trailers to commit messages.
 
 ---
@@ -127,7 +128,7 @@ python test_judge_failmodes.py
 
 ## Current priorities (week of 2026-05-07)
 
-1. **Repositioning** — `index.html` rewrite around "MCP Security Gateway." Drop "LLM firewall" framing.
+1. **Repositioning** — `index.html` rewrite complete. Product is now Interlock with tagline "Runtime security gateway for AI agents."
 2. **Cold outreach** — 50-target design-partner list. Companies publishing MCP servers on GitHub, dev-tool startups, agent platforms.
 3. **MCP gateway tests** — `core/mcp_gateway.py` is the differentiator and has zero tests. Add `test_mcp_gateway.py` covering: trust registry, tool-name validation, description injection detection, dangerous schema fields, RBAC integration, response PII scanning.
 4. **Risk score on `/scan` path** — currently only set on `/inspect/tool-call` and `/scan/shadow`. Add `result.risk_score = calculate_risk_score(result)` inside `run_scan` before each return.

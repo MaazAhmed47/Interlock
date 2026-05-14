@@ -21,7 +21,7 @@ from groq import Groq
 from models.schemas import ScanResult, ThreatLevel
 from config import GROQ_API_KEY, GROQ_MODEL
 
-logger = logging.getLogger("llm_firewall.llm_judge")
+logger = logging.getLogger("interlock.llm_judge")
 
 client = Groq(api_key=GROQ_API_KEY)
 

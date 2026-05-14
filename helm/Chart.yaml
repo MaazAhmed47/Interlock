@@ -1,6 +1,6 @@
 apiVersion: v2
-name: llm-firewall
-description: Real-time AI Security Firewall - Stop prompt injections, jailbreaks, PII leaks, and tool-call abuse before they reach your LLM
+name: interlock
+description: Runtime security gateway for AI agents — stop prompt injections, jailbreaks, PII leaks, and tool-call abuse before they reach your LLM
 type: application
 version: 1.0.0
 appVersion: "1.0.0"
@@ -12,9 +12,9 @@ keywords:
   - prompt-injection
   - rbac
   - compliance
-home: https://llmfirewall.dev
+home: https://getinterlock.dev
 sources:
-  - https://github.com/llmfirewall/llm-firewall
+  - https://github.com/getinterlock/interlock
 maintainers:
-  - name: LLM Firewall Team
-    email: hello@llmfirewall.dev
+  - name: Interlock Team
+    email: hello@getinterlock.dev

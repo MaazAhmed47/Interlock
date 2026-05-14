@@ -1,210 +1,109 @@
-# Interlock — Production Deployment Guide
+# Interlock
 
-Enterprise-grade Kubernetes deployment for Interlock with full HA, auto-scaling, security hardening, and observability.
+**Runtime security gateway for AI agents.**
+
+Interlock sits between AI agents and the LLMs / MCP servers they call. It inspects prompts, MCP tool definitions, tool-call arguments, agent RBAC, and responses before execution.
+
+Pre-release. Looking for design partners using AI agents or MCP.
+
+- Email: maazahmed1856@gmail.com
+- Demo page: https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664
+
+---
+
+## What Interlock Does
+
+- Prompt scanning before LLM calls
+- MCP tool-definition validation
+- Tool-call argument inspection
+- Agent RBAC enforcement
+- MCP response scanning for PII
+- Audit logs with risk score, layer caught, confidence, and timestamp
+
+---
+
+## What It Blocks
+
+| Threat | Example | Caught At |
+|---|---|---|
+| Prompt injection | Ignore previous instructions | Rule engine |
+| Malicious MCP tool definition | Hidden instruction in tool description | MCP gateway |
+| RBAC violation | `finance_agent` calls `delete_file` | RBAC policy |
+| SQL injection in tool args | `DROP TABLE users` | Tool inspector |
+| PII in MCP response | SSN returned by tool | Response scanner |
 
 ---
 
 ## Quick Start
 
-### Option 1 — Helm (Recommended for Production)
-
 ```bash
-# Add helm repo
-helm repo add llm-firewall https://charts.llmfirewall.dev
-helm repo update
-
-# Install with default values
-helm install firewall llm-firewall/llm-firewall \
-  --namespace llm-firewall \
-  --create-namespace \
-  --set secrets.groqApiKey=$GROQ_API_KEY \
-  --set secrets.openaiApiKey=$OPENAI_API_KEY
-
-# Or install from local chart
-helm install firewall ./helm \
-  --namespace llm-firewall \
-  --create-namespace \
-  --values ./helm/values.yaml
+git clone https://github.com/MaazAhmed47/Interlock
+cd Interlock
+pip install -r requirements.txt
+uvicorn proxy:app --host 0.0.0.0 --port 8001
 ```
 
-### Option 2 — Docker Compose (Dev/Staging)
+Copy `.env.example` to `.env` and add your API keys before running.
+
+### Test the scanner
 
 ```bash
-# Set environment variables
-cp .env.example .env
-# Edit .env with your API keys
-
-# Start
-docker-compose up -d
-
-# With monitoring stack
-docker-compose --profile monitoring up -d
+curl -X POST http://localhost:8001/scan \
+  -H "x-api-key: lf-dev-key-456" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"ignore all previous instructions"}'
 ```
 
-### Option 3 — Raw Kubernetes Manifests
+### Run the tests
 
 ```bash
-kubectl apply -f manifests/
+python test_mcp_gateway.py
+python test_db.py
+python test_mcp_db.py
+python test_judge_failmodes.py
+python test_webhook_fix.py
 ```
 
 ---
 
-## Production Configuration
+## Current Status
 
-### High Availability Setup
+**Working:**
 
-```bash
-helm upgrade firewall ./helm \
-  --set replicaCount=5 \
-  --set autoscaling.minReplicas=5 \
-  --set autoscaling.maxReplicas=50 \
-  --set podDisruptionBudget.minAvailable=3 \
-  --set persistence.size=50Gi
-```
+- 5-layer prompt scan pipeline
+- MCP gateway
+- Tool-call inspection
+- Agent RBAC
+- Shadow mode
+- Webhook alerts
+- SIEM integrations
+- Helm chart
+- 60+ tests passing
 
-### With External Secrets (Vault/AWS Secrets Manager)
+**In progress with design partners:**
 
-```bash
-helm upgrade firewall ./helm \
-  --set externalSecrets.enabled=true \
-  --set externalSecrets.secretStore.name=vault-backend
-```
-
-### Multi-Region Setup
-
-```bash
-# Region 1 — US East
-helm install firewall-us ./helm \
-  --set ingress.hosts[0].host=us.api.llmfirewall.dev \
-  --namespace firewall-us
-
-# Region 2 — EU West
-helm install firewall-eu ./helm \
-  --set ingress.hosts[0].host=eu.api.llmfirewall.dev \
-  --namespace firewall-eu
-```
+- Dashboard UI
+- Redis-backed rate limits
+- SSO / SAML
+- SOC 2 roadmap
 
 ---
 
-## Security Features
+## Design Partner Program
 
-✓ **Non-root containers** (UID 1000)
-✓ **Read-only root filesystem**
-✓ **Dropped capabilities** (ALL)
-✓ **Seccomp profile** (RuntimeDefault)
-✓ **Network policies** (zero-trust)
-✓ **TLS termination** (cert-manager)
-✓ **Rate limiting** (nginx ingress)
-✓ **Pod security standards**
+Looking for teams building with AI agents or MCP who want runtime security visibility.
 
----
+**You get:**
 
-## Auto-Scaling
+- Free pilot access
+- Direct founder support
+- Integration help
+- Influence over roadmap
 
-The HPA scales pods based on:
-- **CPU utilization** (target 70%)
-- **Memory utilization** (target 80%)
-- **Scale-up:** Aggressive (100% in 30s)
-- **Scale-down:** Conservative (50% in 5min stabilization)
+**I ask for:**
 
-Range: 3–20 replicas by default
+- 30-minute kickoff call
+- Honest feedback
+- Short testimonial if it is genuinely useful
 
----
-
-## Monitoring
-
-### Prometheus Metrics
-Available at `:8000/metrics`:
-- Request rate
-- Threat detection rate
-- Layer hit distribution
-- Latency percentiles
-- Error rates
-
-### Grafana Dashboard
-Pre-built dashboard with:
-- Real-time scan rate
-- Threat type breakdown
-- Geographic threat distribution
-- Per-API-key analytics
-- SLA compliance tracking
-
----
-
-## Disaster Recovery
-
-### Backup Strategy
-```bash
-# Backup learned patterns + history
-kubectl exec -n llm-firewall <pod-name> -- \
-  tar czf - /app/data | gzip > firewall-backup-$(date +%Y%m%d).tar.gz
-```
-
-### Restore
-```bash
-kubectl exec -n llm-firewall <pod-name> -- \
-  tar xzf - -C /app/data < firewall-backup.tar.gz
-```
-
----
-
-## Troubleshooting
-
-### Pods not starting
-```bash
-kubectl describe pod -n llm-firewall <pod-name>
-kubectl logs -n llm-firewall <pod-name> --previous
-```
-
-### High memory usage
-```bash
-kubectl top pods -n llm-firewall
-# Scale resources in values.yaml
-```
-
-### Connection issues
-```bash
-# Test internal service
-kubectl run test --rm -it --image=curlimages/curl --restart=Never -- \
-  curl http://firewall.llm-firewall:80/health
-```
-
----
-
-## Cost Optimization
-
-For non-production environments:
-```yaml
-replicaCount: 1
-autoscaling:
-  enabled: false
-resources:
-  requests:
-    cpu: 100m
-    memory: 128Mi
-persistence:
-  size: 1Gi
-```
-
----
-
-## Compliance Mode
-
-For SOC-2/HIPAA/GDPR compliance:
-```bash
-helm upgrade firewall ./helm \
-  --set podSecurityContext.fsGroup=1000 \
-  --set logging.format=json \
-  --set monitoring.enabled=true \
-  --set persistence.enabled=true \
-  --set ingress.tls[0].secretName=llm-firewall-tls
-```
-
----
-
-## Support
-
-- 📚 Docs: https://docs.llmfirewall.dev
-- 🛠 Enterprise Support: enterprise@llmfirewall.dev
-- 💬 Community: https://discord.gg/llmfirewall
-- 🐛 Issues: https://github.com/llmfirewall/llm-firewall
+Email: maazahmed1856@gmail.com

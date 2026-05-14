@@ -1,4 +1,4 @@
-# 🛡️ LLM Firewall — Production Kubernetes Deployment
+# 🛡️ Interlock — Production Kubernetes Deployment
 
 ## What's Included
 
@@ -26,19 +26,19 @@ This deployment is **enterprise-grade** and covers every production scenario:
 
 ```bash
 # 1. Add the Helm repo (or install from local chart)
-helm install llm-firewall ./helm \
-  --namespace llm-firewall \
+helm install interlock ./helm \
+  --namespace interlock \
   --create-namespace \
   --set secrets.data.GROQ_API_KEY="your-key" \
   --set ingress.hosts[0].host="api.yourdomain.com"
 
 # 2. Wait for pods to be ready
 kubectl wait --for=condition=ready pod \
-  -l app.kubernetes.io/name=llm-firewall \
-  -n llm-firewall --timeout=300s
+  -l app.kubernetes.io/name=interlock \
+  -n interlock --timeout=300s
 
 # 3. Verify
-kubectl port-forward -n llm-firewall svc/llm-firewall 8001:80
+kubectl port-forward -n interlock svc/interlock 8001:80
 curl http://localhost:8001/health
 ```
 
@@ -58,7 +58,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 Pass it via Helm:
 
 ```bash
-helm upgrade llm-firewall ./helm \
+helm upgrade interlock ./helm \
   --set secrets.data.ADMIN_TOKEN="<token>"
 ```
 
@@ -109,10 +109,10 @@ The database lives at `data/firewall.db` inside the pod (override with `FIREWALL
 **Backup** — SQLite's online backup is safe to run against the live file:
 
 ```bash
-kubectl exec -n llm-firewall deploy/llm-firewall -- \
+kubectl exec -n interlock deploy/interlock -- \
   sqlite3 data/firewall.db ".backup /tmp/firewall-$(date +%F).db"
 
-kubectl cp llm-firewall/<pod-name>:/tmp/firewall-$(date +%F).db ./firewall-backup.db
+kubectl cp interlock/<pod-name>:/tmp/firewall-$(date +%F).db ./firewall-backup.db
 ```
 
 Schedule this as a CronJob before you have paying customers on it.
@@ -170,7 +170,7 @@ podDisruptionBudget:
 
 ### AWS EKS
 ```bash
-helm install llm-firewall ./helm \
+helm install interlock ./helm \
   --set ingress.className=alb \
   --set ingress.annotations."alb\.ingress\.kubernetes\.io/scheme"=internet-facing \
   --set persistence.storageClass=gp3
@@ -178,14 +178,14 @@ helm install llm-firewall ./helm \
 
 ### Google GKE
 ```bash
-helm install llm-firewall ./helm \
+helm install interlock ./helm \
   --set ingress.className=gce \
   --set persistence.storageClass=standard-rwo
 ```
 
 ### Azure AKS
 ```bash
-helm install llm-firewall ./helm \
+helm install interlock ./helm \
   --set ingress.className=azure-application-gateway \
   --set persistence.storageClass=managed-premium
 ```
@@ -232,22 +232,22 @@ This deployment meets requirements for:
 
 ```bash
 # View pod logs
-kubectl logs -n llm-firewall -l app.kubernetes.io/name=llm-firewall -f
+kubectl logs -n interlock -l app.kubernetes.io/name=interlock -f
 
 # Check pod status
-kubectl describe pod -n llm-firewall -l app.kubernetes.io/name=llm-firewall
+kubectl describe pod -n interlock -l app.kubernetes.io/name=interlock
 
 # Test connectivity
-kubectl exec -n llm-firewall deploy/llm-firewall -- curl localhost:8001/health
+kubectl exec -n interlock deploy/interlock -- curl localhost:8001/health
 
 # View HPA status
-kubectl get hpa -n llm-firewall
+kubectl get hpa -n interlock
 
 # Check secret values
-kubectl get secret -n llm-firewall llm-firewall-secrets -o yaml
+kubectl get secret -n interlock interlock-secrets -o yaml
 
 # Restart deployment
-kubectl rollout restart deployment/llm-firewall -n llm-firewall
+kubectl rollout restart deployment/interlock -n interlock
 ```
 
 ---
@@ -255,6 +255,6 @@ kubectl rollout restart deployment/llm-firewall -n llm-firewall
 ## Uninstall
 
 ```bash
-helm uninstall llm-firewall -n llm-firewall
-kubectl delete namespace llm-firewall
+helm uninstall interlock -n interlock
+kubectl delete namespace interlock
 ```
