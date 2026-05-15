@@ -25,18 +25,53 @@ from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger("interlock.db")
 
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+USE_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
 DB_PATH = os.getenv("FIREWALL_DB_PATH", "data/firewall.db")
 _db_lock = Lock()  # SQLite is fine concurrent-read, one-writer; lock guards writes
 
 
 # ── Connection helper ────────────────────────────────────────────────────────
+class _PostgresConn:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql: str, params=()):
+        return self._conn.execute(_pg_sql(sql), params)
+
+    def executescript(self, script: str) -> None:
+        for statement in script.split(";"):
+            statement = statement.strip()
+            if statement:
+                self.execute(statement)
+
+    def close(self) -> None:
+        self._conn.close()
+
+
+def _pg_sql(sql: str) -> str:
+    converted = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+    insert_ignore = "INSERT OR IGNORE INTO" in converted
+    converted = converted.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+    converted = converted.replace("?", "%s")
+    if insert_ignore:
+        converted = converted.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
+    return converted
+
+
 @contextmanager
 def get_conn():
-    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10, isolation_level=None)  # autocommit
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")     # better concurrency
-    conn.execute("PRAGMA foreign_keys=ON")
+    if USE_POSTGRES:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        conn = _PostgresConn(psycopg.connect(DATABASE_URL, autocommit=True, row_factory=dict_row))
+    else:
+        os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
+        conn = sqlite3.connect(DB_PATH, timeout=10, isolation_level=None)  # autocommit
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")     # better concurrency
+        conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield conn
     finally:
@@ -92,7 +127,7 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
 def init_db() -> None:
     with _db_lock, get_conn() as conn:
         conn.executescript(SCHEMA)
-    logger.info("DB initialized at %s", DB_PATH)
+    logger.info("DB initialized using %s", "Postgres" if USE_POSTGRES else DB_PATH)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -111,6 +146,13 @@ def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
             except (json.JSONDecodeError, TypeError):
                 d[col] = None
     return d
+
+
+def _is_integrity_error(exc: Exception) -> bool:
+    return isinstance(exc, sqlite3.IntegrityError) or exc.__class__.__name__ in {
+        "IntegrityError",
+        "UniqueViolation",
+    }
 
 
 # ── Plan defaults ────────────────────────────────────────────────────────────
@@ -330,8 +372,10 @@ def register_mcp_server(server_id: str, config: dict) -> bool:
             )
         logger.info("Registered MCP server: %s", server_id)
         return True
-    except sqlite3.IntegrityError:
-        return False
+    except Exception as e:
+        if _is_integrity_error(e):
+            return False
+        raise
 
 
 def lookup_mcp_server(server_id: str) -> Optional[Dict[str, Any]]:
