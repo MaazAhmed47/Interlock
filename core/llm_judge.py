@@ -248,5 +248,5 @@ def llm_judge_scan(
 
     except Exception as e:
         _breaker.record_failure()
-        logger.warning("LLM judge call failed: %s", e)
+        logger.warning("LLM judge call failed: %s | cause=%r", e, getattr(e, "__cause__", None))
         return _build_failure_result(prompt, str(e)[:120], fail_mode, prior_layers_safe)

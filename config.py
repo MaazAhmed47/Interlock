@@ -3,11 +3,11 @@ import os
 
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = (os.getenv("GROQ_API_KEY") or "").strip() or None
+GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY") or "").strip() or None
 
 # Groq model to use (fast + free)
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 # Threat levels
 THREAT_LEVELS = {
@@ -19,3 +19,5 @@ THREAT_LEVELS = {
 }
 
 print(f"GROQ key loaded: {bool(GROQ_API_KEY)}")
+print(f"GROQ key format valid: {bool(GROQ_API_KEY and GROQ_API_KEY.startswith('gsk_'))}")
+print(f"GROQ model: {GROQ_MODEL}")
