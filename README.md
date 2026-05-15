@@ -42,6 +42,7 @@ cd Interlock
 pip install -r requirements.txt
 uvicorn proxy:app --host 0.0.0.0 --port 8001
 ```
+Live endpoint: https://interlock.onrender.com
 
 Copy `.env.example` to `.env` and add your API keys before running.
 
