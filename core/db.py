@@ -437,7 +437,7 @@ def seed_mcp_servers() -> None:
             "allowed_tools": ["read_file", "list_directory"],
             "blocked_tools": ["write_file", "delete_file", "execute"],
             "rate_limit": 60,
-            "verified": 1,
+            "verified": True,
         },
         {
             "server_id": "trusted-search",
@@ -446,7 +446,7 @@ def seed_mcp_servers() -> None:
             "allowed_tools": ["search", "fetch"],
             "blocked_tools": [],
             "rate_limit": 30,
-            "verified": 1,
+            "verified": True,
         },
     ]
     for s in seeds:
