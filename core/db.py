@@ -25,8 +25,8 @@ from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger("interlock.db")
 
-DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
-USE_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+DATABASE_URL = os.getenv("DATABASE_URL")
+USE_POSTGRES = DATABASE_URL is not None and DATABASE_URL.startswith("postgresql")
 DB_PATH = os.getenv("FIREWALL_DB_PATH", "data/firewall.db")
 _db_lock = Lock()  # SQLite is fine concurrent-read, one-writer; lock guards writes
 
@@ -37,7 +37,9 @@ class _PostgresConn:
         self._conn = conn
 
     def execute(self, sql: str, params=()):
-        return self._conn.execute(_pg_sql(sql), params)
+        cur = self._conn.cursor()
+        cur.execute(_pg_sql(sql), params)
+        return cur
 
     def executescript(self, script: str) -> None:
         for statement in script.split(";"):
@@ -51,6 +53,7 @@ class _PostgresConn:
 
 def _pg_sql(sql: str) -> str:
     converted = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+    converted = converted.replace("is_active       INTEGER NOT NULL DEFAULT 1", "is_active       BOOLEAN NOT NULL DEFAULT TRUE")
     insert_ignore = "INSERT OR IGNORE INTO" in converted
     converted = converted.replace("INSERT OR IGNORE INTO", "INSERT INTO")
     converted = converted.replace("?", "%s")
@@ -62,10 +65,12 @@ def _pg_sql(sql: str) -> str:
 @contextmanager
 def get_conn():
     if USE_POSTGRES:
-        import psycopg
-        from psycopg.rows import dict_row
-
-        conn = _PostgresConn(psycopg.connect(DATABASE_URL, autocommit=True, row_factory=dict_row))
+        import psycopg2
+        import psycopg2.extras
+        raw = psycopg2.connect(DATABASE_URL)
+        raw.autocommit = True
+        raw.cursor_factory = psycopg2.extras.RealDictCursor
+        conn = _PostgresConn(raw)
     else:
         os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
         conn = sqlite3.connect(DB_PATH, timeout=10, isolation_level=None)  # autocommit
@@ -125,9 +130,12 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
 
 
 def init_db() -> None:
+    if USE_POSTGRES:
+        logger.info("Using Postgres - skipping schema creation (tables already exist in Supabase)")
+        return
     with _db_lock, get_conn() as conn:
         conn.executescript(SCHEMA)
-    logger.info("DB initialized using %s", "Postgres" if USE_POSTGRES else DB_PATH)
+    logger.info("SQLite DB initialized at %s", DB_PATH)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -136,7 +144,7 @@ def _hash_key(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+def _row_to_dict(row) -> Dict[str, Any]:
     d = dict(row)
     # Decode JSON columns
     for col in ("custom_policy", "siem_configs"):
@@ -193,7 +201,7 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
               (key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
                fail_mode, webhook_url, custom_policy, siem_configs, upstream_key,
                is_active, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
@@ -201,6 +209,7 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
                 json.dumps(custom_policy) if custom_policy else None,
                 json.dumps(siem_configs)  if siem_configs  else None,
                 upstream_key,
+                True,
                 datetime.utcnow().isoformat(),
             ),
         )
@@ -226,7 +235,7 @@ def lookup_key(raw_key: str) -> Optional[Dict[str, Any]]:
     key_hash = _hash_key(raw_key.strip())
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM api_keys WHERE key_hash = ? AND is_active = 1",
+            "SELECT * FROM api_keys WHERE key_hash = ? AND is_active = TRUE",
             (key_hash,),
         ).fetchone()
     return _row_to_dict(row) if row else None
@@ -236,7 +245,7 @@ def revoke_key(key_prefix: str) -> bool:
     """Mark a key inactive. Lookup by prefix (admin doesn't have the raw key)."""
     with _db_lock, get_conn() as conn:
         cursor = conn.execute(
-            "UPDATE api_keys SET is_active = 0, revoked_at = ? WHERE key_prefix = ? AND is_active = 1",
+            "UPDATE api_keys SET is_active = FALSE, revoked_at = ? WHERE key_prefix = ? AND is_active = TRUE",
             (datetime.utcnow().isoformat(), key_prefix),
         )
         revoked = cursor.rowcount > 0
@@ -246,7 +255,7 @@ def revoke_key(key_prefix: str) -> bool:
 
 
 def list_keys(include_inactive: bool = False) -> List[Dict[str, Any]]:
-    q = "SELECT * FROM api_keys" if include_inactive else "SELECT * FROM api_keys WHERE is_active = 1"
+    q = "SELECT * FROM api_keys" if include_inactive else "SELECT * FROM api_keys WHERE is_active = TRUE"
     with get_conn() as conn:
         rows = conn.execute(q + " ORDER BY created_at DESC").fetchall()
     out = []
@@ -323,12 +332,13 @@ def seed_legacy_keys() -> None:
                 INSERT OR IGNORE INTO api_keys
                   (key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
                    fail_mode, is_active, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     _hash_key(raw), raw[:12], label, plan,
                     defaults["monthly_limit"], defaults["rate_per_min"],
                     defaults["fail_mode"],
+                    True,
                     datetime.utcnow().isoformat(),
                 ),
             )
@@ -337,7 +347,7 @@ def seed_legacy_keys() -> None:
 
 # ── MCP server registry ───────────────────────────────────────────────────────
 
-def _mcp_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+def _mcp_row_to_dict(row) -> Dict[str, Any]:
     d = dict(row)
     for col in ("allowed_tools", "blocked_tools"):
         raw = d.get(col)

@@ -21,7 +21,7 @@ annotated-types==0.7.0
 groq==1.2.0
 
 # Production database (Supabase/Postgres)
-psycopg[binary]>=3.2,<4
+psycopg2-binary
 
 # Environment / config
 python-dotenv==1.2.2
