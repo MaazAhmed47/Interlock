@@ -175,7 +175,7 @@ def run_scan(prompt: str, api_key: str) -> ScanResult:
 
     result = rule_based_scan(prompt)
     if result.is_threat:
-        result.layer_caught = "Layer 1 — Rule Engine"
+        result.layer_caught = "Layer 1 - Rule Engine"
         result.confidence = CONFIDENCE_MAP.get(result.threat_level.value, 0.8)
         result.scan_time_ms = round((time.time() - start) * 1000, 2)
         result.risk_score = calculate_risk_score(result)
@@ -183,7 +183,7 @@ def run_scan(prompt: str, api_key: str) -> ScanResult:
 
     result = pattern_match_scan(prompt)
     if result.is_threat:
-        result.layer_caught = "Layer 2 — Pattern Matcher"
+        result.layer_caught = "Layer 2 - Pattern Matcher"
         result.confidence = CONFIDENCE_MAP.get(result.threat_level.value, 0.8)
         result.scan_time_ms = round((time.time() - start) * 1000, 2)
         result.risk_score = calculate_risk_score(result)
@@ -194,7 +194,7 @@ def run_scan(prompt: str, api_key: str) -> ScanResult:
     result = llm_judge_scan(prompt, api_key=api_key, prior_layers_safe=True)
     # Preserve layer_caught if the judge already set one (e.g. fail-mode label)
     if not result.layer_caught:
-        result.layer_caught = "Layer 3 — LLM Judge"
+        result.layer_caught = "Layer 3 - LLM Judge"
     if result.confidence is None:
         result.confidence = CONFIDENCE_MAP.get(result.threat_level.value, 0.8)
     result.scan_time_ms = round((time.time() - start) * 1000, 2)
@@ -212,8 +212,8 @@ def trigger_all_alerts(result, api_key, key_record=None):
 @app.get("/")
 def root():
     return {
-        "status": "Interlock running",
-        "version": "1.0.0",
+        "status": "Interlock gateway running",
+        "version": "0.1.0-beta",
         "endpoints": {
             "openai_proxy": "POST /v1/chat/completions",
             "direct_scan":  "POST /scan",
@@ -223,7 +223,7 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "version": "1.0.0"}
+    return {"status": "ok", "service": "interlock"}
 
 
 @app.post("/v1/chat/completions")
