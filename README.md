@@ -1,4 +1,4 @@
-# Interlock
+![Tests](https://github.com/MaazAhmed47/Interlock/actions/workflows/tests.yml/badge.svg)# Interlock
 
 **Runtime security gateway for AI agents.**
 
