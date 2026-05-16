@@ -1,13 +1,17 @@
 {
+  "timestamp": "2026-05-16T14:23:11.000Z",
+  "request_id": "demo-req-001",
+  "tenant_id": "demo-tenant",
+  "api_key_id": "demo-key",
   "agent_role": "finance_agent",
-  "tool": "query_warehouse",
+  "mode": "shadow",
+  "tool_name": "query_warehouse",
   "decision": "would_block",
   "reason": "SQL injection pattern detected in tool argument: DROP TABLE",
-  "mode": "shadow",
-  "threat_type": "SQL_INJECTION",
   "layer_caught": "Tool Inspector",
   "risk_score": 91,
   "confidence": 0.97,
-  "suggested_action": "block in production",
-  "timestamp": "2026-05-16T14:23:11.000Z"
+  "prompt_logging": "redacted",
+  "response_logging": "metadata_only",
+  "recommended_action": "block in production"
 }
