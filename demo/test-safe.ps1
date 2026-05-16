@@ -1,4 +1,4 @@
-Write-Host "`n[TEST 1] Clean prompt — should PASS" -ForegroundColor Cyan
+Write-Host "`n[TEST 1] Clean prompt - should PASS" -ForegroundColor Cyan
 $body = '{"prompt":"Summarize this support ticket politely"}'
 Invoke-RestMethod `
   -Method POST `
