@@ -297,7 +297,7 @@ def log_usage(key_id: int, endpoint: str, threat_blocked: bool = False) -> None:
     with _db_lock, get_conn() as conn:
         conn.execute(
             "INSERT INTO usage_log (key_id, ts, endpoint, threat_blocked) VALUES (?, ?, ?, ?)",
-            (key_id, datetime.utcnow().isoformat(), endpoint, 1 if threat_blocked else 0),
+            (key_id, datetime.utcnow().isoformat(), endpoint, bool(threat_blocked)),
         )
 
 
@@ -368,7 +368,7 @@ def register_mcp_server(server_id: str, config: dict) -> bool:
                 INSERT INTO mcp_servers
                   (server_id, url, description, allowed_tools, blocked_tools,
                    rate_limit, verified, registered_at)
-                VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     server_id,
@@ -377,6 +377,7 @@ def register_mcp_server(server_id: str, config: dict) -> bool:
                     json.dumps(config.get("allowed_tools", [])),
                     json.dumps(config.get("blocked_tools", [])),
                     config.get("rate_limit", 60),
+                    False,
                     datetime.utcnow().isoformat(),
                 ),
             )
@@ -421,7 +422,7 @@ def verify_mcp_server(server_id: str) -> bool:
     """Mark a server as verified. Returns False if server_id not found."""
     with _db_lock, get_conn() as conn:
         cursor = conn.execute(
-            "UPDATE mcp_servers SET verified = 1 WHERE server_id = ?",
+            "UPDATE mcp_servers SET verified = TRUE WHERE server_id = ?",
             (server_id,),
         )
     return cursor.rowcount > 0
