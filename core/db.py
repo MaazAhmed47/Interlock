@@ -467,4 +467,18 @@ def seed_mcp_servers() -> None:
                     datetime.utcnow().isoformat(),
                 ),
             )
+            # Always patch tool lists in case rows pre-existed with stale/empty data.
+            conn.execute(
+                """
+                UPDATE mcp_servers
+                   SET allowed_tools = ?, blocked_tools = ?, verified = ?
+                 WHERE server_id = ?
+                """,
+                (
+                    json.dumps(s["allowed_tools"]),
+                    json.dumps(s["blocked_tools"]),
+                    s["verified"],
+                    s["server_id"],
+                ),
+            )
         logger.info("Seeded MCP server: %s", s["server_id"])

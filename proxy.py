@@ -505,7 +505,10 @@ async def mcp_validate(
 ):
     """Validate a single MCP tool definition for security issues."""
     verify_key(x_api_key)
+    start = time.time()
     result = validate_mcp_tool_definition(request.tool_definition)
+    result.scan_time_ms = round((time.time() - start) * 1000, 2)
+    result.risk_score = calculate_risk_score(result)
     return result
 
 
@@ -565,6 +568,7 @@ async def scan_output(request: ScanRequest, x_api_key: Optional[str] = Header(No
                 layer_caught="Output Scanner",
                 scan_time_ms=round((time.time() - start) * 1000, 2),
             )
+            result.risk_score = calculate_risk_score(result)
             db.log_usage(key_info["id"], "/scan/output", threat_blocked=True)
             return result
 
@@ -579,6 +583,7 @@ async def scan_output(request: ScanRequest, x_api_key: Optional[str] = Header(No
         layer_caught="Output Scanner",
         scan_time_ms=round((time.time() - start) * 1000, 2),
     )
+    result.risk_score = calculate_risk_score(result)
     db.log_usage(key_info["id"], "/scan/output", threat_blocked=False)
     return result
 

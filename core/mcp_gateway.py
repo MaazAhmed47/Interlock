@@ -249,7 +249,7 @@ async def proxy_mcp_tool_call(
             "message": f"Tool '{tool_name}' is in the blocked list for server '{server_id}'.",
         }
 
-    if allowed and tool_name not in allowed:
+    if allowed is not None and (not allowed or tool_name not in allowed):
         return {
             "ok": False,
             "error": "tool_not_allowed",
