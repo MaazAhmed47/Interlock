@@ -351,8 +351,17 @@ def _mcp_row_to_dict(row) -> Dict[str, Any]:
     d = dict(row)
     for col in ("allowed_tools", "blocked_tools"):
         raw = d.get(col)
+        if isinstance(raw, list):
+            d[col] = raw
+            continue
+        if isinstance(raw, tuple):
+            d[col] = list(raw)
+            continue
+        if raw is None or raw == "":
+            d[col] = []
+            continue
         try:
-            d[col] = json.loads(raw) if raw else []
+            d[col] = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             d[col] = []
     d["verified"] = bool(d.get("verified", 0))
