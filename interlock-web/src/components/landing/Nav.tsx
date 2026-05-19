@@ -18,34 +18,36 @@ export default function Nav() {
   }, [])
 
   return (
-    <nav className={`fixed top-0 left-0 right-0 z-50 h-16 flex items-center justify-between px-8 transition-all duration-200 border-b ${
-      scrolled ? 'bg-[#080A09] border-[#27302B]' : 'bg-[rgba(8,10,9,0.85)] backdrop-blur-xl border-transparent'
+    <nav className={`fixed top-0 left-0 right-0 z-50 h-[68px] flex items-center transition-all duration-200 border-b ${
+      scrolled ? 'bg-[#080A09] border-[#27302B]' : 'bg-[rgba(8,10,9,0.88)] backdrop-blur-xl border-transparent'
     }`}>
-      <div className="flex items-center gap-2.5">
-        <div className="w-7 h-7 rounded-md bg-[#10B981] flex items-center justify-center">
-          <Shield size={14} className="text-[#080A09]" />
+      <div className="max-w-[1280px] mx-auto w-full flex items-center justify-between px-6">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-md bg-[#10B981] flex items-center justify-center shrink-0">
+            <Shield size={16} className="text-[#080A09]" />
+          </div>
+          <span className="font-semibold text-[#F4F7F5] text-[15px] tracking-tight">Interlock</span>
         </div>
-        <span className="font-semibold text-[#F4F7F5] text-sm tracking-tight">Interlock</span>
-      </div>
 
-      <div className="hidden md:flex items-center gap-8">
-        {LINKS.map(l => (
-          <a
-            key={l.label}
-            href={l.href}
-            className="text-[#9CA8A2] hover:text-[#F4F7F5] transition-colors text-sm font-medium"
-          >
-            {l.label}
-          </a>
-        ))}
-      </div>
+        <div className="hidden md:flex items-center gap-7">
+          {LINKS.map(l => (
+            <a
+              key={l.label}
+              href={l.href}
+              className="text-[#9CA8A2] hover:text-[#F4F7F5] transition-colors text-[14px] font-medium"
+            >
+              {l.label}
+            </a>
+          ))}
+        </div>
 
-      <Link
-        to="/dashboard/drift"
-        className="bg-[#10B981] hover:bg-[#059669] text-[#080A09] font-semibold text-sm px-4 py-2 rounded transition-colors"
-      >
-        Launch Security Console
-      </Link>
+        <Link
+          to="/dashboard/drift"
+          className="bg-[#10B981] hover:bg-[#059669] text-[#080A09] font-semibold text-[14px] px-5 py-2.5 rounded transition-colors whitespace-nowrap"
+        >
+          Launch Security Console
+        </Link>
+      </div>
     </nav>
   )
 }

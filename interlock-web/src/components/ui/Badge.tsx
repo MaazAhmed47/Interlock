@@ -13,7 +13,7 @@ const colors: Record<string, string> = {
 
 export function Badge({ label, color = 'muted' }: BadgeProps) {
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-medium border whitespace-nowrap ${colors[color]}`}>
+    <span className={`inline-flex items-center px-2.5 py-1 rounded text-[12px] font-mono font-medium border whitespace-nowrap ${colors[color]}`}>
       {label}
     </span>
   )

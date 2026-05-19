@@ -16,15 +16,15 @@ export default function Features() {
   const inView = useInView(ref, { once: true, margin: '-80px' })
 
   return (
-    <section ref={ref} id="capabilities" className="py-24 px-8 border-t border-[#27302B]">
-      <div className="max-w-[1100px] mx-auto">
+    <section ref={ref} id="capabilities" className="py-20 px-6 border-t border-[#27302B]">
+      <div className="max-w-[1280px] mx-auto">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={inView ? { opacity: 1, y: 0 } : {}}
           className="mb-12"
         >
-          <p className="text-[#10B981] text-xs font-mono tracking-widest uppercase mb-3">Capabilities</p>
-          <h2 className="text-[#F4F7F5] font-bold text-3xl md:text-4xl">Everything a security team needs</h2>
+          <p className="text-[#10B981] text-[13px] font-mono tracking-widest uppercase mb-3">Capabilities</p>
+          <h2 className="text-[#F4F7F5] font-bold text-3xl md:text-[2.5rem]">Everything a security team needs</h2>
         </motion.div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -34,11 +34,11 @@ export default function Features() {
               initial={{ opacity: 0, y: 14 }}
               animate={inView ? { opacity: 1, y: 0 } : {}}
               transition={{ delay: 0.07 * i, duration: 0.4 }}
-              className="p-5 bg-[#101412] border border-[#27302B] rounded-lg hover:border-[#3a4a42] transition-colors"
+              className="p-6 bg-[#101412] border border-[#27302B] rounded-lg hover:border-[#3a4a42] transition-colors"
             >
-              <Icon size={18} className="text-[#10B981] mb-3" />
-              <h3 className="text-[#F4F7F5] text-sm font-semibold mb-1.5">{title}</h3>
-              <p className="text-[#6B7670] text-xs leading-relaxed">{desc}</p>
+              <Icon size={20} className="text-[#10B981] mb-4" />
+              <h3 className="text-[#F4F7F5] text-[15px] font-semibold mb-2">{title}</h3>
+              <p className="text-[#6B7670] text-[14px] leading-relaxed">{desc}</p>
             </motion.div>
           ))}
         </div>

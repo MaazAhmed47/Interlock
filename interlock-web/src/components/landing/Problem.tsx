@@ -15,19 +15,19 @@ export default function Problem() {
   const inView = useInView(ref, { once: true, margin: '-80px' })
 
   return (
-    <section ref={ref} id="problem" className="py-24 px-8 border-t border-[#27302B]">
-      <div className="max-w-[1100px] mx-auto">
+    <section ref={ref} id="problem" className="py-20 px-6 border-t border-[#27302B]">
+      <div className="max-w-[1280px] mx-auto">
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           animate={inView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.5 }}
           className="max-w-2xl mb-12"
         >
-          <p className="text-[#10B981] text-xs font-mono tracking-widest uppercase mb-3">The Problem</p>
-          <h2 className="text-[#F4F7F5] font-bold text-3xl md:text-4xl leading-tight mb-4">
+          <p className="text-[#10B981] text-[13px] font-mono tracking-widest uppercase mb-3">The Problem</p>
+          <h2 className="text-[#F4F7F5] font-bold text-3xl md:text-[2.5rem] leading-tight mb-4">
             MCP security is fragmented by design
           </h2>
-          <p className="text-[#9CA8A2] text-base leading-relaxed">
+          <p className="text-[#9CA8A2] text-[17px] leading-relaxed">
             AI agents now call many MCP servers, but security policy is fragmented across tools, servers, and teams. There is no system of record for what each tool is allowed to do — or what it was doing last week.
           </p>
         </motion.div>
@@ -39,10 +39,10 @@ export default function Problem() {
               initial={{ opacity: 0, y: 16 }}
               animate={inView ? { opacity: 1, y: 0 } : {}}
               transition={{ duration: 0.4, delay: 0.1 + i * 0.08 }}
-              className="flex gap-4 p-5 bg-[#101412] border border-[#27302B] rounded-lg"
+              className="flex gap-4 p-6 bg-[#101412] border border-[#27302B] rounded-lg"
             >
-              <Icon size={18} className="text-[#D86A4A] shrink-0 mt-0.5" />
-              <p className="text-[#9CA8A2] text-sm leading-relaxed">{text}</p>
+              <Icon size={20} className="text-[#D86A4A] shrink-0 mt-0.5" />
+              <p className="text-[#9CA8A2] text-[15px] leading-relaxed">{text}</p>
             </motion.div>
           ))}
         </div>
