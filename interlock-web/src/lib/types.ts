@@ -1,34 +1,32 @@
-export type ThreatLevel = 'critical' | 'high' | 'medium' | 'low'
-export type ScanLayer  = 'fingerprint' | 'policy' | 'rule' | 'pattern' | 'llm_judge'
-export type FailMode   = 'fail_closed' | 'fail_open' | 'fail_open_safe'
-export type Plan       = 'free' | 'pro' | 'enterprise'
+export type DriftSeverity = 'none' | 'minor' | 'moderate' | 'high' | 'critical'
+export type DriftAction   = 'allow' | 'monitor' | 'deny' | 'quarantine'
+export type ToolStatus    = 'active' | 'changed' | 'quarantined'
+export type AuditAction   = 'allow' | 'monitor' | 'deny' | 'quarantine'
 
-export interface ScanEvent {
-  id: string
-  timestamp: string
-  prompt_preview: string
-  threat_level: ThreatLevel
-  layer_caught: ScanLayer
-  risk_score: number
-  blocked: boolean
-  api_key_prefix: string
+export interface ToolMetadata {
+  effects?: string[]
+  side_effect?: string
+  data_classes?: string[]
+  externality?: string
+  identity_mode?: string
+  verification_level?: string
+  confidence?: number
+  source?: string
+  warnings?: string[]
 }
 
-export interface ApiKey {
-  id: string
-  prefix: string
-  label: string
-  plan: Plan
-  fail_mode: FailMode
-  scans_today: number
-  rate_limit: number
-}
-
-export interface DashboardStats {
-  total_scans_today: number
-  threats_blocked: number
-  avg_scan_ms: number
-  active_keys: number
+export interface McpTool {
+  server_id: string
+  tool_name: string
+  description?: string
+  status: ToolStatus
+  drift_severity: DriftSeverity
+  drift_action: DriftAction
+  drift_types: string[]
+  drift_reasons: string[]
+  last_changed?: string | null
+  last_seen?: string
+  normalized_metadata?: ToolMetadata
 }
 
 export interface McpServer {
@@ -36,14 +34,34 @@ export interface McpServer {
   name: string
   url: string
   trusted: boolean
-  tools_allowed: string[]
+  tool_count: number
   last_seen: string
 }
 
-export interface AgentRole {
+export interface AuditEvent {
   id: string
-  name: string
+  timestamp: string
+  server_id: string
+  server_name: string
+  tool_name: string
+  action: AuditAction
+  role: string
+  matched_rule: string
+  reason: string
+}
+
+export interface PolicyRule {
+  id: string
   description: string
-  allowed_tools: string[]
-  blocked_topics: string[]
+  applies_to: string
+  effect: DriftAction
+}
+
+export interface OverviewStats {
+  mcp_servers: number
+  tools_baselined: number
+  drift_alerts: number
+  blocked_calls: number
+  monitored_calls: number
+  quarantined_tools: number
 }
