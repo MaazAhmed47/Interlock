@@ -8,7 +8,6 @@ Interlock sits between AI agents and the LLMs / MCP servers they call. It inspec
 Pre-release. Looking for design partners using AI agents or MCP.
 
 - Email: maazahmed1856@gmail.com
-- 🎥 2-minute live demo: https://drive.google.com/file/d/1gyIKe4jn7Y25m61saM_qQRWtmLVrCqCX/view?usp=drive_link
 - Demo page: https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664
 
 ---
