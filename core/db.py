@@ -18,10 +18,12 @@ import secrets
 import sqlite3
 import hashlib
 import logging
+import copy
 from contextlib import contextmanager
 from datetime import datetime
 from threading import Lock
 from typing import Optional, List, Dict, Any
+from core.mcp_drift import classify_tool_drift
 
 logger = logging.getLogger("interlock.db")
 
@@ -126,6 +128,61 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     verified        INTEGER NOT NULL DEFAULT 0,
     registered_at   TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS mcp_tool_metadata (
+    server_id           TEXT    NOT NULL,
+    tool_name           TEXT    NOT NULL,
+    tool_schema_hash    TEXT    NOT NULL,
+    description_hash    TEXT    NOT NULL,
+    normalized_metadata TEXT    NOT NULL,
+    raw_annotations     TEXT    NOT NULL DEFAULT '{}',
+    raw_tool_definition TEXT    NOT NULL DEFAULT '{}',
+    first_seen          TEXT    NOT NULL,
+    last_seen           TEXT    NOT NULL,
+    last_changed        TEXT,
+    status              TEXT    NOT NULL DEFAULT 'active',
+    drift_severity      TEXT    NOT NULL DEFAULT 'none',
+    drift_action        TEXT    NOT NULL DEFAULT 'allow',
+    drift_types         TEXT    NOT NULL DEFAULT '[]',
+    drift_reasons       TEXT    NOT NULL DEFAULT '[]',
+    previous_metadata   TEXT    NOT NULL DEFAULT '{}',
+    previous_tool_definition TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (server_id, tool_name),
+    FOREIGN KEY (server_id) REFERENCES mcp_servers(server_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_tool_metadata_server ON mcp_tool_metadata(server_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_tool_metadata_status ON mcp_tool_metadata(status);
+
+CREATE TABLE IF NOT EXISTS mcp_audit_log (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                  TEXT    NOT NULL,
+    server_id           TEXT    NOT NULL,
+    tool_name           TEXT    NOT NULL,
+    role                TEXT    NOT NULL DEFAULT '',
+    action              TEXT    NOT NULL,
+    matched_rule        TEXT    NOT NULL DEFAULT '',
+    reason              TEXT    NOT NULL DEFAULT '',
+    effects             TEXT    NOT NULL DEFAULT '[]',
+    side_effect         TEXT    NOT NULL DEFAULT 'unknown',
+    data_classes        TEXT    NOT NULL DEFAULT '[]',
+    externality         TEXT    NOT NULL DEFAULT 'unknown',
+    verification_level  TEXT    NOT NULL DEFAULT 'unknown',
+    confidence          REAL    NOT NULL DEFAULT 0,
+    warnings            TEXT    NOT NULL DEFAULT '[]',
+    argument_keys       TEXT    NOT NULL DEFAULT '[]',
+    blocked_by          TEXT    NOT NULL DEFAULT '',
+    drift_status        TEXT    NOT NULL DEFAULT '',
+    drift_severity      TEXT    NOT NULL DEFAULT 'none',
+    drift_action        TEXT    NOT NULL DEFAULT 'allow',
+    drift_types         TEXT    NOT NULL DEFAULT '[]',
+    drift_reasons       TEXT    NOT NULL DEFAULT '[]'
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_ts ON mcp_audit_log(ts);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_server_tool ON mcp_audit_log(server_id, tool_name);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_action ON mcp_audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_drift_severity ON mcp_audit_log(drift_severity);
 """
 
 
@@ -135,6 +192,17 @@ def init_db() -> None:
         return
     with _db_lock, get_conn() as conn:
         conn.executescript(SCHEMA)
+        _ensure_column(conn, "mcp_tool_metadata", "drift_severity", "TEXT NOT NULL DEFAULT 'none'")
+        _ensure_column(conn, "mcp_tool_metadata", "drift_action", "TEXT NOT NULL DEFAULT 'allow'")
+        _ensure_column(conn, "mcp_tool_metadata", "drift_types", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "mcp_tool_metadata", "drift_reasons", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "mcp_tool_metadata", "previous_metadata", "TEXT NOT NULL DEFAULT '{}'")
+        _ensure_column(conn, "mcp_tool_metadata", "previous_tool_definition", "TEXT NOT NULL DEFAULT '{}'")
+        _ensure_column(conn, "mcp_audit_log", "drift_status", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "mcp_audit_log", "drift_severity", "TEXT NOT NULL DEFAULT 'none'")
+        _ensure_column(conn, "mcp_audit_log", "drift_action", "TEXT NOT NULL DEFAULT 'allow'")
+        _ensure_column(conn, "mcp_audit_log", "drift_types", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "mcp_audit_log", "drift_reasons", "TEXT NOT NULL DEFAULT '[]'")
     logger.info("SQLite DB initialized at %s", DB_PATH)
 
 
@@ -161,6 +229,37 @@ def _is_integrity_error(exc: Exception) -> bool:
         "IntegrityError",
         "UniqueViolation",
     }
+
+
+def _stable_json(value: Any) -> str:
+    return json.dumps(value or {}, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _hash_json(value: Any) -> str:
+    return hashlib.sha256(_stable_json(value).encode("utf-8")).hexdigest()
+
+
+def _hash_text(value: Any) -> str:
+    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
+
+
+def _ensure_column(conn, table: str, column: str, definition: str) -> None:
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        existing = {row["name"] if isinstance(row, sqlite3.Row) else row[1] for row in rows}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    except Exception:
+        logger.exception("Failed to ensure column %s.%s", table, column)
+        raise
+
+
+def _unique_list(values: List[Any]) -> List[Any]:
+    out = []
+    for value in values:
+        if value not in out:
+            out.append(value)
+    return out
 
 
 # ── Plan defaults ────────────────────────────────────────────────────────────
@@ -368,6 +467,52 @@ def _mcp_row_to_dict(row) -> Dict[str, Any]:
     return d
 
 
+def _mcp_tool_metadata_row_to_dict(row) -> Dict[str, Any]:
+    d = dict(row)
+    for col in (
+        "normalized_metadata", "raw_annotations", "raw_tool_definition",
+        "previous_metadata", "previous_tool_definition",
+    ):
+        raw = d.get(col)
+        if isinstance(raw, (dict, list)):
+            continue
+        if raw is None or raw == "":
+            d[col] = {} if col != "normalized_metadata" else {}
+            continue
+        try:
+            d[col] = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            d[col] = {}
+    for col in ("drift_types", "drift_reasons"):
+        raw = d.get(col)
+        if isinstance(raw, list):
+            continue
+        if raw is None or raw == "":
+            d[col] = []
+            continue
+        try:
+            d[col] = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            d[col] = []
+    return d
+
+
+def _mcp_audit_row_to_dict(row) -> Dict[str, Any]:
+    d = dict(row)
+    for col in ("effects", "data_classes", "warnings", "argument_keys", "drift_types", "drift_reasons"):
+        raw = d.get(col)
+        if isinstance(raw, list):
+            continue
+        if raw is None or raw == "":
+            d[col] = []
+            continue
+        try:
+            d[col] = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            d[col] = []
+    return d
+
+
 def register_mcp_server(server_id: str, config: dict) -> bool:
     """Insert a new MCP server. Returns False if server_id already exists."""
     try:
@@ -404,6 +549,16 @@ def lookup_mcp_server(server_id: str) -> Optional[Dict[str, Any]]:
         row = conn.execute(
             "SELECT * FROM mcp_servers WHERE server_id = ?",
             (server_id,),
+        ).fetchone()
+    return _mcp_row_to_dict(row) if row else None
+
+
+def lookup_mcp_server_by_url(url: str) -> Optional[Dict[str, Any]]:
+    """Return a server record by URL, or None if not found."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM mcp_servers WHERE url = ?",
+            (url,),
         ).fetchone()
     return _mcp_row_to_dict(row) if row else None
 
@@ -491,3 +646,456 @@ def seed_mcp_servers() -> None:
                 ),
             )
         logger.info("Seeded MCP server: %s", s["server_id"])
+
+
+# ── MCP tool metadata registry ────────────────────────────────────────────────
+
+def upsert_mcp_tool_metadata(server_id: str, tool: dict, normalized_metadata: dict) -> Dict[str, Any]:
+    """Insert or update normalized metadata for one discovered MCP tool."""
+    tool = tool or {}
+    tool_name = tool.get("name")
+    if not server_id:
+        raise ValueError("server_id is required")
+    if not tool_name:
+        raise ValueError("tool name is required")
+
+    schema = tool.get("inputSchema", {}) or tool.get("input_schema", {}) or {}
+    tool_schema_hash = _hash_json(schema)
+    description_hash = _hash_text(tool.get("description", ""))
+    raw_annotations = tool.get("annotations") or {}
+    now = datetime.utcnow().isoformat()
+
+    with _db_lock, get_conn() as conn:
+        existing = conn.execute(
+            """
+            SELECT * FROM mcp_tool_metadata
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+
+        changed = False
+        previous_schema_hash = None
+        previous_description_hash = None
+        previous_metadata = {}
+        previous_tool_definition = {}
+        first_seen = now
+        last_changed = None
+        status = "active"
+        drift = {
+            "severity": "none",
+            "action": "allow",
+            "types": [],
+            "reasons": [],
+            "findings": [],
+        }
+
+        if existing:
+            existing_d = _mcp_tool_metadata_row_to_dict(existing)
+            previous_schema_hash = existing_d["tool_schema_hash"]
+            previous_description_hash = existing_d["description_hash"]
+            previous_metadata = existing_d.get("normalized_metadata") or {}
+            previous_tool_definition = existing_d.get("raw_tool_definition") or {}
+            first_seen = existing_d["first_seen"]
+            last_changed = existing_d.get("last_changed")
+            changed = (
+                previous_schema_hash != tool_schema_hash
+                or previous_description_hash != description_hash
+                or previous_metadata != (normalized_metadata or {})
+            )
+            if changed:
+                drift = classify_tool_drift(
+                    previous_tool_definition,
+                    tool,
+                    previous_metadata,
+                    normalized_metadata or {},
+                )
+                status = "quarantined" if drift["action"] == "quarantine" else "changed"
+                last_changed = now
+            else:
+                status = existing_d.get("status") or "active"
+                drift = {
+                    "severity": existing_d.get("drift_severity") or "none",
+                    "action": existing_d.get("drift_action") or "allow",
+                    "types": existing_d.get("drift_types") or [],
+                    "reasons": existing_d.get("drift_reasons") or [],
+                    "findings": [],
+                }
+
+            conn.execute(
+                """
+                UPDATE mcp_tool_metadata
+                   SET tool_schema_hash = ?,
+                       description_hash = ?,
+                       normalized_metadata = ?,
+                       raw_annotations = ?,
+                       raw_tool_definition = ?,
+                       last_seen = ?,
+                       last_changed = ?,
+                       status = ?,
+                       drift_severity = ?,
+                       drift_action = ?,
+                       drift_types = ?,
+                       drift_reasons = ?,
+                       previous_metadata = ?,
+                       previous_tool_definition = ?
+                 WHERE server_id = ? AND tool_name = ?
+                """,
+                (
+                    tool_schema_hash,
+                    description_hash,
+                    json.dumps(normalized_metadata or {}),
+                    json.dumps(raw_annotations or {}),
+                    json.dumps(tool or {}),
+                    now,
+                    last_changed,
+                    status,
+                    drift["severity"],
+                    drift["action"],
+                    json.dumps(drift["types"]),
+                    json.dumps(drift["reasons"]),
+                    json.dumps(previous_metadata or {}),
+                    json.dumps(previous_tool_definition or {}),
+                    server_id,
+                    tool_name,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO mcp_tool_metadata
+                  (server_id, tool_name, tool_schema_hash, description_hash,
+                   normalized_metadata, raw_annotations, raw_tool_definition,
+                   first_seen, last_seen, last_changed, status, drift_severity,
+                   drift_action, drift_types, drift_reasons, previous_metadata,
+                   previous_tool_definition)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    server_id,
+                    tool_name,
+                    tool_schema_hash,
+                    description_hash,
+                    json.dumps(normalized_metadata or {}),
+                    json.dumps(raw_annotations or {}),
+                    json.dumps(tool or {}),
+                    first_seen,
+                    now,
+                    None,
+                    status,
+                    drift["severity"],
+                    drift["action"],
+                    json.dumps(drift["types"]),
+                    json.dumps(drift["reasons"]),
+                    json.dumps({}),
+                    json.dumps({}),
+                ),
+            )
+
+    return {
+        "server_id": server_id,
+        "tool_name": tool_name,
+        "tool_schema_hash": tool_schema_hash,
+        "description_hash": description_hash,
+        "previous_schema_hash": previous_schema_hash,
+        "previous_description_hash": previous_description_hash,
+        "changed": changed,
+        "status": status,
+        "drift_severity": drift["severity"],
+        "drift_action": drift["action"],
+        "drift_types": drift["types"],
+        "drift_reasons": drift["reasons"],
+        "drift_findings": drift.get("findings", []),
+        "previous_metadata": previous_metadata,
+        "previous_tool_definition": previous_tool_definition,
+        "first_seen": first_seen,
+        "last_seen": now,
+        "last_changed": last_changed,
+    }
+
+
+def lookup_mcp_tool_metadata(server_id: str, tool_name: str) -> Optional[Dict[str, Any]]:
+    """Return stored metadata for a server/tool pair."""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_tool_metadata
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+    return _mcp_tool_metadata_row_to_dict(row) if row else None
+
+
+def list_mcp_tool_metadata(server_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """List stored MCP tool metadata, optionally filtered by server."""
+    with get_conn() as conn:
+        if server_id:
+            rows = conn.execute(
+                """
+                SELECT * FROM mcp_tool_metadata
+                 WHERE server_id = ?
+                 ORDER BY tool_name ASC
+                """,
+                (server_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM mcp_tool_metadata
+                 ORDER BY server_id ASC, tool_name ASC
+                """
+            ).fetchall()
+    return [_mcp_tool_metadata_row_to_dict(r) for r in rows]
+
+
+def list_drifted_mcp_tools(server_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """List MCP tools that need operator review because they changed or are quarantined."""
+    with get_conn() as conn:
+        if server_id:
+            rows = conn.execute(
+                """
+                SELECT * FROM mcp_tool_metadata
+                 WHERE server_id = ?
+                   AND (status != 'active' OR drift_severity != 'none' OR drift_action != 'allow')
+                 ORDER BY last_changed DESC, tool_name ASC
+                """,
+                (server_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM mcp_tool_metadata
+                 WHERE status != 'active' OR drift_severity != 'none' OR drift_action != 'allow'
+                 ORDER BY last_changed DESC, server_id ASC, tool_name ASC
+                """
+            ).fetchall()
+    return [_mcp_tool_metadata_row_to_dict(r) for r in rows]
+
+
+def approve_mcp_tool_baseline(
+    server_id: str,
+    tool_name: str,
+    reviewer: str = "operator",
+    reason: str = "",
+) -> Dict[str, Any]:
+    """Approve the current stored MCP tool definition as the new trusted baseline."""
+    reviewer = reviewer or "operator"
+    reason = reason or "Approved current MCP tool definition as the new baseline."
+
+    with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_tool_metadata
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": "not_found"}
+
+        current = _mcp_tool_metadata_row_to_dict(row)
+        conn.execute(
+            """
+            UPDATE mcp_tool_metadata
+               SET status = 'active',
+                   drift_severity = 'none',
+                   drift_action = 'allow',
+                   drift_types = '[]',
+                   drift_reasons = '[]',
+                   previous_metadata = '{}',
+                   previous_tool_definition = '{}',
+                   last_changed = NULL
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        )
+
+    metadata = current.get("normalized_metadata") or {}
+    log_mcp_audit_event({
+        "server_id": server_id,
+        "tool_name": tool_name,
+        "role": reviewer,
+        "action": "approve",
+        "matched_rule": "tool_baseline_approved",
+        "reason": reason,
+        "effects": metadata.get("effects") or [],
+        "side_effect": metadata.get("side_effect") or "unknown",
+        "data_classes": metadata.get("data_classes") or [],
+        "externality": metadata.get("externality") or "unknown",
+        "verification_level": metadata.get("verification_level") or "unknown",
+        "confidence": metadata.get("confidence") or 0.0,
+        "warnings": metadata.get("warnings") or [],
+        "argument_keys": [],
+        "blocked_by": "operator_review",
+        "drift_status": "active",
+        "drift_severity": "none",
+        "drift_action": "allow",
+        "drift_types": [],
+        "drift_reasons": [],
+    })
+
+    updated = lookup_mcp_tool_metadata(server_id, tool_name) or {}
+    return {"ok": True, **updated}
+
+
+def quarantine_mcp_tool(
+    server_id: str,
+    tool_name: str,
+    reviewer: str = "operator",
+    reason: str = "",
+) -> Dict[str, Any]:
+    """Keep or mark an MCP tool quarantined until an operator approves a new baseline."""
+    reviewer = reviewer or "operator"
+    reason = reason or "Operator kept this MCP tool quarantined pending review."
+
+    with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_tool_metadata
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": "not_found"}
+
+        current = _mcp_tool_metadata_row_to_dict(row)
+        drift_types = _unique_list([*(current.get("drift_types") or []), "operator_quarantine"])
+        drift_reasons = _unique_list([*(current.get("drift_reasons") or []), reason])
+        conn.execute(
+            """
+            UPDATE mcp_tool_metadata
+               SET status = 'quarantined',
+                   drift_severity = 'critical',
+                   drift_action = 'quarantine',
+                   drift_types = ?,
+                   drift_reasons = ?,
+                   last_changed = COALESCE(last_changed, ?)
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (
+                json.dumps(drift_types),
+                json.dumps(drift_reasons),
+                datetime.utcnow().isoformat(),
+                server_id,
+                tool_name,
+            ),
+        )
+
+    metadata = current.get("normalized_metadata") or {}
+    log_mcp_audit_event({
+        "server_id": server_id,
+        "tool_name": tool_name,
+        "role": reviewer,
+        "action": "quarantine",
+        "matched_rule": "operator_quarantine",
+        "reason": reason,
+        "effects": metadata.get("effects") or [],
+        "side_effect": metadata.get("side_effect") or "unknown",
+        "data_classes": metadata.get("data_classes") or [],
+        "externality": metadata.get("externality") or "unknown",
+        "verification_level": metadata.get("verification_level") or "unknown",
+        "confidence": metadata.get("confidence") or 0.0,
+        "warnings": metadata.get("warnings") or [],
+        "argument_keys": [],
+        "blocked_by": "operator_review",
+        "drift_status": "quarantined",
+        "drift_severity": "critical",
+        "drift_action": "quarantine",
+        "drift_types": drift_types,
+        "drift_reasons": drift_reasons,
+    })
+
+    updated = lookup_mcp_tool_metadata(server_id, tool_name) or {}
+    return {"ok": True, **updated}
+
+
+def merge_stored_and_runtime_metadata(stored_metadata: dict, runtime_metadata: dict) -> dict:
+    """Prefer discovered metadata, but merge runtime warnings and sensitive classes."""
+    if not stored_metadata:
+        merged = copy.deepcopy(runtime_metadata or {})
+        warnings = list(merged.get("warnings") or [])
+        warnings.append("No stored tool metadata was available; runtime inference was used.")
+        merged["warnings"] = list(dict.fromkeys(warnings))
+        return merged
+
+    merged = copy.deepcopy(stored_metadata)
+    runtime_metadata = runtime_metadata or {}
+    for key in ("effects", "data_classes", "required_scopes"):
+        values = list(merged.get(key) or [])
+        for value in runtime_metadata.get(key) or []:
+            if value not in values:
+                values.append(value)
+        merged[key] = values
+
+    warnings = list(merged.get("warnings") or [])
+    for warning in runtime_metadata.get("warnings") or []:
+        if warning not in warnings:
+            warnings.append(warning)
+    if runtime_metadata.get("verification_level") == "heuristic":
+        warnings.append("Runtime arguments added heuristic metadata signals.")
+    merged["warnings"] = list(dict.fromkeys(warnings))
+    return merged
+
+
+# ── MCP audit log ─────────────────────────────────────────────────────────────
+
+def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
+    """Persist a durable MCP policy/audit event."""
+    event = event or {}
+    ts = event.get("ts") or datetime.utcnow().isoformat()
+    with _db_lock, get_conn() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO mcp_audit_log
+              (ts, server_id, tool_name, role, action, matched_rule, reason,
+               effects, side_effect, data_classes, externality, verification_level,
+               confidence, warnings, argument_keys, blocked_by, drift_status,
+               drift_severity, drift_action, drift_types, drift_reasons)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts,
+                event.get("server_id", ""),
+                event.get("tool_name", ""),
+                event.get("role", "") or "",
+                event.get("action", ""),
+                event.get("matched_rule", ""),
+                event.get("reason", ""),
+                json.dumps(event.get("effects", []) or []),
+                event.get("side_effect", "unknown"),
+                json.dumps(event.get("data_classes", []) or []),
+                event.get("externality", "unknown"),
+                event.get("verification_level", "unknown"),
+                float(event.get("confidence") or 0.0),
+                json.dumps(event.get("warnings", []) or []),
+                json.dumps(event.get("argument_keys", []) or []),
+                event.get("blocked_by", "") or "",
+                event.get("drift_status", "") or "",
+                event.get("drift_severity", "none") or "none",
+                event.get("drift_action", "allow") or "allow",
+                json.dumps(event.get("drift_types", []) or []),
+                json.dumps(event.get("drift_reasons", []) or []),
+            ),
+        )
+        event_id = cursor.lastrowid
+
+    saved = dict(event)
+    saved["id"] = event_id
+    saved["ts"] = ts
+    return saved
+
+
+def list_mcp_audit_logs(limit: int = 100) -> List[Dict[str, Any]]:
+    """Return recent MCP audit events, newest first."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM mcp_audit_log
+             ORDER BY ts DESC, id DESC
+             LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [_mcp_audit_row_to_dict(r) for r in rows]

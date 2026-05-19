@@ -26,5 +26,6 @@ class ScanResult(BaseModel):
     layer_caught: Optional[str] = None
     scan_time_ms: Optional[float] = None
     risk_score: Optional[int] = None      # 0-100
+    tool_metadata: Optional[dict] = None
 
 

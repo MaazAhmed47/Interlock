@@ -45,7 +45,7 @@ class ChatMessage(BaseModel):
     content: str
 
 class ChatRequest(BaseModel):
-    model: str = "gpt-3.5-turbo"
+    model: str = "llama-3.3-70b-versatile"
     messages: List[ChatMessage]
     stream: Optional[bool] = False
     temperature: Optional[float] = None
@@ -84,9 +84,14 @@ class MCPRegisterRequest(BaseModel):
 
 class MCPDiscoverRequest(BaseModel):
     server_url: str
+    server_id: Optional[str] = None
 
 class MCPToolValidateRequest(BaseModel):
     tool_definition: dict
+
+class MCPToolReviewRequest(BaseModel):
+    reviewer: Optional[str] = "operator"
+    reason: Optional[str] = ""
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Interlock",
@@ -243,6 +248,11 @@ async def chat_completions(
 
     # Auto-detect provider from model name
     provider = detect_provider(chat.model)
+
+    # Redirect non-gpt-4 OpenAI models to Groq — demos work without OpenAI credits
+    if provider == "openai" and not chat.model.lower().startswith("gpt-4"):
+        provider = "groq"
+        chat.model = "llama-3.3-70b-versatile"
 
     # Scan all user messages
     user_prompts = [m.content for m in chat.messages if m.role == "user"]
@@ -495,7 +505,81 @@ async def mcp_discover(
     Every tool is validated for malicious patterns before being returned.
     """
     verify_key(x_api_key)
-    return await discover_mcp_tools(request.server_url)
+    return await discover_mcp_tools(request.server_url, server_id=request.server_id)
+
+
+@app.get("/mcp/tools")
+async def mcp_tools(
+    server_id: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None)
+):
+    """List persisted MCP tool metadata, optionally for one server."""
+    verify_key(x_api_key)
+    return {"tools": db.list_mcp_tool_metadata(server_id)}
+
+
+@app.get("/mcp/tools/drifted")
+async def mcp_drifted_tools(
+    server_id: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None)
+):
+    """List MCP tools that need operator review because they changed or are quarantined."""
+    verify_key(x_api_key)
+    return {"tools": db.list_drifted_mcp_tools(server_id)}
+
+
+@app.post("/mcp/tools/{server_id}/{tool_name}/approve")
+async def mcp_approve_tool_baseline(
+    server_id: str,
+    tool_name: str,
+    request: MCPToolReviewRequest,
+    x_api_key: Optional[str] = Header(None)
+):
+    """Approve the current MCP tool definition as the new trusted baseline."""
+    verify_key(x_api_key)
+    result = db.approve_mcp_tool_baseline(
+        server_id,
+        tool_name,
+        reviewer=request.reviewer or "operator",
+        reason=request.reason or "",
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail="MCP tool metadata not found.")
+    tool = dict(result)
+    tool.pop("ok", None)
+    return {"ok": True, "tool": tool}
+
+
+@app.post("/mcp/tools/{server_id}/{tool_name}/quarantine")
+async def mcp_quarantine_tool(
+    server_id: str,
+    tool_name: str,
+    request: MCPToolReviewRequest,
+    x_api_key: Optional[str] = Header(None)
+):
+    """Keep or mark an MCP tool quarantined until an operator approves it."""
+    verify_key(x_api_key)
+    result = db.quarantine_mcp_tool(
+        server_id,
+        tool_name,
+        reviewer=request.reviewer or "operator",
+        reason=request.reason or "",
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail="MCP tool metadata not found.")
+    tool = dict(result)
+    tool.pop("ok", None)
+    return {"ok": True, "tool": tool}
+
+
+@app.get("/mcp/audit")
+async def mcp_audit(
+    limit: int = 100,
+    x_api_key: Optional[str] = Header(None)
+):
+    """List recent MCP audit decisions."""
+    verify_key(x_api_key)
+    return {"events": db.list_mcp_audit_logs(limit)}
 
 
 @app.post("/mcp/validate-tool")

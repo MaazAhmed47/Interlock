@@ -4,7 +4,9 @@ import httpx
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from models.schemas import ScanResult, ThreatLevel
+from core.metadata_policy import evaluate_metadata_policy
 from core.tool_inspector import inspect_tool_call
+from core.tool_metadata import normalize_tool_metadata
 from core import db
 
 # ── MCP Server Registry ───────────────────────────────────────────────────────
@@ -65,6 +67,7 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
     - Dangerous schema fields (raw command inputs)
     - Hidden instructions in descriptions
     """
+    metadata = normalize_tool_metadata(tool)
     name = tool.get("name", "").lower()
     description = tool.get("description", "").lower()
     schema = tool.get("inputSchema", {}) or tool.get("input_schema", {})
@@ -81,6 +84,7 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
                 safe_to_proceed=False,
                 confidence=0.95,
                 layer_caught="MCP Gateway — Tool Validator",
+                tool_metadata=metadata,
             )
 
     # 2. Check for prompt injection in description
@@ -95,6 +99,7 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
                 safe_to_proceed=False,
                 confidence=0.95,
                 layer_caught="MCP Gateway — Tool Validator",
+                tool_metadata=metadata,
             )
 
     # 3. Check for prompt injection patterns in description
@@ -116,6 +121,7 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
                 safe_to_proceed=False,
                 confidence=0.99,
                 layer_caught="MCP Gateway — Tool Validator",
+                tool_metadata=metadata,
             )
 
     # 4. Check schema for dangerous parameter fields
@@ -131,6 +137,7 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
                 safe_to_proceed=False,
                 confidence=0.92,
                 layer_caught="MCP Gateway — Tool Validator",
+                tool_metadata=metadata,
             )
 
     # 5. Check for excessively long descriptions (token smuggling)
@@ -144,6 +151,7 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
             safe_to_proceed=False,
             confidence=0.85,
             layer_caught="MCP Gateway — Tool Validator",
+            tool_metadata=metadata,
         )
 
     return ScanResult(
@@ -155,10 +163,15 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
         safe_to_proceed=True,
         confidence=0.97,
         layer_caught="MCP Gateway — Tool Validator",
+        tool_metadata=metadata,
     )
 
 # ── MCP Server Discovery ──────────────────────────────────────────────────────
-async def discover_mcp_tools(server_url: str, timeout: float = 10.0) -> Dict[str, Any]:
+async def discover_mcp_tools(
+    server_url: str,
+    timeout: float = 10.0,
+    server_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Connect to an MCP server and discover its tools.
     Validates every tool definition before returning.
@@ -181,12 +194,27 @@ async def discover_mcp_tools(server_url: str, timeout: float = 10.0) -> Dict[str
             safe_tools = []
             blocked_tools = []
 
+            registry_server_id = server_id
+            if not registry_server_id:
+                registered = db.lookup_mcp_server_by_url(server_url)
+                registry_server_id = registered.get("server_id") if registered else None
+
             for tool in tools:
                 validation = validate_mcp_tool_definition(tool)
+                registry = {"persisted": False, "reason": "server_id_not_registered"}
+                if registry_server_id and not validation.is_threat:
+                    registry = db.upsert_mcp_tool_metadata(
+                        registry_server_id,
+                        tool,
+                        validation.tool_metadata or {},
+                    )
+                    registry["persisted"] = True
                 validation_results.append({
                     "tool_name": tool.get("name"),
                     "is_safe": not validation.is_threat,
                     "validation": validation.dict() if hasattr(validation, "dict") else vars(validation),
+                    "tool_metadata": validation.tool_metadata,
+                    "registry": registry,
                 })
 
                 if validation.is_threat:
@@ -225,6 +253,16 @@ async def proxy_mcp_tool_call(
     # 1. Verify server is trusted
     server = db.lookup_mcp_server(server_id)
     if not server:
+        _log_mcp_gateway_audit(
+            server_id=server_id,
+            tool_name=tool_name,
+            role=role,
+            action="deny",
+            matched_rule="untrusted_mcp_server",
+            reason=f"MCP server '{server_id}' is not in the trusted registry.",
+            arguments=arguments,
+            blocked_by="untrusted_mcp_server",
+        )
         return {
             "ok": False,
             "error": "untrusted_mcp_server",
@@ -232,6 +270,16 @@ async def proxy_mcp_tool_call(
         }
 
     if not server.get("verified"):
+        _log_mcp_gateway_audit(
+            server_id=server_id,
+            tool_name=tool_name,
+            role=role,
+            action="deny",
+            matched_rule="unverified_mcp_server",
+            reason=f"MCP server '{server_id}' is registered but not verified.",
+            arguments=arguments,
+            blocked_by="unverified_mcp_server",
+        )
         return {
             "ok": False,
             "error": "unverified_mcp_server",
@@ -243,6 +291,16 @@ async def proxy_mcp_tool_call(
     blocked = server.get("blocked_tools", [])
 
     if blocked and tool_name in blocked:
+        _log_mcp_gateway_audit(
+            server_id=server_id,
+            tool_name=tool_name,
+            role=role,
+            action="deny",
+            matched_rule="tool_blocked",
+            reason=f"Tool '{tool_name}' is in the blocked list for server '{server_id}'.",
+            arguments=arguments,
+            blocked_by="tool_blocked",
+        )
         return {
             "ok": False,
             "error": "tool_blocked",
@@ -250,15 +308,115 @@ async def proxy_mcp_tool_call(
         }
 
     if allowed is not None and (not allowed or tool_name not in allowed):
+        _log_mcp_gateway_audit(
+            server_id=server_id,
+            tool_name=tool_name,
+            role=role,
+            action="deny",
+            matched_rule="tool_not_allowed",
+            reason=f"Tool '{tool_name}' is not in the allowed list for server '{server_id}'.",
+            arguments=arguments,
+            blocked_by="tool_not_allowed",
+        )
         return {
             "ok": False,
             "error": "tool_not_allowed",
             "message": f"Tool '{tool_name}' is not in the allowed list for server '{server_id}'. Allowed: {allowed}",
         }
 
+    # 3. Normalize runtime metadata and apply metadata-aware policy.
+    runtime_tool = {
+        "name": tool_name,
+        "description": "",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                key: {"type": type(value).__name__}
+                for key, value in (arguments or {}).items()
+            },
+        },
+    }
+    runtime_metadata = normalize_tool_metadata(runtime_tool)
+    stored_tool = db.lookup_mcp_tool_metadata(server_id, tool_name)
+    stored_metadata = (stored_tool or {}).get("normalized_metadata")
+    tool_metadata = db.merge_stored_and_runtime_metadata(stored_metadata, runtime_metadata)
+    drift_context = _stored_tool_drift_context(stored_tool)
+    if drift_context:
+        warnings = list(tool_metadata.get("warnings") or [])
+        drift_warning = (
+            "Stored MCP tool metadata changed after initial discovery "
+            f"({drift_context['severity']}/{drift_context['action']})."
+        )
+        if drift_warning not in warnings:
+            warnings.append(drift_warning)
+        tool_metadata["warnings"] = warnings
+        tool_metadata["drift"] = drift_context
+
+    policy_decision = evaluate_metadata_policy(
+        server_id=server_id,
+        tool_name=tool_name,
+        arguments=arguments,
+        role=role,
+        tool_metadata=tool_metadata,
+    )
+    _attach_drift_context(policy_decision, drift_context)
+
+    if drift_context and drift_context["action"] == "quarantine":
+        reason = _drift_reason(
+            drift_context,
+            "Stored MCP tool metadata drift is critical; the tool is quarantined until reviewed.",
+        )
+        _set_policy_decision(policy_decision, "deny", "tool_quarantined", reason)
+        _log_mcp_policy_audit(policy_decision, blocked_by="tool_quarantined")
+        return {
+            "ok": False,
+            "error": "tool_quarantined",
+            "message": reason,
+            "drift": drift_context,
+            "policy_decision": policy_decision,
+        }
+
+    if drift_context and drift_context["action"] == "deny":
+        reason = _drift_reason(
+            drift_context,
+            "Stored MCP tool metadata drift is high risk; blocking execution until reviewed.",
+        )
+        _set_policy_decision(policy_decision, "deny", "tool_metadata_drift", reason)
+        _log_mcp_policy_audit(policy_decision, blocked_by="metadata_drift")
+        return {
+            "ok": False,
+            "error": "metadata_drift_violation",
+            "message": reason,
+            "drift": drift_context,
+            "policy_decision": policy_decision,
+        }
+
+    if drift_context and drift_context["action"] == "monitor" and policy_decision["action"] == "allow":
+        policy_decision["action"] = "monitor"
+        policy_decision["matched_rule"] = "tool_metadata_drift"
+        policy_decision["reason"] = _drift_reason(
+            drift_context,
+            "Stored MCP tool metadata changed after initial discovery; allow but monitor.",
+        )
+        policy_decision["warnings"] = tool_metadata.get("warnings", [])
+        policy_decision["audit_context"]["decision"] = "monitor"
+        policy_decision["audit_context"]["matched_rule"] = "tool_metadata_drift"
+        policy_decision["audit_context"]["reason"] = policy_decision["reason"]
+        policy_decision["audit_context"]["warnings"] = policy_decision["warnings"]
+
+    if policy_decision["action"] == "deny":
+        _log_mcp_policy_audit(policy_decision, blocked_by="metadata_policy")
+        return {
+            "ok": False,
+            "error": "metadata_policy_violation",
+            "message": policy_decision["reason"],
+            "policy_decision": policy_decision,
+        }
+
     # 3. Run through standard tool call inspector
     inspection = inspect_tool_call(tool_name, arguments)
     if inspection.is_threat:
+        _log_mcp_policy_audit(policy_decision, blocked_by="tool_inspector")
         return {
             "ok": False,
             "error": "tool_call_blocked",
@@ -267,6 +425,7 @@ async def proxy_mcp_tool_call(
             "reason": inspection.reason,
             "confidence": inspection.confidence,
             "layer_caught": inspection.layer_caught,
+            "policy_decision": policy_decision,
         }
 
     # 4. RBAC check if role provided
@@ -274,6 +433,7 @@ async def proxy_mcp_tool_call(
         from core.policy import rbac_scan
         rbac_result = rbac_scan(json.dumps(arguments), tool_name, role)
         if rbac_result and rbac_result.is_threat:
+            _log_mcp_policy_audit(policy_decision, blocked_by="rbac")
             return {
                 "ok": False,
                 "error": "rbac_violation",
@@ -281,6 +441,7 @@ async def proxy_mcp_tool_call(
                 "threat_type": rbac_result.threat_type,
                 "reason": rbac_result.reason,
                 "confidence": rbac_result.confidence,
+                "policy_decision": policy_decision,
             }
 
     # 5. Forward to actual MCP server
@@ -303,25 +464,143 @@ async def proxy_mcp_tool_call(
             from core.detector import PII_PATTERNS
             for pattern in PII_PATTERNS:
                 if re.search(pattern, response_text):
+                    _log_mcp_policy_audit(policy_decision, blocked_by="response_scan")
                     return {
                         "ok": False,
                         "error": "response_data_leak",
                         "message": "MCP server response contains sensitive data (PII detected). Blocked.",
                         "blocked_response": True,
+                        "policy_decision": policy_decision,
                     }
 
+            _log_mcp_policy_audit(policy_decision, blocked_by="")
             return {
                 "ok": True,
                 "server_id": server_id,
                 "tool_name": tool_name,
                 "result": data.get("result"),
                 "scanned": True,
+                "drift": drift_context,
+                "policy_decision": policy_decision,
             }
 
     except httpx.TimeoutException:
+        _log_mcp_policy_audit(policy_decision, blocked_by="mcp_timeout")
         return {"ok": False, "error": "mcp_server_timeout"}
     except Exception as e:
+        _log_mcp_policy_audit(policy_decision, blocked_by="mcp_server_error")
         return {"ok": False, "error": "mcp_server_error", "message": str(e)[:200]}
+
+
+def _log_mcp_policy_audit(policy_decision: Dict[str, Any], blocked_by: str = "") -> None:
+    audit = dict(policy_decision.get("audit_context") or {})
+    audit["action"] = audit.get("decision") or policy_decision.get("action", "")
+    audit["blocked_by"] = blocked_by
+    db.log_mcp_audit_event(audit)
+
+
+def _stored_tool_drift_context(stored_tool: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not stored_tool:
+        return None
+
+    status = stored_tool.get("status") or "active"
+    severity = stored_tool.get("drift_severity") or "none"
+    action = stored_tool.get("drift_action") or "allow"
+    if status == "quarantined":
+        action = "quarantine"
+        if severity == "none":
+            severity = "critical"
+    elif status == "changed" and action == "allow":
+        action = "monitor"
+        if severity == "none":
+            severity = "minor"
+
+    if status == "active" and severity == "none" and action == "allow":
+        return None
+
+    return {
+        "status": status,
+        "severity": severity,
+        "action": action,
+        "types": list(stored_tool.get("drift_types") or []),
+        "reasons": list(stored_tool.get("drift_reasons") or []),
+        "last_changed": stored_tool.get("last_changed"),
+        "previous_schema_hash": stored_tool.get("previous_schema_hash"),
+        "current_schema_hash": stored_tool.get("tool_schema_hash"),
+    }
+
+
+def _attach_drift_context(policy_decision: Dict[str, Any], drift: Optional[Dict[str, Any]]) -> None:
+    if not drift:
+        return
+
+    policy_decision["drift"] = drift
+    tool_metadata = policy_decision.setdefault("tool_metadata", {})
+    tool_metadata["drift"] = drift
+
+    warnings = list(policy_decision.get("warnings") or [])
+    warning = f"MCP tool drift severity={drift['severity']} action={drift['action']}."
+    if warning not in warnings:
+        warnings.append(warning)
+    policy_decision["warnings"] = warnings
+
+    audit = policy_decision.setdefault("audit_context", {})
+    audit["warnings"] = warnings
+    audit["drift_status"] = drift.get("status")
+    audit["drift_severity"] = drift.get("severity")
+    audit["drift_action"] = drift.get("action")
+    audit["drift_types"] = drift.get("types") or []
+    audit["drift_reasons"] = drift.get("reasons") or []
+
+
+def _set_policy_decision(
+    policy_decision: Dict[str, Any],
+    action: str,
+    matched_rule: str,
+    reason: str,
+) -> None:
+    policy_decision["action"] = action
+    policy_decision["matched_rule"] = matched_rule
+    policy_decision["reason"] = reason
+    policy_decision["audit_context"]["decision"] = action
+    policy_decision["audit_context"]["matched_rule"] = matched_rule
+    policy_decision["audit_context"]["reason"] = reason
+
+
+def _drift_reason(drift: Dict[str, Any], fallback: str) -> str:
+    reasons = drift.get("reasons") or []
+    if not reasons:
+        return fallback
+    return f"{fallback} " + " ".join(str(reason) for reason in reasons[:3])
+
+
+def _log_mcp_gateway_audit(
+    server_id: str,
+    tool_name: str,
+    role: Optional[str],
+    action: str,
+    matched_rule: str,
+    reason: str,
+    arguments: dict,
+    blocked_by: str,
+) -> None:
+    db.log_mcp_audit_event({
+        "server_id": server_id,
+        "tool_name": tool_name,
+        "role": role or "unspecified",
+        "action": action,
+        "matched_rule": matched_rule,
+        "reason": reason,
+        "effects": [],
+        "side_effect": "unknown",
+        "data_classes": [],
+        "externality": "unknown",
+        "verification_level": "unknown",
+        "confidence": 0.0,
+        "warnings": [],
+        "argument_keys": sorted((arguments or {}).keys()),
+        "blocked_by": blocked_by,
+    })
 
 # ── MCP Server Registration ───────────────────────────────────────────────────
 def register_mcp_server(server_id: str, config: dict) -> dict:

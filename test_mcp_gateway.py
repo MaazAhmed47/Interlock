@@ -15,6 +15,7 @@ db.init_db()
 db.seed_mcp_servers()  # seeds trusted-filesystem and trusted-search
 
 from core.mcp_gateway import (
+    discover_mcp_tools,
     validate_mcp_tool_definition,
     proxy_mcp_tool_call,
     TRUSTED_MCP_SERVERS,
@@ -31,6 +32,9 @@ result = validate_mcp_tool_definition({
 })
 assert not result.is_threat, f"Unexpected threat: {result.reason}"
 assert result.safe_to_proceed
+assert result.tool_metadata["side_effect"] == "read_only"
+assert "read" in result.tool_metadata["effects"]
+assert result.tool_metadata["verification_level"] == "heuristic"
 print("  OK")
 
 print("Test 2: execute_* tool name is flagged as MALICIOUS_MCP_TOOL_NAME ...")
@@ -179,12 +183,62 @@ result = validate_mcp_tool_definition({
 assert not result.is_threat
 print(f"  OK — boundary case passes")
 
+print("Test 14b: discovery includes normalized metadata and persists registered server tools ...")
+db.register_mcp_server("_test_discovery_persist", {
+    "url": "http://example.test/mcp",
+    "description": "Discovery persistence test server",
+    "allowed_tools": ["share_file"],
+    "blocked_tools": [],
+    "rate_limit": 10,
+})
+db.verify_mcp_server("_test_discovery_persist")
+mock_discovery_resp = MagicMock()
+mock_discovery_resp.json.return_value = {
+    "result": {
+        "tools": [{
+            "name": "share_file",
+            "description": "Share a file with an external recipient.",
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "string"},
+                    "recipient_email": {"type": "string"},
+                },
+            },
+        }]
+    }
+}
+mock_discovery_client = AsyncMock()
+mock_discovery_client.__aenter__ = AsyncMock(return_value=mock_discovery_client)
+mock_discovery_client.__aexit__ = AsyncMock(return_value=False)
+mock_discovery_client.post = AsyncMock(return_value=mock_discovery_resp)
+
+with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_discovery_client):
+    discovery = asyncio.run(discover_mcp_tools(
+        "http://example.test/mcp",
+        server_id="_test_discovery_persist",
+    ))
+assert discovery["ok"] is True
+assert discovery["validations"][0]["tool_metadata"]["side_effect"] == "mutating"
+assert discovery["validations"][0]["tool_metadata"]["externality"] == "external"
+assert "share" in discovery["validations"][0]["tool_metadata"]["effects"]
+assert discovery["validations"][0]["registry"]["persisted"] is True
+stored = db.lookup_mcp_tool_metadata("_test_discovery_persist", "share_file")
+assert stored["normalized_metadata"]["externality"] == "external"
+print("  OK — discovery metadata included")
+db.unregister_mcp_server("_test_discovery_persist")
+
 # ── proxy_mcp_tool_call — trust registry ─────────────────────────────────────
 
 print("Test 15: unknown server ID is rejected ...")
 out = asyncio.run(proxy_mcp_tool_call("unknown-server-xyz", "read_file", {}))
 assert out["ok"] is False
 assert out["error"] == "untrusted_mcp_server"
+logs = db.list_mcp_audit_logs(limit=1)
+assert logs[0]["server_id"] == "unknown-server-xyz"
+assert logs[0]["action"] == "deny"
+assert logs[0]["blocked_by"] == "untrusted_mcp_server"
 print(f"  OK — {out['error']}")
 
 print("Test 16: unverified server is rejected ...")
@@ -211,9 +265,41 @@ out = asyncio.run(proxy_mcp_tool_call(
 ))
 assert out["ok"] is False
 assert out["error"] == "tool_blocked"
+logs = db.list_mcp_audit_logs(limit=1)
+assert logs[0]["tool_name"] == "write_file"
+assert logs[0]["blocked_by"] == "tool_blocked"
 print(f"  OK — {out['error']}")
 
-print("Test 18: tool not in allowed list is rejected ...")
+print("Test 18: metadata policy denies destructive tools for readonly_agent and writes audit ...")
+db.register_mcp_server("_test_policy_server", {
+    "url": "http://localhost:9999/mcp",
+    "description": "Policy test server",
+    "allowed_tools": ["delete_file"],
+    "blocked_tools": [],
+    "rate_limit": 10,
+})
+db.verify_mcp_server("_test_policy_server")
+try:
+    out = asyncio.run(proxy_mcp_tool_call(
+        "_test_policy_server",
+        "delete_file",
+        {"path": "notes.txt"},
+        role="readonly_agent",
+    ))
+    assert out["ok"] is False
+    assert out["error"] == "metadata_policy_violation"
+    assert out["policy_decision"]["matched_rule"] == "readonly_agent_read_only"
+    assert out["policy_decision"]["audit_context"]["decision"] == "deny"
+    logs = db.list_mcp_audit_logs(limit=1)
+    assert logs[0]["server_id"] == "_test_policy_server"
+    assert logs[0]["tool_name"] == "delete_file"
+    assert logs[0]["action"] == "deny"
+    assert logs[0]["blocked_by"] == "metadata_policy"
+    print(f"  OK — {out['error']}")
+finally:
+    db.unregister_mcp_server("_test_policy_server")
+
+print("Test 19: tool not in allowed list is rejected ...")
 out = asyncio.run(proxy_mcp_tool_call(
     "trusted-filesystem", "run_code", {"code": "print('hi')"}
 ))
@@ -221,7 +307,7 @@ assert out["ok"] is False
 assert out["error"] == "tool_not_allowed"
 print(f"  OK — {out['error']}")
 
-print("Test 19: SQL injection in args is blocked by tool inspector ...")
+print("Test 20: SQL injection in args is blocked by tool inspector ...")
 out = asyncio.run(proxy_mcp_tool_call(
     "trusted-filesystem",
     "read_file",
@@ -233,7 +319,7 @@ print(f"  OK — {out['error']} (threat_type={out.get('threat_type')})")
 
 # ── proxy_mcp_tool_call — RBAC ────────────────────────────────────────────────
 
-print("Test 20: finance_agent cannot use read_file (not in its allowed list) ...")
+print("Test 21: finance_agent cannot use read_file (not in its allowed list) ...")
 out = asyncio.run(proxy_mcp_tool_call(
     "trusted-filesystem",
     "read_file",
@@ -245,7 +331,7 @@ assert out["error"] == "rbac_violation"
 assert out.get("threat_type") == "RBAC_VIOLATION"
 print(f"  OK — {out['error']}: {out.get('reason', '')[:80]}")
 
-print("Test 21: support_agent with a blocked tool keyword is denied ...")
+print("Test 22: support_agent with a blocked tool keyword is denied ...")
 out = asyncio.run(proxy_mcp_tool_call(
     "trusted-filesystem",
     "read_file",
@@ -258,7 +344,7 @@ print(f"  OK — unknown role denied by default")
 
 # ── proxy_mcp_tool_call — response PII scanning ──────────────────────────────
 
-print("Test 22: MCP response containing SSN is blocked ...")
+print("Test 23: MCP response containing SSN is blocked ...")
 mock_resp = MagicMock()
 mock_resp.json.return_value = {
     "result": {"data": "Customer record — SSN: 123-45-6789, dob: 1980-01-01"}
@@ -276,7 +362,7 @@ assert out["ok"] is False
 assert out["error"] == "response_data_leak"
 print(f"  OK — {out['error']}")
 
-print("Test 23: MCP response containing email address is blocked ...")
+print("Test 24: MCP response containing email address is blocked ...")
 mock_resp2 = MagicMock()
 mock_resp2.json.return_value = {
     "result": {"content": "Contact: john.doe@acme-corp.com for details."}
@@ -294,7 +380,31 @@ assert out["ok"] is False
 assert out["error"] == "response_data_leak"
 print(f"  OK — {out['error']}")
 
-print("Test 24: clean MCP response passes through with scanned=True ...")
+print("Test 25: clean MCP response passes through with metadata policy context ...")
+db.upsert_mcp_tool_metadata("trusted-filesystem", {
+    "name": "read_file",
+    "description": "Read a sandboxed file.",
+    "_meta": {
+        "interlock": {
+            "effects": ["read"],
+            "side_effect": "read_only",
+            "externality": "internal",
+            "data_classes": ["user_content"],
+        }
+    },
+    "inputSchema": {
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+    },
+}, {
+    "effects": ["read"],
+    "side_effect": "read_only",
+    "externality": "internal",
+    "data_classes": ["user_content"],
+    "verification_level": "interlock_meta",
+    "confidence": 0.95,
+    "warnings": [],
+})
 mock_resp3 = MagicMock()
 mock_resp3.json.return_value = {
     "result": {"content": "Hello world. This document contains no sensitive data."}
@@ -311,7 +421,204 @@ with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client3):
 assert out["ok"] is True
 assert out["tool_name"] == "read_file"
 assert out["scanned"] is True
+assert out["policy_decision"]["action"] == "allow"
+assert out["policy_decision"]["tool_metadata"]["verification_level"] == "interlock_meta"
+assert out["policy_decision"]["audit_context"]["tool_name"] == "read_file"
+logs = db.list_mcp_audit_logs(limit=1)
+assert logs[0]["tool_name"] == "read_file"
+assert logs[0]["action"] == "allow"
 print(f"  OK — clean response forwarded (scanned={out['scanned']})")
+
+print("Test 26: quarantined tool is denied before execution ...")
+db.register_mcp_server("_test_quarantine_server", {
+    "url": "http://localhost:9998/mcp",
+    "description": "Quarantine test server",
+    "allowed_tools": ["run_report"],
+    "blocked_tools": [],
+    "rate_limit": 10,
+})
+db.verify_mcp_server("_test_quarantine_server")
+db.upsert_mcp_tool_metadata("_test_quarantine_server", {
+    "name": "run_report",
+    "description": "Read a report.",
+    "inputSchema": {"type": "object", "properties": {"report_id": {"type": "string"}}},
+}, {
+    "effects": ["read"],
+    "side_effect": "read_only",
+    "data_classes": ["internal"],
+    "externality": "internal",
+    "verification_level": "interlock_meta",
+    "confidence": 0.95,
+    "warnings": [],
+})
+db.upsert_mcp_tool_metadata("_test_quarantine_server", {
+    "name": "run_report",
+    "description": "Execute a report command.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "report_id": {"type": "string"},
+            "command": {"type": "string"},
+        },
+        "required": ["report_id", "command"],
+    },
+}, {
+    "effects": ["read", "execute"],
+    "side_effect": "destructive",
+    "data_classes": ["internal"],
+    "externality": "internal",
+    "verification_level": "interlock_meta",
+    "confidence": 0.95,
+    "warnings": [],
+})
+try:
+    out = asyncio.run(proxy_mcp_tool_call(
+        "_test_quarantine_server",
+        "run_report",
+        {"report_id": "r1", "command": "whoami"},
+        role="admin_agent",
+    ))
+    assert out["ok"] is False
+    assert out["error"] == "tool_quarantined"
+    assert out["drift"]["severity"] == "critical"
+    logs = db.list_mcp_audit_logs(limit=1)
+    assert logs[0]["blocked_by"] == "tool_quarantined"
+    assert logs[0]["matched_rule"] == "tool_quarantined"
+    assert logs[0]["drift_severity"] == "critical"
+    assert "effect_escalated" in logs[0]["drift_types"]
+    print(f"  OK — {out['error']}")
+finally:
+    db.unregister_mcp_server("_test_quarantine_server")
+
+print("Test 27: moderate drift is monitored but allowed ...")
+db.register_mcp_server("_test_drift_monitor_server", {
+    "url": "http://localhost:9997/mcp",
+    "description": "Moderate drift test server",
+    "allowed_tools": ["read_profile"],
+    "blocked_tools": [],
+    "rate_limit": 10,
+})
+db.verify_mcp_server("_test_drift_monitor_server")
+db.upsert_mcp_tool_metadata("_test_drift_monitor_server", {
+    "name": "read_profile",
+    "description": "Read a profile.",
+    "inputSchema": {"type": "object", "properties": {"profile_id": {"type": "string"}}},
+}, {
+    "effects": ["read"],
+    "side_effect": "read_only",
+    "data_classes": ["user_content"],
+    "externality": "internal",
+    "verification_level": "interlock_meta",
+    "confidence": 0.95,
+    "warnings": [],
+})
+db.upsert_mcp_tool_metadata("_test_drift_monitor_server", {
+    "name": "read_profile",
+    "description": "Read a profile with optional format.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "profile_id": {"type": "string"},
+            "format": {"type": "string"},
+        },
+    },
+}, {
+    "effects": ["read"],
+    "side_effect": "read_only",
+    "data_classes": ["user_content"],
+    "externality": "internal",
+    "verification_level": "interlock_meta",
+    "confidence": 0.95,
+    "warnings": [],
+})
+mock_resp4 = MagicMock()
+mock_resp4.json.return_value = {"result": {"content": "Profile summary"}}
+mock_client4 = AsyncMock()
+mock_client4.__aenter__ = AsyncMock(return_value=mock_client4)
+mock_client4.__aexit__ = AsyncMock(return_value=False)
+mock_client4.post = AsyncMock(return_value=mock_resp4)
+try:
+    with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client4):
+        out = asyncio.run(proxy_mcp_tool_call(
+            "_test_drift_monitor_server",
+            "read_profile",
+            {"profile_id": "p1", "format": "json"},
+            role="admin_agent",
+        ))
+    assert out["ok"] is True
+    assert out["policy_decision"]["action"] == "monitor"
+    assert out["policy_decision"]["matched_rule"] == "tool_metadata_drift"
+    assert out["drift"]["severity"] == "moderate"
+    logs = db.list_mcp_audit_logs(limit=1)
+    assert logs[0]["action"] == "monitor"
+    assert logs[0]["matched_rule"] == "tool_metadata_drift"
+    assert logs[0]["drift_severity"] == "moderate"
+    assert "schema_field_added" in logs[0]["drift_types"]
+    print("  OK — moderate drift monitored")
+finally:
+    db.unregister_mcp_server("_test_drift_monitor_server")
+
+print("Test 28: high drift is denied before execution ...")
+db.register_mcp_server("_test_drift_deny_server", {
+    "url": "http://localhost:9996/mcp",
+    "description": "High drift test server",
+    "allowed_tools": ["generate_report"],
+    "blocked_tools": [],
+    "rate_limit": 10,
+})
+db.verify_mcp_server("_test_drift_deny_server")
+db.upsert_mcp_tool_metadata("_test_drift_deny_server", {
+    "name": "generate_report",
+    "description": "Generate an internal report.",
+    "inputSchema": {"type": "object", "properties": {"report_id": {"type": "string"}}},
+}, {
+    "effects": ["read"],
+    "side_effect": "read_only",
+    "data_classes": ["internal"],
+    "externality": "internal",
+    "verification_level": "interlock_meta",
+    "confidence": 0.95,
+    "warnings": [],
+})
+db.upsert_mcp_tool_metadata("_test_drift_deny_server", {
+    "name": "generate_report",
+    "description": "Generate an internal report for a required region.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "report_id": {"type": "string"},
+            "region_id": {"type": "string"},
+        },
+        "required": ["report_id", "region_id"],
+    },
+}, {
+    "effects": ["read"],
+    "side_effect": "read_only",
+    "data_classes": ["internal"],
+    "externality": "internal",
+    "verification_level": "interlock_meta",
+    "confidence": 0.95,
+    "warnings": [],
+})
+try:
+    out = asyncio.run(proxy_mcp_tool_call(
+        "_test_drift_deny_server",
+        "generate_report",
+        {"report_id": "r1", "region_id": "emea"},
+        role="admin_agent",
+    ))
+    assert out["ok"] is False
+    assert out["error"] == "metadata_drift_violation"
+    assert out["drift"]["severity"] == "high"
+    assert out["drift"]["action"] == "deny"
+    logs = db.list_mcp_audit_logs(limit=1)
+    assert logs[0]["blocked_by"] == "metadata_drift"
+    assert logs[0]["matched_rule"] == "tool_metadata_drift"
+    assert logs[0]["drift_severity"] == "high"
+    assert "required_field_added" in logs[0]["drift_types"]
+    print(f"  OK — {out['error']}")
+finally:
+    db.unregister_mcp_server("_test_drift_deny_server")
 
 for _p in (_tmp_db, _tmp_db + "-wal", _tmp_db + "-shm"):
     try:
@@ -319,4 +626,4 @@ for _p in (_tmp_db, _tmp_db + "-wal", _tmp_db + "-shm"):
     except OSError:
         pass
 
-print("\nAll MCP gateway tests passed. (24/24)")
+print("\nAll MCP gateway tests passed. (28/28)")
