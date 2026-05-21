@@ -46,7 +46,7 @@ The OWASP MCP Top 10 (2025) is the first security framework dedicated to the Mod
 - Drift scoring classifies changes by risk level (high, medium, low).
 - Auto-quarantine holds high-risk changes until an operator reviews them.
 
-**Source:** CyberArk "Poison Everywhere" — https://www.cyberark.com/resources/all-blog-posts/poison-everywhere-no-output-from-your-mcp-server-is-safe
+**Source:** CyberArk "Poison Everywhere" — https://www.cyberark.com/resources/threat-research-blog/poison-everywhere-no-output-from-your-mcp-server-is-safe
 
 ---
 
@@ -187,6 +187,6 @@ The OWASP MCP Top 10 (2025) is the first security framework dedicated to the Mod
 - OWASP MCP Top 10: https://owasp.org/www-project-mcp-top-10/
 - OWASP MCP03 Tool Poisoning: https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025–Tool-Poisoning
 - OWASP MCP09 Shadow Servers: https://owasp.org/www-project-mcp-top-10/2025/MCP09-2025–Shadow-MCP-Servers
-- CyberArk "Poison Everywhere": https://www.cyberark.com/resources/all-blog-posts/poison-everywhere-no-output-from-your-mcp-server-is-safe
+- CyberArk "Poison Everywhere": https://www.cyberark.com/resources/threat-research-blog/poison-everywhere-no-output-from-your-mcp-server-is-safe
 - Endor Labs MCP AppSec Report: https://www.endorlabs.com/learn/classic-vulnerabilities-meet-ai-infrastructure-why-mcp-needs-appsec
-- postmark-mcp incident: https://www.csoonline.com/article/4064009/trust-on-mcp-takes-first-in-the-wild-hit-via-squatted-postmark-connector.html
+- postmark-mcp incident: https://www.csoonline.com/article/4064009/trust-in-mcp-takes-first-in-the-wild-hit-via-squatted-postmark-connector.html

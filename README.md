@@ -9,7 +9,7 @@ Baseline every MCP tool. Detect risky drift. Enforce role-aware policy before ex
 [![GitHub](https://img.shields.io/badge/GitHub-Interlock-181717?logo=github)](https://github.com/MaazAhmed47/Interlock)
 [![Status](https://img.shields.io/badge/status-pre--release-blue)](#current-state)
 [![MCP](https://img.shields.io/badge/MCP-security%20gateway-00b894)](#mcp-security-controls)
-[![OWASP](https://img.shields.io/badge/OWASP%20MCP-coverage-orange)](docs/interlock-owasp-mcp-coverage.md)
+[![OWASP](https://img.shields.io/badge/OWASP%20MCP-10%2F10-orange)](docs/interlock-owasp-mcp-coverage.md)
 [![Pilot](https://img.shields.io/badge/design%20partners-open-7c3aed)](https://calendly.com/maazahmed1856/interlock-demo-15-min)
 
 [Docs / Product Brief](https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664) ·
@@ -99,14 +99,15 @@ Interlock is designed around the modern MCP threat model:
 
 See the full mapping:
 
-[OWASP MCP Top 10 Coverage](docs/interlock-owasp-mcp-coverage.md)
+[OWASP MCP Top 10 Coverage](docs/interlock-owasp-mcp-coverage.md) ·
+[MCP Threat Map](docs/mcp-threat-map.md)
 
 Current coverage summary:
 
 | Status | Count |
 |---|---:|
-| Fully covered | 6 / 10 |
-| Partially covered | 4 / 10 |
+| Mapped as covered | 10 / 10 |
+| Partially covered | 0 / 10 |
 
 ---
 
@@ -345,10 +346,11 @@ python tests/test_metadata_policy.py
 python tests/test_mcp_registry_audit.py
 python tests/test_mcp_review_api.py
 python tests/test_llm_judge_no_key.py
+python -m pytest tests/test_response_scanner.py tests/test_provenance.py tests/test_shadow_scanner.py -q
 python -m pytest tests/test_new_routes.py -v
 ```
 
-These cover MCP gateway behavior, metadata normalization, policy decisions, drift detection, registry/audit persistence, operator review, route smoke tests, and no-key startup behavior.
+These cover MCP gateway behavior, metadata normalization, policy decisions, drift detection, registry/audit persistence, operator review, response scanning, provenance checks, shadow-server discovery, route smoke tests, and no-key startup behavior.
 
 ---
 
@@ -380,13 +382,14 @@ Working now:
 - metadata-aware runtime policy
 - quarantine and baseline approval APIs
 - response scanning
+- provenance policy for MCP supply-chain checks
+- operator-provided shadow MCP server discovery
 - structured audit logs
 - Helm chart foundation
 
 In progress:
 
 - polished dashboard
-- full-schema drift expansion
 - rate limits / call budgets
 - SIEM export polish
 - SSO / SAML
