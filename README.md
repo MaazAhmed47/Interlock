@@ -220,6 +220,23 @@ lf-dev-key-456
 
 ---
 
+## Repository Layout
+
+```txt
+core/        Gateway, policy, metadata, drift, audit, scanner, and DB logic
+models/      Shared request/response schemas
+tests/       Local backend test scripts
+docs/        Security docs, OWASP MCP coverage, metadata and receipt drafts
+demo/        Demo scripts and sample audit artifacts
+helm/        Kubernetes deployment chart
+monitoring/  Prometheus configuration
+proxy.py     FastAPI entrypoint and OpenAI-compatible proxy routes
+```
+
+The dashboard/frontend is being rebuilt separately; this repository currently prioritizes the working runtime gateway and backend security controls.
+
+---
+
 ## Quick Proof Tests
 
 Open a second terminal while the gateway is running.
@@ -321,17 +338,16 @@ Use the hosted endpoint only with an API key issued by the founder/design partne
 Use this when you want to verify the backend controls locally.
 
 ```bash
-python test_mcp_gateway.py
-python test_mcp_drift.py
-python test_tool_metadata.py
-python test_metadata_policy.py
-python test_mcp_registry_audit.py
-python test_mcp_review_api.py
+python tests/test_mcp_gateway.py
+python tests/test_mcp_drift.py
+python tests/test_tool_metadata.py
+python tests/test_metadata_policy.py
+python tests/test_mcp_registry_audit.py
+python tests/test_mcp_review_api.py
+python tests/test_llm_judge_no_key.py
 ```
 
 These cover MCP gateway behavior, metadata normalization, policy decisions, drift detection, registry/audit persistence, and operator review.
-
-Note: `test_new_routes.py` currently needs cleanup because its `TestClient(app)` startup path can hang in local runs.
 
 ---
 

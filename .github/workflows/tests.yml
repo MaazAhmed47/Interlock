@@ -16,4 +16,12 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - run: python test_mcp_gateway.py
+      - name: Run core backend tests
+        run: |
+          python tests/test_llm_judge_no_key.py
+          python tests/test_mcp_gateway.py
+          python tests/test_mcp_drift.py
+          python tests/test_tool_metadata.py
+          python tests/test_metadata_policy.py
+          python tests/test_mcp_registry_audit.py
+          python tests/test_mcp_review_api.py

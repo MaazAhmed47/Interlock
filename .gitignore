@@ -24,12 +24,16 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 data/firewall.db
+data/learned_patterns.json
+data/shadow_log.json
 firewall.db
 
 # Editor / IDE
 .vscode/
 .idea/
 .claude/
+.agents/
+.codex/
 *.swp
 *.swo
 
@@ -48,6 +52,7 @@ build/
 # Logs
 *.log
 logs/
+debug-*.log
 
 # Pytest / coverage
 .pytest_cache/
@@ -62,3 +67,14 @@ htmlcov/
 
 # Allow specific data files we DO want tracked
 !data/.gitkeep
+
+# Local AI/tooling drafts
+docs/superpowers/
+design-plugin/
+design.plugin
+skills-lock.json
+INTERLOCK_STRATEGY.md
+nextcloud-scan-report.md
+
+# Frontend is being rebuilt separately; do not commit partial generated drafts.
+interlock-web/
