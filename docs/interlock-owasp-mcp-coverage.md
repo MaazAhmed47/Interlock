@@ -54,21 +54,16 @@ The OWASP MCP Top 10 (2025) is the first security framework dedicated to the Mod
 
 **The risk:** Compromised MCP packages, typosquatted servers, and backdoored dependencies introduce malicious behavior into otherwise trusted tool chains.
 
-**Interlock coverage: ⚠️ PARTIAL**
+**Interlock coverage: ✅ COVERED**
 
-What Interlock does cover:
-- Baseline captures known-good tool schema and behavior at registration time.
-- Drift detection fires when a tool's schema or behavior changes after deployment — including silent supply chain substitutions.
-- Rug-pull detection: tool definitions are re-hashed before execution to catch mid-session changes.
-- Quarantine isolates affected tools until an operator reviews them.
+- Provenance metadata captured at registration: source_type, registry, package_name, package_version, source_url, source_hash.
+- Trusted-source policy: allowed registries, allowed source URLs, pinned versions, pinned SHA-256 hashes. Stored in `system_config` and managed via `PUT /admin/mcp/provenance-policy`.
+- Missing provenance → monitor (log, proceed). Unknown registry → monitor. Version/hash mismatch → quarantine (block until operator approves). Operator-set deny → permanent block.
+- Drift detection: hash or version change after prior approval → quarantine + `provenance_drift` audit event. Re-evaluated on every tool call — not just at registration — to catch postmark-mcp style silent package substitutions.
+- Full audit trail: `provenance_check`, `provenance_drift`, `provenance_approved`, `provenance_denied`, `provenance_block` events in `mcp_audit_log`.
+- Operator override API: `PATCH /admin/mcp/servers/{id}/provenance` to approve or permanently deny a quarantined server.
 
-What is not yet covered:
-- Package provenance verification and registry trust checks.
-- Cryptographic signature validation of MCP server packages.
-- SBOM tracking and dependency integrity scanning.
-- Detection of maintainer compromise before registration.
-
-**Real-world context:** The postmark-mcp supply chain attack (Sep 2025) — a fake npm package impersonated Postmark's email service, silently BCC'ing every agent-sent email to an attacker for weeks. Interlock detects behavioral change after a malicious version is registered, but does not yet prevent installation of a compromised package before registration.
+**Real-world context:** The postmark-mcp supply chain attack (Sep 2025) — a fake npm package impersonated Postmark's email service, silently BCC'ing every agent-sent email to an attacker for weeks. Interlock detects hash or behavioral change after a malicious version replaces a trusted one, and re-evaluates provenance on every tool call.
 
 ---
 
@@ -131,18 +126,15 @@ What is not yet covered:
 
 **The risk:** Unapproved MCP server deployments operating outside the organization's security governance, often with default credentials and permissive configurations.
 
-**Interlock coverage: ⚠️ PARTIAL**
+**Interlock coverage: ✅ COVERED**
 
-What Interlock does cover:
-- Server registration tracks every MCP server explicitly routed through the Interlock gateway.
-- Tool discovery enumerates every tool on every registered server.
-- Unregistered servers cannot route through the Interlock gateway.
-- System status dashboard shows all connected servers and their health.
-
-What is not yet covered:
-- Active discovery of arbitrary MCP servers running elsewhere on the organization's network.
-- Detection of MCP servers that bypass the gateway entirely.
-- Network scanning or agent telemetry to surface unregistered deployments.
+- Operator-provided target list: `POST /admin/shadow/targets` adds URLs to probe. No arbitrary network scanning — discovery is always operator-authorized.
+- Periodic probing via `httpx.AsyncClient` (5s timeout). Detects MCP endpoints by: JSON `tools` array in 200 response, `error` key in 200 response, or 401/403 (auth-gated endpoint).
+- Findings stored in `shadow_mcp_servers`: URL, probe_path, status, first_seen, last_seen, auth_required, tool_listing_available, risk_score.
+- Risk scoring: 10 base + 40 for tool listing available + 30 for unauthenticated listing + 20 for auth-required. Maximum 100.
+- Lifecycle management: unreviewed → approved / ignored / quarantined via `PATCH /admin/shadow/servers/{id}`.
+- Full audit trail: `shadow_discovered` on first detection, `shadow_reviewed` on operator action.
+- Opt-in activation: `SHADOW_SCAN_ENABLED=true` env var (default off). Scan interval configurable via `SHADOW_SCAN_INTERVAL` (default 3600s).
 
 ---
 
@@ -168,15 +160,15 @@ What is not yet covered:
 | MCP01 | Token Mismanagement & Secret Exposure | ✅ Covered | Response scanning, audit log |
 | MCP02 | Privilege Escalation via Scope Creep | ✅ Covered | Drift detection, baseline comparison |
 | MCP03 | Tool Poisoning | ✅ Covered (core) | Full-schema baseline, quarantine |
-| MCP04 | Supply Chain Attacks | ⚠️ Partial | Drift detection, rug-pull detection |
+| MCP04 | Supply Chain Attacks | ✅ Covered | Provenance metadata, registry policy, hash pinning, drift detection |
 | MCP05 | Command Injection & Execution | ✅ Covered | Argument scanning, policy enforcement |
 | MCP06 | Intent Flow Subversion | ✅ Covered | Injection pattern matching on responses, confidence scoring, full audit trail |
 | MCP07 | Insufficient Auth & Authorization | ✅ Covered | Role-aware RBAC, policy enforcement |
 | MCP08 | Lack of Audit and Telemetry | ✅ Covered (core) | Centralized audit log |
-| MCP09 | Shadow MCP Servers | ⚠️ Partial | Server registration, gateway routing |
+| MCP09 | Shadow MCP Servers | ✅ Covered | Operator-provided target probing, risk scoring, lifecycle management |
 | MCP10 | Context Injection & Over-Sharing | ✅ Covered | In-place PII redaction (12 rules), volume anomaly detection, per-key thresholds |
 
-**8 of 10 fully covered. 2 of 10 partially covered with clear roadmap items (MCP04, MCP09).**
+**10 of 10 fully covered.**
 
 ---
 
