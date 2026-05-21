@@ -13,6 +13,29 @@ API key for testing: `lf-dev-key-456`
 
 Each script prints the full JSON response so prospects can see what Interlock caught, where it was caught, and why.
 
+## MCP Drift and Quarantine Demo
+
+`mcp-drift-quarantine-demo.py` shows Interlock's core MCP security story end-to-end.
+It runs locally without LLM keys, a running server, or network calls.
+
+```bash
+# From the project root:
+python demo/mcp-drift-quarantine-demo.py
+
+# From inside the demo/ directory:
+python mcp-drift-quarantine-demo.py
+```
+
+What it demonstrates:
+
+1. Registers a clean read-only tool baseline (`read_document`)
+2. Simulates the same tool changing: new `email` field, external sharing effects (`export`, `share`), PII data class added
+3. Shows Interlock detecting the drift with full field-by-field reasons
+4. Prints the quarantine decision — the tool is blocked until an operator approves
+5. Writes and displays the audit log entry with matched rule and drift evidence
+
+The script uses a temporary SQLite database. Production data is never touched.
+
 ## Privacy Note
 
 For sensitive pilots, Interlock can run in metadata-only logging mode. Audit logs can store role, tool, decision, risk score, layer caught, and timestamp while omitting or redacting prompt/response content. See `PRIVACY.md`.
