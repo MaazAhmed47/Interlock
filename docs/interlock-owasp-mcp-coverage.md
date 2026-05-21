@@ -92,12 +92,12 @@ What is not yet covered:
 
 **The risk:** Malicious instructions embedded in retrieved data, tool responses, or external content hijack the agent's reasoning chain, subverting the user's original intent.
 
-**Interlock coverage: ⚠️ PARTIAL**
+**Interlock coverage: ✅ COVERED**
 
-- Response scanning inspects tool outputs for known injection patterns before they reach the model.
-- Audit logging captures full tool responses for forensic review.
-- Policy rules can restrict which agents access tools that return external or unstructured content.
-- Roadmap: deeper semantic analysis of tool responses for instruction-like patterns.
+- Response scanning detects 20 injection patterns (16 shared with request scanning + 4 response-specific) in tool outputs before they reach the model.
+- Confidence scoring: each matched pattern adds 0.35; one hit is enough to block the response entirely.
+- Full audit trail: matched patterns, threat type, and confidence are written to the MCP audit log on every block.
+- Detection covers nested JSON values — `json.dumps` flattening ensures injection in any field is caught without recursive traversal.
 
 ---
 
@@ -150,12 +150,14 @@ What is not yet covered:
 
 **The risk:** Tools return more data than the agent needs, exposing sensitive information to the model context. Tool outputs carry PII, credentials, or internal data that leak through the conversation.
 
-**Interlock coverage: ⚠️ PARTIAL**
+**Interlock coverage: ✅ COVERED**
 
-- Response scanning inspects tool outputs for PII and sensitive data patterns.
-- Data classification in tool metadata (effects, data classes) enables policy rules restricting which agents access tools handling sensitive data.
-- Policy enforcement can deny access to tools with external data sharing effects for restricted roles.
-- Roadmap: fine-grained output filtering before data enters model context.
+- In-place PII redaction: 12 pattern rules cover SSN (dashed and undashed), credit cards, email, phone, passwords, API keys (generic, AWS AKIA format), bearer tokens, and private key blocks. Sensitive values are replaced with typed markers (`[REDACTED-SSN]`, `[REDACTED-API-KEY]`, etc.) before the response reaches the model.
+- Sanitized content is returned to the caller rather than blocking — legitimate data in mixed responses is preserved.
+- Data volume anomaly detection: responses exceeding per-key byte or array-item thresholds are flagged as `CONTEXT_OVERSHARING` and logged. Volume alone does not block; it warns.
+- Per-key configurable thresholds (`max_response_bytes`, `max_array_items`) managed via `PATCH /admin/keys/{prefix}`. Defaults: 50 KB / 500 items.
+- Full audit trail: `threat_type`, `matched_patterns`, and `redactions` written to the MCP audit log on every scan with a finding.
+- Data classification in tool metadata enables policy rules restricting which agent roles access tools that handle sensitive data classes.
 
 ---
 
@@ -168,13 +170,13 @@ What is not yet covered:
 | MCP03 | Tool Poisoning | ✅ Covered (core) | Full-schema baseline, quarantine |
 | MCP04 | Supply Chain Attacks | ⚠️ Partial | Drift detection, rug-pull detection |
 | MCP05 | Command Injection & Execution | ✅ Covered | Argument scanning, policy enforcement |
-| MCP06 | Intent Flow Subversion | ⚠️ Partial | Response scanning, audit log |
+| MCP06 | Intent Flow Subversion | ✅ Covered | Injection pattern matching on responses, confidence scoring, full audit trail |
 | MCP07 | Insufficient Auth & Authorization | ✅ Covered | Role-aware RBAC, policy enforcement |
 | MCP08 | Lack of Audit and Telemetry | ✅ Covered (core) | Centralized audit log |
 | MCP09 | Shadow MCP Servers | ⚠️ Partial | Server registration, gateway routing |
-| MCP10 | Context Injection & Over-Sharing | ⚠️ Partial | Response scanning, data classification |
+| MCP10 | Context Injection & Over-Sharing | ✅ Covered | In-place PII redaction (12 rules), volume anomaly detection, per-key thresholds |
 
-**6 of 10 fully covered. 4 of 10 partially covered with clear roadmap items (MCP04, MCP06, MCP09, MCP10).**
+**8 of 10 fully covered. 2 of 10 partially covered with clear roadmap items (MCP04, MCP09).**
 
 ---
 
