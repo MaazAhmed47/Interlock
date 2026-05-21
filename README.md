@@ -199,7 +199,7 @@ clean MCP tool baseline
 
 Watch the short demo: https://youtu.be/kc5wAbgoEkw
 
-![Interlock MCP drift quarantine demo](docs/assets/mcp-drift-quarantine-demo.svg)
+![Interlock MCP drift quarantine demo](docs/assets/mcp-drift-quarantine-demo.png)
 
 ---
 
