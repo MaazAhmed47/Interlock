@@ -345,9 +345,10 @@ python tests/test_metadata_policy.py
 python tests/test_mcp_registry_audit.py
 python tests/test_mcp_review_api.py
 python tests/test_llm_judge_no_key.py
+python -m pytest tests/test_new_routes.py -v
 ```
 
-These cover MCP gateway behavior, metadata normalization, policy decisions, drift detection, registry/audit persistence, and operator review.
+These cover MCP gateway behavior, metadata normalization, policy decisions, drift detection, registry/audit persistence, operator review, route smoke tests, and no-key startup behavior.
 
 ---
 

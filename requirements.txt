@@ -26,6 +26,9 @@ psycopg2-binary
 # Environment / config
 python-dotenv==1.2.2
 
+# Tests
+pytest==8.4.2
+
 # Transitive deps
 annotated-doc==0.0.4
 anyio==4.13.0
