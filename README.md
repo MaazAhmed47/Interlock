@@ -13,6 +13,9 @@ Baseline every MCP tool. Detect risky drift. Enforce role-aware policy before ex
 [![Pilot](https://img.shields.io/badge/design%20partners-open-7c3aed)](https://calendly.com/maazahmed1856/interlock-demo-15-min)
 
 [Docs / Product Brief](https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664) ·
+[Watch 2-min Demo](https://youtu.be/kc5wAbgoEkw) ·
+[OWASP MCP Coverage](docs/interlock-owasp-mcp-coverage.md) ·
+[MCP Threat Map](docs/mcp-threat-map.md) ·
 [Book Pilot Call](https://calendly.com/maazahmed1856/interlock-demo-15-min) ·
 [Email Founder](mailto:maazahmed1856@gmail.com)
 
@@ -157,6 +160,28 @@ sequenceDiagram
 | Path traversal | `../../etc/passwd` in file tool args | Argument scanner |
 | PII leakage | SSN or email in MCP response | Response scanner |
 | Unsafe tool change | External sharing added after baseline | Quarantine workflow |
+
+---
+
+## Demo: MCP Drift -> Quarantine -> Audit
+
+Run the local demo without LLM keys:
+
+```bash
+python demo/mcp-drift-quarantine-demo.py
+```
+
+It shows:
+
+```txt
+clean MCP tool baseline
+-> risky schema/capability drift
+-> critical drift detection
+-> quarantine decision
+-> audit event written
+```
+
+Watch the short demo: https://youtu.be/kc5wAbgoEkw
 
 ---
 
