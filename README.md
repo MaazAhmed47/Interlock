@@ -163,6 +163,22 @@ sequenceDiagram
 
 ---
 
+## CyberArk "Poison Everywhere" Coverage
+
+CyberArk's "Poison Everywhere" research showed that MCP risk is not limited to obvious tool descriptions. Tool outputs and schema fields can carry malicious instructions or sensitive data that influence agent behavior.
+
+Interlock targets this class of risk with:
+
+- full-schema tool baselining
+- schema and capability drift detection
+- response scanning before output reaches the model
+- quarantine for risky tool changes
+- audit evidence for every block, monitor, and quarantine decision
+
+Source: https://www.cyberark.com/resources/threat-research-blog/poison-everywhere-no-output-from-your-mcp-server-is-safe
+
+---
+
 ## Demo: MCP Drift -> Quarantine -> Audit
 
 Run the local demo without LLM keys:
@@ -182,6 +198,8 @@ clean MCP tool baseline
 ```
 
 Watch the short demo: https://youtu.be/kc5wAbgoEkw
+
+![Interlock MCP drift quarantine demo](docs/assets/mcp-drift-quarantine-demo.svg)
 
 ---
 
