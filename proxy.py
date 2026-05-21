@@ -114,6 +114,30 @@ def _init_db():
     db.seed_legacy_keys()
     db.seed_mcp_servers()
 
+
+@app.on_event("startup")
+async def _start_shadow_scan():
+    import os as _os
+    if _os.getenv("SHADOW_SCAN_ENABLED", "false").lower() != "true":
+        return
+    import asyncio as _asyncio
+    from core.shadow_scanner import run_shadow_scan as _run_shadow_scan
+    _scan_interval = int(_os.getenv("SHADOW_SCAN_INTERVAL", "3600"))
+
+    async def _shadow_scan_loop():
+        while True:
+            try:
+                with db.get_conn() as conn:
+                    findings = await _run_shadow_scan(conn)
+                    if findings:
+                        logger.info("Shadow scan: %d new finding(s)", len(findings))
+            except Exception:
+                logger.exception("Shadow scan loop error")
+            await _asyncio.sleep(_scan_interval)
+
+    _asyncio.get_running_loop().create_task(_shadow_scan_loop())
+
+
 # Mount admin endpoints
 app.include_router(admin_router)
 
