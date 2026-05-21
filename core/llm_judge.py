@@ -23,7 +23,7 @@ from config import GROQ_API_KEY, GROQ_MODEL
 
 logger = logging.getLogger("interlock.llm_judge")
 
-client = Groq(api_key=GROQ_API_KEY)
+client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 DEFAULT_FAIL_MODE = "fail_open_safe"
@@ -169,7 +169,7 @@ def _build_failure_result(
         is_threat=False,
         threat_level=ThreatLevel.SAFE,
         threat_type=None,
-        reason=f"LLM judge unavailable; allowed per {fail_mode} policy. Logged for audit.",
+        reason=f"LLM judge unavailable; allowed per {fail_mode} policy. ({error_msg}) Logged for audit.",
         original_prompt=prompt,
         safe_to_proceed=True,
         confidence=0.4,  # low confidence — we didn't actually verify
@@ -193,6 +193,14 @@ def llm_judge_scan(
                            fail_open_safe to decide whether bypassing is OK.
     """
     fail_mode = _resolve_fail_mode(api_key)
+
+    if client is None:
+        return _build_failure_result(
+            prompt,
+            "GROQ_API_KEY not configured",
+            fail_mode,
+            prior_layers_safe,
+        )
 
     # Circuit breaker open → skip the call entirely.
     if _breaker.is_open():
