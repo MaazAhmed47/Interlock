@@ -611,6 +611,30 @@ def list_mcp_servers() -> List[Dict[str, Any]]:
     return [_mcp_row_to_dict(r) for r in rows]
 
 
+def load_mcp04_policy() -> dict:
+    """Return the current MCP04 provenance policy from system_config, or {} if unset."""
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT value FROM system_config WHERE key='mcp04_policy'"
+            ).fetchone()
+            if row:
+                return json.loads(row[0])
+    except Exception:
+        logger.exception("Failed to load mcp04 policy")
+    return {}
+
+
+def update_mcp_server_provenance(server_id: str, provenance_status: str) -> bool:
+    """Set provenance_status on an existing mcp_servers row."""
+    with _db_lock, get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE mcp_servers SET provenance_status=? WHERE server_id=?",
+            (provenance_status, server_id),
+        )
+    return cursor.rowcount > 0
+
+
 def unregister_mcp_server(server_id: str) -> bool:
     """Delete a server from the registry. Returns False if not found."""
     with _db_lock, get_conn() as conn:

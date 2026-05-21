@@ -448,6 +448,35 @@ async def proxy_mcp_tool_call(
                 "policy_decision": policy_decision,
             }
 
+    # 4b. Provenance check (MCP04) — re-evaluate on every call to catch silent substitutions
+    try:
+        from core.provenance import evaluate_provenance
+        policy = db.load_mcp04_policy()
+        server_row = db.lookup_mcp_server(server_id)
+        if server_row:
+            prov = evaluate_provenance(server_row, policy)
+            if prov.status in ("quarantine", "denied"):
+                _log_mcp_gateway_audit(
+                    server_id=server_id,
+                    tool_name=tool_name,
+                    role=role,
+                    action="provenance_block",
+                    matched_rule="mcp04_policy",
+                    reason=prov.reason,
+                    arguments=arguments,
+                    blocked_by="mcp04_policy",
+                )
+                return {
+                    "ok": False,
+                    "error": "provenance_quarantine",
+                    "reason": prov.reason,
+                }
+    except Exception:
+        import logging as _logging
+        _logging.getLogger("interlock.mcp_gateway").exception(
+            "Provenance check failed at tool-call time -- failing open"
+        )
+
     # 5. Forward to actual MCP server
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -650,9 +679,29 @@ def _log_mcp_gateway_audit(
 # ── MCP Server Registration ───────────────────────────────────────────────────
 def register_mcp_server(server_id: str, config: dict) -> dict:
     """Register a new MCP server in the persistent DB registry."""
+    import logging as _logging
+    _logger = _logging.getLogger("interlock.mcp_gateway")
     ok = db.register_mcp_server(server_id, config)
     if not ok:
         return {"ok": False, "error": "already_exists"}
+    try:
+        from core.provenance import evaluate_provenance
+        policy = db.load_mcp04_policy()
+        server_record = dict(config)
+        prov = evaluate_provenance(server_record, policy)
+        db.update_mcp_server_provenance(server_id, prov.status)
+        _log_mcp_gateway_audit(
+            server_id=server_id,
+            tool_name="",
+            role="system",
+            action="provenance_check",
+            matched_rule="mcp04_policy",
+            reason=prov.reason,
+            arguments={},
+            blocked_by="mcp04_policy" if prov.status in ("quarantine", "denied") else "",
+        )
+    except Exception:
+        _logger.exception("Provenance check failed at registration -- failing open")
     return {"ok": True, "server_id": server_id, "verified": False}
 
 def list_mcp_servers() -> list:
