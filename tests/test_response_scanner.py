@@ -84,8 +84,8 @@ assert "AKIAIOSFODNN7EXAMPLE" not in r.sanitized_content
 assert "[REDACTED-API-KEY]" in r.sanitized_content
 print("  OK")
 
-# ── Test 8: Response > 50KB with no PII → CONTEXT_OVERSHARING ────────────────
-print("Test 8: response > 50KB with no PII → CONTEXT_OVERSHARING ...")
+# ── Test 8: Response > 50KB with no PII --CONTEXT_OVERSHARING ────────────────
+print("Test 8: response > 50KB with no PII --CONTEXT_OVERSHARING ...")
 big = "x" * 51_000
 r = scan_pii_and_volume(big)
 assert r.is_threat
@@ -94,8 +94,8 @@ assert r.safe_to_proceed is True
 assert r.sanitized_content is None
 print("  OK")
 
-# ── Test 9: JSON array with 501 items → CONTEXT_OVERSHARING ──────────────────
-print("Test 9: JSON array with 501 items → CONTEXT_OVERSHARING ...")
+# ── Test 9: JSON array with 501 items --CONTEXT_OVERSHARING ──────────────────
+print("Test 9: JSON array with 501 items --CONTEXT_OVERSHARING ...")
 big_array = json.dumps([{"id": i, "name": f"item_{i}"} for i in range(501)])
 r = scan_pii_and_volume(big_array)
 assert r.is_threat
@@ -104,8 +104,8 @@ assert r.safe_to_proceed is True
 assert r.sanitized_content is None
 print("  OK")
 
-# ── Test 10: PII + volume anomaly → OUTPUT_DATA_LEAK wins ────────────────────
-print("Test 10: PII + volume anomaly → OUTPUT_DATA_LEAK wins ...")
+# ── Test 10: PII + volume anomaly --OUTPUT_DATA_LEAK wins ────────────────────
+print("Test 10: PII + volume anomaly --OUTPUT_DATA_LEAK wins ...")
 pii_and_big = "Customer SSN: 123-45-6789. " + ("y" * 51_000)
 r = scan_pii_and_volume(pii_and_big)
 assert r.is_threat
