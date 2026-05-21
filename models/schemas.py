@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from enum import Enum
 
 class ThreatLevel(str, Enum):
@@ -29,3 +29,15 @@ class ScanResult(BaseModel):
     tool_metadata: Optional[dict] = None
 
 
+class ResponseScanResult(BaseModel):
+    is_threat: bool
+    threat_level: ThreatLevel
+    threat_type: Optional[str] = None       # PROMPT_INJECTION | OUTPUT_DATA_LEAK | CONTEXT_OVERSHARING
+    reason: str
+    safe_to_proceed: bool
+    confidence: Optional[float] = None
+    sanitized_content: Optional[str] = None  # set only when redactions were made; None = untouched
+    redactions: Optional[List[str]] = None   # unique label list, e.g. ["REDACTED-SSN"]
+    matched_patterns: Optional[List[str]] = None  # patterns/labels that triggered detection
+    scan_time_ms: Optional[float] = None
+    risk_score: Optional[int] = None
