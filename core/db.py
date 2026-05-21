@@ -203,10 +203,11 @@ CREATE TABLE IF NOT EXISTS shadow_mcp_servers (
 );
 
 CREATE TABLE IF NOT EXISTS shadow_scan_targets (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    url      TEXT NOT NULL UNIQUE,
-    enabled  INTEGER DEFAULT 1,
-    added_at TEXT NOT NULL
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    url        TEXT NOT NULL UNIQUE,
+    probe_path TEXT DEFAULT '/tools/list',
+    enabled    INTEGER DEFAULT 1,
+    added_at   TEXT NOT NULL
 );
 """
 
