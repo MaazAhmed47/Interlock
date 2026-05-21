@@ -8,6 +8,7 @@ from core.metadata_policy import evaluate_metadata_policy
 from core.tool_inspector import inspect_tool_call
 from core.tool_metadata import normalize_tool_metadata
 from core import db
+from core.response_scanner import scan_injection, scan_pii_and_volume
 
 # ── MCP Server Registry ───────────────────────────────────────────────────────
 # Used only as seed data for db.seed_mcp_servers() — never read directly at runtime.
@@ -286,6 +287,9 @@ async def proxy_mcp_tool_call(
             "message": f"MCP server '{server_id}' is registered but not verified. Cannot proxy calls.",
         }
 
+    # Fetch per-key volume thresholds for the response scanner (O(1) hash lookup).
+    key_config = db.lookup_key(api_key) if api_key else {}
+
     # 2. Check tool is in allowed list
     allowed = server.get("allowed_tools", [])
     blocked = server.get("blocked_tools", [])
@@ -459,27 +463,62 @@ async def proxy_mcp_tool_call(
             resp = await client.post(server["url"], json=payload)
             data = resp.json()
 
-            # 6. Scan the response for data leaks
+            # 6. Scan the response — MCP06 (injection) then MCP10 (PII + volume).
             response_text = json.dumps(data)
-            from core.detector import PII_PATTERNS
-            for pattern in PII_PATTERNS:
-                if re.search(pattern, response_text):
-                    _log_mcp_policy_audit(policy_decision, blocked_by="response_scan")
-                    return {
-                        "ok": False,
-                        "error": "response_data_leak",
-                        "message": "MCP server response contains sensitive data (PII detected). Blocked.",
-                        "blocked_response": True,
-                        "policy_decision": policy_decision,
-                    }
+
+            inj_result = scan_injection(response_text)
+            if inj_result.is_threat:
+                _log_mcp_policy_audit(
+                    policy_decision,
+                    blocked_by="response_injection",
+                    extra={
+                        "threat_type": inj_result.threat_type,
+                        "confidence": inj_result.confidence,
+                        "matched_patterns": inj_result.matched_patterns,
+                    },
+                )
+                return {
+                    "ok": False,
+                    "error": "response_prompt_injection",
+                    "message": "Tool response contains prompt injection attempt. Blocked.",
+                    "blocked_response": True,
+                    "threat_type": inj_result.threat_type,
+                    "confidence": inj_result.confidence,
+                    "matched_patterns": inj_result.matched_patterns,
+                    "policy_decision": policy_decision,
+                }
+
+            pii_result = scan_pii_and_volume(
+                response_text,
+                max_bytes=key_config.get("max_response_bytes", 50_000),
+                max_items=key_config.get("max_array_items", 500),
+            )
+            if pii_result.is_threat:
+                _log_mcp_policy_audit(
+                    policy_decision,
+                    blocked_by="response_pii",
+                    extra={
+                        "threat_type": pii_result.threat_type,
+                        "confidence": pii_result.confidence,
+                        "matched_patterns": pii_result.matched_patterns,
+                        "redactions": pii_result.redactions,
+                    },
+                )
+
+            if pii_result.is_threat and pii_result.sanitized_content is not None:
+                effective_result = pii_result.sanitized_content
+            else:
+                effective_result = response_text
 
             _log_mcp_policy_audit(policy_decision, blocked_by="")
             return {
                 "ok": True,
                 "server_id": server_id,
                 "tool_name": tool_name,
-                "result": data.get("result"),
+                "result": json.loads(effective_result).get("result"),
                 "scanned": True,
+                "threat_flags": [pii_result.threat_type] if pii_result.is_threat else [],
+                "redactions": pii_result.redactions,
                 "drift": drift_context,
                 "policy_decision": policy_decision,
             }
@@ -492,10 +531,16 @@ async def proxy_mcp_tool_call(
         return {"ok": False, "error": "mcp_server_error", "message": str(e)[:200]}
 
 
-def _log_mcp_policy_audit(policy_decision: Dict[str, Any], blocked_by: str = "") -> None:
+def _log_mcp_policy_audit(
+    policy_decision: Dict[str, Any],
+    blocked_by: str = "",
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
     audit = dict(policy_decision.get("audit_context") or {})
     audit["action"] = audit.get("decision") or policy_decision.get("action", "")
     audit["blocked_by"] = blocked_by
+    if extra:
+        audit.update(extra)
     db.log_mcp_audit_event(audit)
 
 

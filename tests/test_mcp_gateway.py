@@ -345,10 +345,10 @@ print(f"  OK — unknown role denied by default")
 
 # ── proxy_mcp_tool_call — response PII scanning ──────────────────────────────
 
-print("Test 23: MCP response containing SSN is blocked ...")
+print("Test 23: MCP response containing SSN is redacted (not blocked) ...")
 mock_resp = MagicMock()
 mock_resp.json.return_value = {
-    "result": {"data": "Customer record — SSN: 123-45-6789, dob: 1980-01-01"}
+    "result": {"data": "Customer record -- SSN: 123-45-6789, dob: 1980-01-01"}
 }
 mock_client = AsyncMock()
 mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -359,11 +359,12 @@ with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
     out = asyncio.run(proxy_mcp_tool_call(
         "trusted-filesystem", "read_file", {"path": "customers.csv"}
     ))
-assert out["ok"] is False
-assert out["error"] == "response_data_leak"
-print(f"  OK — {out['error']}")
+assert out["ok"] is True, f"Expected ok=True (redact+pass), got: {out}"
+assert "REDACTED-SSN" in (out.get("redactions") or []), f"Expected SSN redaction in {out.get('redactions')}"
+assert "OUTPUT_DATA_LEAK" in (out.get("threat_flags") or [])
+print(f"  OK -- redactions={out['redactions']}, threat_flags={out['threat_flags']}")
 
-print("Test 24: MCP response containing email address is blocked ...")
+print("Test 24: MCP response containing email address is redacted (not blocked) ...")
 mock_resp2 = MagicMock()
 mock_resp2.json.return_value = {
     "result": {"content": "Contact: john.doe@acme-corp.com for details."}
@@ -377,9 +378,10 @@ with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client2):
     out = asyncio.run(proxy_mcp_tool_call(
         "trusted-filesystem", "read_file", {"path": "contacts.txt"}
     ))
-assert out["ok"] is False
-assert out["error"] == "response_data_leak"
-print(f"  OK — {out['error']}")
+assert out["ok"] is True, f"Expected ok=True (redact+pass), got: {out}"
+assert "REDACTED-EMAIL" in (out.get("redactions") or []), f"Expected email redaction in {out.get('redactions')}"
+assert "OUTPUT_DATA_LEAK" in (out.get("threat_flags") or [])
+print(f"  OK -- redactions={out['redactions']}, threat_flags={out['threat_flags']}")
 
 print("Test 25: clean MCP response passes through with metadata policy context ...")
 db.upsert_mcp_tool_metadata("trusted-filesystem", {

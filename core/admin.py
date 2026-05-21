@@ -51,6 +51,8 @@ class UpdateKeyRequest(BaseModel):
     webhook_url: Optional[str] = None
     custom_policy: Optional[Dict[str, Any]] = None
     siem_configs: Optional[List[Dict[str, Any]]] = None
+    max_response_bytes: Optional[int] = None
+    max_array_items: Optional[int] = None
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────

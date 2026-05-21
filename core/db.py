@@ -203,6 +203,8 @@ def init_db() -> None:
         _ensure_column(conn, "mcp_audit_log", "drift_action", "TEXT NOT NULL DEFAULT 'allow'")
         _ensure_column(conn, "mcp_audit_log", "drift_types", "TEXT NOT NULL DEFAULT '[]'")
         _ensure_column(conn, "mcp_audit_log", "drift_reasons", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "api_keys", "max_response_bytes", "INTEGER DEFAULT 50000")
+        _ensure_column(conn, "api_keys", "max_array_items",    "INTEGER DEFAULT 500")
     logger.info("SQLite DB initialized at %s", DB_PATH)
 
 
@@ -264,10 +266,10 @@ def _unique_list(values: List[Any]) -> List[Any]:
 
 # ── Plan defaults ────────────────────────────────────────────────────────────
 PLAN_DEFAULTS = {
-    "free":      {"monthly_limit": 1000,   "rate_per_min": 10,  "fail_mode": "fail_closed"},
-    "developer": {"monthly_limit": 50000,  "rate_per_min": 60,  "fail_mode": "fail_open_safe"},
-    "startup":   {"monthly_limit": 500000, "rate_per_min": 300, "fail_mode": "fail_open_safe"},
-    "enterprise":{"monthly_limit": 0,      "rate_per_min": 1000,"fail_mode": "fail_open_safe"},  # 0 = unlimited
+    "free":      {"monthly_limit": 1000,   "rate_per_min": 10,   "fail_mode": "fail_closed",    "max_response_bytes": 50_000, "max_array_items": 500},
+    "developer": {"monthly_limit": 50000,  "rate_per_min": 60,   "fail_mode": "fail_open_safe",  "max_response_bytes": 50_000, "max_array_items": 500},
+    "startup":   {"monthly_limit": 500000, "rate_per_min": 300,  "fail_mode": "fail_open_safe",  "max_response_bytes": 50_000, "max_array_items": 500},
+    "enterprise":{"monthly_limit": 0,      "rate_per_min": 1000, "fail_mode": "fail_open_safe",  "max_response_bytes": 50_000, "max_array_items": 500},  # 0 = unlimited
 }
 
 
@@ -288,10 +290,12 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
     monthly_limit = overrides.get("monthly_limit", defaults["monthly_limit"])
     rate_per_min  = overrides.get("rate_per_min",  defaults["rate_per_min"])
     fail_mode     = overrides.get("fail_mode",     defaults["fail_mode"])
-    webhook_url   = overrides.get("webhook_url")
-    custom_policy = overrides.get("custom_policy")
-    siem_configs  = overrides.get("siem_configs")
-    upstream_key  = overrides.get("upstream_key")
+    webhook_url        = overrides.get("webhook_url")
+    custom_policy      = overrides.get("custom_policy")
+    siem_configs       = overrides.get("siem_configs")
+    upstream_key       = overrides.get("upstream_key")
+    max_response_bytes = overrides.get("max_response_bytes", defaults.get("max_response_bytes", 50_000))
+    max_array_items    = overrides.get("max_array_items",    defaults.get("max_array_items",    500))
 
     with _db_lock, get_conn() as conn:
         conn.execute(
@@ -299,8 +303,8 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
             INSERT INTO api_keys
               (key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
                fail_mode, webhook_url, custom_policy, siem_configs, upstream_key,
-               is_active, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               is_active, created_at, max_response_bytes, max_array_items)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
@@ -310,6 +314,8 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
                 upstream_key,
                 True,
                 datetime.utcnow().isoformat(),
+                max_response_bytes,
+                max_array_items,
             ),
         )
 
