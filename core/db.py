@@ -183,6 +183,31 @@ CREATE INDEX IF NOT EXISTS idx_mcp_audit_ts ON mcp_audit_log(ts);
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_server_tool ON mcp_audit_log(server_id, tool_name);
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_action ON mcp_audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_drift_severity ON mcp_audit_log(drift_severity);
+
+CREATE TABLE IF NOT EXISTS system_config (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS shadow_mcp_servers (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    url                    TEXT NOT NULL UNIQUE,
+    probe_path             TEXT DEFAULT '/tools/list',
+    status                 TEXT DEFAULT 'unreviewed',
+    first_seen             TEXT NOT NULL,
+    last_seen              TEXT NOT NULL,
+    auth_required          INTEGER DEFAULT 0,
+    tool_listing_available INTEGER DEFAULT 0,
+    risk_score             INTEGER DEFAULT 0,
+    notes                  TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS shadow_scan_targets (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    url      TEXT NOT NULL UNIQUE,
+    enabled  INTEGER DEFAULT 1,
+    added_at TEXT NOT NULL
+);
 """
 
 
@@ -205,6 +230,13 @@ def init_db() -> None:
         _ensure_column(conn, "mcp_audit_log", "drift_reasons", "TEXT NOT NULL DEFAULT '[]'")
         _ensure_column(conn, "api_keys", "max_response_bytes", "INTEGER DEFAULT 50000")
         _ensure_column(conn, "api_keys", "max_array_items",    "INTEGER DEFAULT 500")
+        _ensure_column(conn, "mcp_servers", "source_type",       "TEXT DEFAULT 'unknown'")
+        _ensure_column(conn, "mcp_servers", "registry",          "TEXT DEFAULT ''")
+        _ensure_column(conn, "mcp_servers", "package_name",      "TEXT DEFAULT ''")
+        _ensure_column(conn, "mcp_servers", "package_version",   "TEXT DEFAULT ''")
+        _ensure_column(conn, "mcp_servers", "source_url",        "TEXT DEFAULT ''")
+        _ensure_column(conn, "mcp_servers", "source_hash",       "TEXT DEFAULT ''")
+        _ensure_column(conn, "mcp_servers", "provenance_status", "TEXT DEFAULT 'unknown'")
     logger.info("SQLite DB initialized at %s", DB_PATH)
 
 
