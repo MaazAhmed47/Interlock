@@ -1,6 +1,8 @@
-from pydantic import BaseModel
-from typing import Optional, List
 from enum import Enum
+from typing import List, Optional
+
+from pydantic import BaseModel
+
 
 class ThreatLevel(str, Enum):
     SAFE = "SAFE"
@@ -9,10 +11,70 @@ class ThreatLevel(str, Enum):
     HIGH = "HIGH"
     CRITICAL = "CRITICAL"
 
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    model: str = "llama-3.3-70b-versatile"
+    messages: List[ChatMessage]
+    stream: Optional[bool] = False
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+
+
 class ScanRequest(BaseModel):
     prompt: str
     user_id: Optional[str] = "anonymous"
     context: Optional[str] = None
+
+
+class ToolCallRequest(BaseModel):
+    tool_name: str
+    tool_args: dict
+    role: Optional[str] = None
+
+
+class ShadowScanRequest(BaseModel):
+    prompt: str
+    user_id: Optional[str] = "anonymous"
+
+
+class SIEMTestRequest(BaseModel):
+    provider: str
+    config: dict
+
+
+class MCPToolCallRequest(BaseModel):
+    server_id: str
+    tool_name: str
+    arguments: dict
+    role: Optional[str] = None
+
+
+class MCPRegisterRequest(BaseModel):
+    server_id: str
+    url: str
+    description: Optional[str] = ""
+    allowed_tools: Optional[List[str]] = []
+    blocked_tools: Optional[List[str]] = []
+    rate_limit: Optional[int] = 60
+
+
+class MCPDiscoverRequest(BaseModel):
+    server_url: str
+    server_id: Optional[str] = None
+
+
+class MCPToolValidateRequest(BaseModel):
+    tool_definition: dict
+
+
+class MCPToolReviewRequest(BaseModel):
+    reviewer: Optional[str] = "operator"
+    reason: Optional[str] = ""
 
 
 class ScanResult(BaseModel):
@@ -25,19 +87,19 @@ class ScanResult(BaseModel):
     confidence: Optional[float] = None
     layer_caught: Optional[str] = None
     scan_time_ms: Optional[float] = None
-    risk_score: Optional[int] = None      # 0-100
+    risk_score: Optional[int] = None
     tool_metadata: Optional[dict] = None
 
 
 class ResponseScanResult(BaseModel):
     is_threat: bool
     threat_level: ThreatLevel
-    threat_type: Optional[str] = None       # PROMPT_INJECTION | OUTPUT_DATA_LEAK | CONTEXT_OVERSHARING
+    threat_type: Optional[str] = None
     reason: str
     safe_to_proceed: bool
     confidence: Optional[float] = None
-    sanitized_content: Optional[str] = None  # set only when redactions were made; None = untouched
-    redactions: Optional[List[str]] = None   # unique label list, e.g. ["REDACTED-SSN"]
-    matched_patterns: Optional[List[str]] = None  # patterns/labels that triggered detection
+    sanitized_content: Optional[str] = None
+    redactions: Optional[List[str]] = None
+    matched_patterns: Optional[List[str]] = None
     scan_time_ms: Optional[float] = None
     risk_score: Optional[int] = None
