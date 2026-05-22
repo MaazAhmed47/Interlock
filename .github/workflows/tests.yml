@@ -25,4 +25,4 @@ jobs:
           python tests/test_metadata_policy.py
           python tests/test_mcp_registry_audit.py
           python tests/test_mcp_review_api.py
-          python -m pytest tests/test_new_routes.py -v
+          python -m pytest tests/test_new_routes.py tests/test_response_scanner.py tests/test_provenance.py tests/test_shadow_scanner.py -v
