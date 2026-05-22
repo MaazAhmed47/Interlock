@@ -2,7 +2,7 @@ import re
 import json
 import httpx
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from models.schemas import ScanResult, ThreatLevel
 from core.metadata_policy import evaluate_metadata_policy
 from core.tool_inspector import inspect_tool_call
@@ -482,7 +482,7 @@ async def proxy_mcp_tool_call(
         async with httpx.AsyncClient(timeout=30.0) as client:
             payload = {
                 "jsonrpc": "2.0",
-                "id": int(datetime.utcnow().timestamp()),
+                "id": int(datetime.now(timezone.utc).timestamp()),
                 "method": "tools/call",
                 "params": {
                     "name": tool_name,

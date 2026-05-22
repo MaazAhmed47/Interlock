@@ -1,8 +1,7 @@
 """
 SQLite-backed API key storage.
 
-Replaces the hardcoded VALID_API_KEYS / FAIL_MODE_BY_KEY / WEBHOOK_URLS /
-CUSTOM_POLICIES / SIEM_CONFIGS_BY_KEY dicts with a single ApiKey record.
+Replaces legacy per-key dictionaries with a single ApiKey record.
 
 All per-key state lives in one row. JSON columns for the things that vary in shape
 (custom policies, SIEM configs) so we don't need a migration every time the rule
@@ -20,7 +19,7 @@ import hashlib
 import logging
 import copy
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from threading import Lock
 from typing import Optional, List, Dict, Any
 from core.mcp_drift import classify_tool_drift
@@ -346,7 +345,7 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
                 json.dumps(siem_configs)  if siem_configs  else None,
                 upstream_key,
                 True,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 max_response_bytes,
                 max_array_items,
             ),
@@ -384,7 +383,7 @@ def revoke_key(key_prefix: str) -> bool:
     with _db_lock, get_conn() as conn:
         cursor = conn.execute(
             "UPDATE api_keys SET is_active = FALSE, revoked_at = ? WHERE key_prefix = ? AND is_active = TRUE",
-            (datetime.utcnow().isoformat(), key_prefix),
+            (datetime.now(timezone.utc).isoformat(), key_prefix),
         )
         revoked = cursor.rowcount > 0
     if revoked:
@@ -435,12 +434,12 @@ def log_usage(key_id: int, endpoint: str, threat_blocked: bool = False) -> None:
     with _db_lock, get_conn() as conn:
         conn.execute(
             "INSERT INTO usage_log (key_id, ts, endpoint, threat_blocked) VALUES (?, ?, ?, ?)",
-            (key_id, datetime.utcnow().isoformat(), endpoint, bool(threat_blocked)),
+            (key_id, datetime.now(timezone.utc).isoformat(), endpoint, bool(threat_blocked)),
         )
 
 
 def usage_this_month(key_id: int) -> int:
-    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
     with get_conn() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM usage_log WHERE key_id = ? AND ts >= ?",
@@ -456,12 +455,30 @@ def seed_legacy_keys() -> None:
     don't exist yet. Lets you flip the proxy over with zero customer disruption.
     """
     legacy = [
-        ("lf-free-demo-key-123", "free",      "Legacy free demo"),
-        ("lf-dev-key-456",       "developer", "Legacy developer"),
-        ("lf-startup-key-789",   "startup",   "Legacy startup"),
+        (
+            "lf-free-demo-key-123",
+            "free",
+            "Legacy free demo",
+            {"blocked_keywords": [], "max_prompt_length": 4000},
+        ),
+        (
+            "lf-dev-key-456",
+            "developer",
+            "Legacy developer",
+            {"blocked_keywords": ["competitor", "lawsuit", "confidential"], "max_prompt_length": 2000},
+        ),
+        (
+            "lf-startup-key-789",
+            "startup",
+            "Legacy startup",
+            {"blocked_keywords": ["hack", "crack", "pirate", "warez"], "max_prompt_length": 3000},
+        ),
     ]
-    for raw, plan, label in legacy:
-        if lookup_key(raw):
+    for raw, plan, label, custom_policy in legacy:
+        existing = lookup_key(raw)
+        if existing:
+            if not existing.get("custom_policy"):
+                update_key(existing["key_prefix"], custom_policy=custom_policy)
             continue
         defaults = PLAN_DEFAULTS[plan]
         with _db_lock, get_conn() as conn:
@@ -469,15 +486,16 @@ def seed_legacy_keys() -> None:
                 """
                 INSERT OR IGNORE INTO api_keys
                   (key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
-                   fail_mode, is_active, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   fail_mode, custom_policy, is_active, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     _hash_key(raw), raw[:12], label, plan,
                     defaults["monthly_limit"], defaults["rate_per_min"],
                     defaults["fail_mode"],
+                    json.dumps(custom_policy),
                     True,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                 ),
             )
         logger.info("Seeded legacy key: %s (%s)", raw[:12], plan)
@@ -571,7 +589,7 @@ def register_mcp_server(server_id: str, config: dict) -> bool:
                     json.dumps(config.get("blocked_tools", [])),
                     config.get("rate_limit", 60),
                     False,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                 ),
             )
         logger.info("Registered MCP server: %s", server_id)
@@ -691,7 +709,7 @@ def seed_mcp_servers() -> None:
                     json.dumps(s["allowed_tools"]),
                     json.dumps(s["blocked_tools"]),
                     s["rate_limit"], s["verified"],
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                 ),
             )
             # Always patch tool lists in case rows pre-existed with stale/empty data.
@@ -726,7 +744,7 @@ def upsert_mcp_tool_metadata(server_id: str, tool: dict, normalized_metadata: di
     tool_schema_hash = _hash_json(schema)
     description_hash = _hash_text(tool.get("description", ""))
     raw_annotations = tool.get("annotations") or {}
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     with _db_lock, get_conn() as conn:
         existing = conn.execute(
@@ -1040,7 +1058,7 @@ def quarantine_mcp_tool(
             (
                 json.dumps(drift_types),
                 json.dumps(drift_reasons),
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 server_id,
                 tool_name,
             ),
@@ -1107,7 +1125,7 @@ def merge_stored_and_runtime_metadata(stored_metadata: dict, runtime_metadata: d
 def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
     """Persist a durable MCP policy/audit event."""
     event = event or {}
-    ts = event.get("ts") or datetime.utcnow().isoformat()
+    ts = event.get("ts") or datetime.now(timezone.utc).isoformat()
     with _db_lock, get_conn() as conn:
         cursor = conn.execute(
             """

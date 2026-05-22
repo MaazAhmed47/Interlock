@@ -2,12 +2,12 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "llm-firewall.fullname" . }}
+  name: {{ include "interlock.fullname" . }}
   labels:
-    {{- include "llm-firewall.labels" . | nindent 4 }}
+    {{- include "interlock.labels" . | nindent 4 }}
 spec:
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
   selector:
     matchLabels:
-      {{- include "llm-firewall.selectorLabels" . | nindent 6 }}
+      {{- include "interlock.selectorLabels" . | nindent 6 }}
 {{- end }}

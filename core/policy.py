@@ -2,26 +2,9 @@ from models.schemas import ScanResult, ThreatLevel
 from typing import Optional
 from core import db
 
-# Fallback only. New per-key policies should be set via /admin/keys with
-# custom_policy in the JSON body. This dict exists for legacy seeded keys.
-CUSTOM_POLICIES = {
-    "lf-free-demo-key-123": {
-        "blocked_keywords": [],
-        "max_prompt_length": 4000,
-    },
-    "lf-dev-key-456": {
-        "blocked_keywords": ["competitor", "lawsuit", "confidential"],
-        "max_prompt_length": 2000,
-    },
-    "lf-startup-key-789": {
-        "blocked_keywords": ["hack", "crack", "pirate", "warez"],
-        "max_prompt_length": 3000,
-    },
-}
-
 def policy_scan(prompt: str, api_key: str) -> Optional[ScanResult]:
     record = db.lookup_key(api_key)
-    policy = (record or {}).get("custom_policy") or CUSTOM_POLICIES.get(api_key)
+    policy = (record or {}).get("custom_policy")
     if not policy:
         return None
 

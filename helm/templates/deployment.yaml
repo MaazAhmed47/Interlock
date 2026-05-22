@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "llm-firewall.fullname" . }}
+  name: {{ include "interlock.fullname" . }}
   labels:
-    {{- include "llm-firewall.labels" . | nindent 4 }}
+    {{- include "interlock.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
@@ -15,17 +15,17 @@ spec:
       maxUnavailable: 0
   selector:
     matchLabels:
-      {{- include "llm-firewall.selectorLabels" . | nindent 6 }}
+      {{- include "interlock.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "llm-firewall.selectorLabels" . | nindent 8 }}
+        {{- include "interlock.selectorLabels" . | nindent 8 }}
       {{- with .Values.podAnnotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "llm-firewall.serviceAccountName" . }}
+      serviceAccountName: {{ include "interlock.serviceAccountName" . }}
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -35,7 +35,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
-        - name: firewall
+        - name: gateway
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- with .Values.securityContext }}
@@ -48,9 +48,9 @@ spec:
               protocol: TCP
           envFrom:
             - configMapRef:
-                name: {{ include "llm-firewall.fullname" . }}-config
+                name: {{ include "interlock.fullname" . }}-config
             - secretRef:
-                name: {{ if .Values.existingSecret }}{{ .Values.existingSecret }}{{ else }}{{ include "llm-firewall.fullname" . }}-secrets{{ end }}
+                name: {{ if .Values.existingSecret }}{{ .Values.existingSecret }}{{ else }}{{ include "interlock.fullname" . }}-secrets{{ end }}
           {{- with .Values.env }}
           env:
             {{- range $key, $value := . }}
@@ -90,7 +90,7 @@ spec:
         {{- if .Values.persistence.enabled }}
         - name: data
           persistentVolumeClaim:
-            claimName: {{ include "llm-firewall.fullname" . }}-data
+            claimName: {{ include "interlock.fullname" . }}-data
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

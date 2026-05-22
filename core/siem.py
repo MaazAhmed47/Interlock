@@ -2,7 +2,7 @@ import httpx
 import asyncio
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from models.schemas import ScanResult
 
@@ -87,7 +87,7 @@ def build_datadog_event(result: ScanResult, api_key_prefix: str, source: str = "
         "service": "interlock",
         "status": sev["datadog"],
         "message": f"[{result.threat_level.value}] {result.threat_type or 'SCAN'}: {result.reason[:200]}",
-        "timestamp": int(datetime.utcnow().timestamp() * 1000),
+        "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
         "attributes": {
             "is_threat": result.is_threat,
             "threat_level": result.threat_level.value,
@@ -103,7 +103,7 @@ def build_datadog_event(result: ScanResult, api_key_prefix: str, source: str = "
 
 def build_splunk_event(result: ScanResult, api_key_prefix: str) -> dict:
     return {
-        "time": int(datetime.utcnow().timestamp()),
+        "time": int(datetime.now(timezone.utc).timestamp()),
         "host": "interlock",
         "source": "interlock",
         "sourcetype": "interlock:threat",
@@ -125,7 +125,7 @@ def build_splunk_event(result: ScanResult, api_key_prefix: str) -> dict:
 
 def build_elastic_event(result: ScanResult, api_key_prefix: str) -> dict:
     return {
-        "@timestamp": datetime.utcnow().isoformat() + "Z",
+        "@timestamp": datetime.now(timezone.utc).isoformat(),
         "service": {"name": "interlock", "version": "1.0.0"},
         "event": {
             "category": "intrusion_detection",
@@ -181,10 +181,10 @@ def build_slack_event(result: ScanResult, api_key_prefix: str) -> dict:
                 {"title": "Reason",       "value": result.reason[:300], "short": False},
                 {"title": "Prompt",       "value": f"```{(result.original_prompt or '')[:200]}```", "short": False},
                 {"title": "API Key",      "value": api_key_prefix, "short": True},
-                {"title": "Time",         "value": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"), "short": True},
+                {"title": "Time",         "value": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"), "short": True},
             ],
             "footer": "Interlock",
-            "ts": int(datetime.utcnow().timestamp())
+            "ts": int(datetime.now(timezone.utc).timestamp())
         }]
     }
 
@@ -282,7 +282,7 @@ async def send_to_siem(
 
         elif provider == "webhook":
             payload = {
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "is_threat": result.is_threat,
                 "threat_level": result.threat_level.value,
                 "threat_type": result.threat_type,

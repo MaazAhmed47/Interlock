@@ -2,7 +2,7 @@ import json
 import os
 import hashlib
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from models.schemas import ScanResult, ThreatLevel
 
 MEMORY_FILE = "data/learned_patterns.json"
@@ -57,7 +57,7 @@ def learn_from_result(prompt: str, result: ScanResult):
         "threat_type": result.threat_type,
         "reason": result.reason,
         "confidence": result.confidence,
-        "learned_at": datetime.utcnow().isoformat(),
+        "learned_at": datetime.now(timezone.utc).isoformat(),
         "times_matched": 0,
     }
 
@@ -72,7 +72,7 @@ def report_false_negative(prompt: str, correct_threat_type: str):
         "prompt": prompt[:200],
         "keywords": _extract_keywords(prompt),
         "correct_threat_type": correct_threat_type,
-        "reported_at": datetime.utcnow().isoformat(),
+        "reported_at": datetime.now(timezone.utc).isoformat(),
     })
     _save(data)
 

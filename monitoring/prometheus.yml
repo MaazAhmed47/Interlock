@@ -5,5 +5,5 @@ global:
 scrape_configs:
   - job_name: 'interlock'
     static_configs:
-      - targets: ['interlock:8000']
+      - targets: ['interlock:8001']
     metrics_path: '/metrics'

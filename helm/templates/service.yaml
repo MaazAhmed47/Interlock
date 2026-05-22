@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "llm-firewall.fullname" . }}
+  name: {{ include "interlock.fullname" . }}
   labels:
-    {{- include "llm-firewall.labels" . | nindent 4 }}
+    {{- include "interlock.labels" . | nindent 4 }}
   {{- with .Values.service.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -16,4 +16,4 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "llm-firewall.selectorLabels" . | nindent 4 }}
+    {{- include "interlock.selectorLabels" . | nindent 4 }}

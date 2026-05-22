@@ -1,5 +1,5 @@
 ╔══════════════════════════════════════════════════════════════╗
-║          🛡️  LLM FIREWALL DEPLOYED SUCCESSFULLY  🛡️           ║
+║          🛡️  INTERLOCK DEPLOYED SUCCESSFULLY  🛡️           ║
 ╚══════════════════════════════════════════════════════════════╝
 
 Release: {{ .Release.Name }}
@@ -9,7 +9,7 @@ App Version: {{ .Chart.AppVersion }}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🌐 ACCESS YOUR FIREWALL:
+🌐 ACCESS INTERLOCK:
 
 {{- if .Values.ingress.enabled }}
 {{- range .Values.ingress.hosts }}
@@ -17,7 +17,7 @@ App Version: {{ .Chart.AppVersion }}
 {{- end }}
 {{- else }}
   Run this to port-forward:
-    kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "llm-firewall.fullname" . }} 8001:80
+    kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "interlock.fullname" . }} 8001:80
   Then visit: http://localhost:8001/docs
 {{- end }}
 
@@ -25,7 +25,7 @@ App Version: {{ .Chart.AppVersion }}
 
 🚀 QUICK TEST:
 
-  curl -X POST https://api.llmfirewall.example.com/v1/chat/completions \
+  curl -X POST https://api.interlock.example.com/v1/chat/completions \
     -H "x-api-key: lf-dev-key-456" \
     -H "Content-Type: application/json" \
     -d '{
@@ -37,17 +37,17 @@ App Version: {{ .Chart.AppVersion }}
 
 📊 MONITORING:
 
-  View pods:        kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "llm-firewall.name" . }}
-  View logs:        kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "llm-firewall.name" . }} -f
+  View pods:        kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "interlock.name" . }}
+  View logs:        kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "interlock.name" . }} -f
   View HPA:         kubectl get hpa -n {{ .Release.Namespace }}
-  Health check:     kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "llm-firewall.fullname" . }} -- curl localhost:8001/health
+  Health check:     kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "interlock.fullname" . }} -- curl localhost:8001/health
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 🔐 NEXT STEPS:
 
   1. Configure upstream LLM API keys:
-     kubectl edit secret {{ include "llm-firewall.fullname" . }}-secrets -n {{ .Release.Namespace }}
+     kubectl edit secret {{ include "interlock.fullname" . }}-secrets -n {{ .Release.Namespace }}
 
   2. Set up custom domain & TLS:
      Update values.yaml -> ingress.hosts
@@ -56,11 +56,11 @@ App Version: {{ .Chart.AppVersion }}
      Set values.yaml -> metrics.serviceMonitor.enabled=true
 
   4. View dashboard:
-     Open https://api.llmfirewall.example.com/dashboard.html
+     Open https://api.interlock.example.com/dashboard.html
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-📚 DOCUMENTATION: https://docs.llmfirewall.dev
-💬 SUPPORT:       support@llmfirewall.dev
-🔒 SECURITY:      security@llmfirewall.dev
+📚 DOCUMENTATION: https://github.com/MaazAhmed47/Interlock
+💬 SUPPORT:       maazahmed1856@gmail.com
+🔒 SECURITY:      maazahmed1856@gmail.com
 

@@ -17,7 +17,3 @@ THREAT_LEVELS = {
     "HIGH": 3,
     "CRITICAL": 4
 }
-
-print(f"GROQ key loaded: {bool(GROQ_API_KEY)}")
-print(f"GROQ key format valid: {bool(GROQ_API_KEY and GROQ_API_KEY.startswith('gsk_'))}")
-print(f"GROQ model: {GROQ_MODEL}")

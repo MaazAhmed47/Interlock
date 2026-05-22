@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from models.schemas import ScanResult, ThreatLevel
 from typing import Optional
 
@@ -71,7 +71,7 @@ def log_shadow(result: ScanResult, api_key: str):
     try:
         logs = _load()
         logs.insert(0, {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "api_key_prefix": api_key[:8] + "...",
             "would_block": True,
             "threat_level": result.threat_level.value,

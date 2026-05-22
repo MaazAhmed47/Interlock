@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from models.schemas import ScanResult
 
 # In-memory store (moves to PostgreSQL in production)
@@ -8,7 +8,7 @@ MAX_HISTORY = 500  # per key
 
 def save_scan(api_key: str, result: ScanResult):
     record = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "is_threat": result.is_threat,
         "threat_level": result.threat_level.value,
         "threat_type": result.threat_type,

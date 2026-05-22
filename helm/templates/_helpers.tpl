@@ -1,14 +1,14 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "llm-firewall.name" -}}
+{{- define "interlock.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
-{{- define "llm-firewall.fullname" -}}
+{{- define "interlock.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -24,16 +24,16 @@ Create a default fully qualified app name.
 {{/*
 Chart label.
 */}}
-{{- define "llm-firewall.chart" -}}
+{{- define "interlock.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels.
 */}}
-{{- define "llm-firewall.labels" -}}
-helm.sh/chart: {{ include "llm-firewall.chart" . }}
-{{ include "llm-firewall.selectorLabels" . }}
+{{- define "interlock.labels" -}}
+helm.sh/chart: {{ include "interlock.chart" . }}
+{{ include "interlock.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -43,17 +43,17 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels.
 */}}
-{{- define "llm-firewall.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "llm-firewall.name" . }}
+{{- define "interlock.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "interlock.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
 Service account name.
 */}}
-{{- define "llm-firewall.serviceAccountName" -}}
+{{- define "interlock.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (include "llm-firewall.fullname" .) .Values.serviceAccount.name }}
+{{- default (include "interlock.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
