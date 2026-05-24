@@ -7,8 +7,9 @@ All per-key state lives in one row. JSON columns for the things that vary in sha
 (custom policies, SIEM configs) so we don't need a migration every time the rule
 engine grows a new field.
 
-Migration to Postgres later is a connect-string change. We use plain SQL — no ORM —
-to keep the surface tiny and review-able.
+Postgres support is available behind DATABASE_URL for hosted deployments, but
+production HA still needs schema, migration, and operations review. We use plain
+SQL — no ORM — to keep the surface tiny and review-able.
 """
 
 import os

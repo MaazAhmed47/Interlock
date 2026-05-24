@@ -16,6 +16,7 @@ Zero-trust security for AI agents and MCP servers. Interlock sits inline between
 [Watch 2-min Demo](https://youtu.be/kc5wAbgoEkw) ·
 [OWASP MCP Coverage](docs/interlock-owasp-mcp-coverage.md) ·
 [MCP Threat Map](docs/mcp-threat-map.md) ·
+[Enterprise Evaluation](docs/enterprise-evaluation.md) ·
 [Book Pilot Call](https://calendly.com/maazahmed1856/interlock-demo-15-min)
 
 </div>
@@ -35,6 +36,17 @@ Interlock gives teams one place to inspect agent tool calls, MCP drift, runtime 
 
 ## Quickstart
 
+Docker local evaluation:
+
+```bash
+git clone https://github.com/MaazAhmed47/Interlock
+cd Interlock
+cp .env.example .env
+docker compose up --build
+```
+
+Python local evaluation:
+
 ```bash
 git clone https://github.com/MaazAhmed47/Interlock
 cd Interlock
@@ -42,7 +54,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-python -m uvicorn proxy:app --host 127.0.0.1 --port 8001
+python -m uvicorn proxy:app --host 127.0.0.1 --port 8001 --workers 1
 ```
 
 Windows PowerShell activation:
@@ -76,6 +88,27 @@ Interlock is design-partner ready. If you build MCP servers, AI agents, internal
 - what a CTO or security team would need before trusting agent tool access
 
 Open an issue, start a discussion, or reach out from the links above.
+
+---
+
+## Why Teams Pilot Interlock
+
+Interlock is strongest when agents are close to real systems: databases, Slack, files, ticketing, deployment tools, finance data, or internal APIs. A buyer should be able to prove value quickly by seeing:
+
+- a clean MCP tool baseline recorded at discovery
+- a risky tool schema or capability drift quarantined before execution
+- role-based policy blocking a dangerous call from the wrong agent
+- response scanning catching prompt injection, secrets, PII, or oversized output
+- audit evidence for every allow, deny, monitor, and quarantine decision
+
+Evaluation docs:
+
+- [Enterprise evaluation guide](docs/enterprise-evaluation.md)
+- [Threat model](docs/threat-model.md)
+- [Policy examples](docs/policy-examples.md)
+- [Agent client integrations](docs/integrations/agent-clients.md)
+- [SIEM integrations](docs/siem-integrations.md)
+- [Performance notes](docs/performance.md)
 
 ---
 
@@ -473,4 +506,4 @@ Useful fit:
 
 ## License
 
-Pre-release. License terms will be finalized before stable release.
+Apache License 2.0. See [LICENSE](LICENSE).

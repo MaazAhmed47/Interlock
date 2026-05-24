@@ -1,5 +1,5 @@
 # ── Multi-stage production build ──────────────────────────────────────────────
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /build
 
@@ -17,10 +17,10 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # ── Final stage — minimal runtime ─────────────────────────────────────────────
-FROM python:3.11-slim AS runtime
+FROM python:3.12-slim AS runtime
 
 # Security: non-root user
-RUN groupadd -r firewall && useradd -r -g firewall -u 1000 firewall
+RUN groupadd -r interlock && useradd -r -g interlock -u 1000 interlock
 
 # Runtime deps only
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -38,13 +38,13 @@ ENV PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
 
 # Copy application code
-COPY --chown=firewall:firewall . .
+COPY --chown=interlock:interlock . .
 
 # Create data directory for learning + shadow logs
-RUN mkdir -p /app/data && chown -R firewall:firewall /app
+RUN mkdir -p /app/data && chown -R interlock:interlock /app
 
 # Security: drop privileges
-USER firewall
+USER interlock
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
@@ -55,10 +55,10 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 
 EXPOSE 8001
 
-# Production: multiple workers, no reload
+# One worker is intentional while SQLite and in-memory rate limits are the default.
 CMD ["uvicorn", "proxy:app", \
      "--host", "0.0.0.0", \
      "--port", "8001", \
-     "--workers", "4", \
+     "--workers", "1", \
      "--access-log", \
      "--log-level", "info"]

@@ -10,12 +10,13 @@ image:
   pullSecrets: []
 
 # ── Replica & Scaling ────────────────────────────────────────────────────────
-replicaCount: 3
+# Keep one replica until Postgres/shared rate-limit state is configured.
+replicaCount: 1
 
 autoscaling:
-  enabled: true
-  minReplicas: 3
-  maxReplicas: 20
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 1
   targetCPUUtilizationPercentage: 70
   targetMemoryUtilizationPercentage: 80
 
@@ -66,7 +67,7 @@ secrets:
     GEMINI_API_KEY: ""
     OPENAI_API_KEY: ""
     ANTHROPIC_API_KEY: ""
-    GOOGLE_API_KEY: ""
+    ADMIN_TOKEN: ""
 
 # Reference an existing secret instead of creating one (for Vault/external secrets)
 existingSecret: ""
@@ -159,10 +160,10 @@ affinity:
                   - interlock
           topologyKey: kubernetes.io/hostname
 
-# ── Pod Disruption Budget (zero downtime during updates) ─────────────────────
+# ── Pod Disruption Budget ───────────────────────────────────────────────────
 podDisruptionBudget:
   enabled: true
-  minAvailable: 2
+  minAvailable: 1
 
 # ── Network Policy (lockdown traffic) ────────────────────────────────────────
 networkPolicy:
