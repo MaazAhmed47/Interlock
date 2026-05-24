@@ -1,90 +1,229 @@
-import { useEffect, useState, useCallback } from 'react'
+import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import { RefreshCw, ScanLine, Server, Activity } from 'lucide-react'
-import { api, hasApiKey, HealthResponse, UsageResponse, MCPTool, AuditEvent, ShadowStats } from '../api'
+import { AuditEvent, ScanHistoryEvent, ScanStats, ShadowStats, DEMO_PROMPTS } from '../api'
+import { useDashboardData } from '../components/DashLayout'
 import MetricCard from '../components/MetricCard'
 import StatusBadge from '../components/StatusBadge'
 import ErrorCard from '../components/ErrorCard'
 import EmptyState from '../components/EmptyState'
 
+const LEVELS = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'SAFE']
+
+type ActivityRow = {
+  key: string
+  timestamp: string
+  source: string
+  target: string
+  action: string
+  severity: string
+  reason: string
+}
+
+function PromptLibrary() {
+  return (
+    <>
+      <div className="dash-section-title">Demo Prompt Library</div>
+      <div className="prompt-grid">
+        {DEMO_PROMPTS.map(item => (
+          <Link
+            key={item.label}
+            to="/dashboard/scan"
+            state={{ prompt: item.prompt, target: item.target }}
+            className={`prompt-card ${item.tone}`}
+          >
+            <div className="prompt-card-meta">{item.target === 'output' ? 'Output scan' : 'Prompt scan'}</div>
+            <div className="prompt-card-title">{item.label}</div>
+            <p>{item.intent}</p>
+            <code>{item.prompt}</code>
+          </Link>
+        ))}
+      </div>
+    </>
+  )
+}
+
+function eventTimestamp(event: AuditEvent) {
+  return event.timestamp || event.ts || ''
+}
+
+function getShadowMetric(shadow: ShadowStats | null) {
+  if (!shadow) {
+    return { label: 'Shadow Findings', value: '-', sub: 'No shadow stats yet' }
+  }
+
+  const total = Number.isFinite(shadow.total) ? shadow.total : 0
+  const threatRate = shadow.threat_rate
+  const hasThreatRate = typeof threatRate === 'number' && Number.isFinite(threatRate)
+
+  if (hasThreatRate) {
+    return {
+      label: 'Shadow Threat Rate',
+      value: Math.round(threatRate * 100) + '%',
+      sub: total + ' shadow scans',
+    }
+  }
+
+  const avgRisk = typeof shadow.avg_risk_score === 'number' && Number.isFinite(shadow.avg_risk_score)
+    ? Math.round(shadow.avg_risk_score)
+    : 0
+
+  return {
+    label: 'Shadow Findings',
+    value: total,
+    sub: 'Avg risk ' + avgRisk + '/100',
+  }
+}
+
+function scanToActivity(event: ScanHistoryEvent, index: number): ActivityRow {
+  return {
+    key: 'scan-' + index + '-' + event.timestamp,
+    timestamp: event.timestamp,
+    source: event.endpoint || '/scan',
+    target: event.prompt_preview || 'Scan event',
+    action: event.is_threat ? 'block' : 'allow',
+    severity: event.threat_level || 'SAFE',
+    reason: event.reason || event.threat_type || '-',
+  }
+}
+
+function mcpToActivity(event: AuditEvent, index: number): ActivityRow {
+  return {
+    key: 'mcp-' + (event.id ?? index),
+    timestamp: eventTimestamp(event),
+    source: event.server_id || 'mcp',
+    target: event.tool_name || '-',
+    action: event.action || '-',
+    severity: event.drift_severity || '-',
+    reason: event.reason || event.matched_rule || '-',
+  }
+}
+
+function SecurityPosture({ scanStats }: { scanStats: ScanStats | null }) {
+  const total = scanStats?.total ?? 0
+  const blocked = scanStats?.threats ?? 0
+  const safe = scanStats?.safe ?? 0
+  const blockRate = scanStats?.block_rate ?? 0
+  const avgRisk = Math.round(scanStats?.avg_risk_score ?? 0)
+  const byLevel = scanStats?.by_level ?? {}
+  const pieStyle = { '--blocked': String(Math.max(0, Math.min(100, blockRate))) } as CSSProperties
+
+  return (
+    <>
+      <div className="dash-section-title">Security Posture</div>
+      <div className="posture-grid">
+        <div className="posture-card">
+          <div className="posture-label">Average Risk</div>
+          <div className="risk-meter">
+            <div className="risk-meter-top"><strong>{avgRisk}/100</strong><span>{total} scans</span></div>
+            <div className="risk-bar"><span style={{ width: Math.max(0, Math.min(100, avgRisk)) + '%' }} /></div>
+          </div>
+        </div>
+        <div className="posture-card posture-pie-card">
+          <div className="posture-label">Decision Split</div>
+          <div className="decision-pie" style={pieStyle}><span>{Math.round(blockRate)}%</span></div>
+          <div className="posture-sub">{blocked} blocked / {safe} allowed</div>
+        </div>
+        <div className="posture-card">
+          <div className="posture-label">Threat Levels</div>
+          <div className="level-bars">
+            {LEVELS.map(level => {
+              const count = byLevel[level] ?? 0
+              const width = total > 0 ? Math.max(4, Math.round((count / total) * 100)) : 0
+              return (
+                <div className="level-row" key={level}>
+                  <span>{level}</span>
+                  <div className="level-track"><i className={'level-fill ' + level.toLowerCase()} style={{ width: width + '%' }} /></div>
+                  <b>{count}</b>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
 export default function Dashboard() {
-  const [health, setHealth] = useState<HealthResponse | null>(null)
-  const [healthErr, setHealthErr] = useState('')
-  const [usage, setUsage] = useState<UsageResponse | null>(null)
-  const [usageErr, setUsageErr] = useState('')
-  const [serverCount, setServerCount] = useState<number | null>(null)
-  const [drifted, setDrifted] = useState<MCPTool[]>([])
-  const [mcpErr, setMcpErr] = useState('')
-  const [audit, setAudit] = useState<AuditEvent[]>([])
-  const [auditErr, setAuditErr] = useState('')
-  const [shadow, setShadow] = useState<ShadowStats | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setHealthErr('')
-    api.health().then(setHealth).catch(e => setHealthErr((e as Error).message))
-
-    if (!hasApiKey()) { setLoading(false); return }
-
-    setUsageErr(''); setMcpErr(''); setAuditErr('')
-    await Promise.all([
-      api.usage().then(setUsage).catch(e => setUsageErr((e as Error).message)),
-      api.mcpServers().then(d => setServerCount(d.servers.length)).catch(() => {}),
-      api.mcpDrifted().then(d => setDrifted(d.tools)).catch(e => setMcpErr((e as Error).message)),
-      api.mcpAudit(10).then(d => setAudit(d.events)).catch(e => setAuditErr((e as Error).message)),
-      api.shadowStats().then(setShadow).catch(() => {}),
-    ])
-    setLoading(false)
-  }, [])
-
-  useEffect(() => { load() }, [load])
+  const {
+    configured,
+    loaded,
+    loading,
+    health,
+    usage,
+    servers,
+    drifted,
+    audit,
+    scanHistory,
+    scanStats,
+    shadow,
+    errors,
+    refreshAll,
+  } = useDashboardData()
 
   const isOk = health?.status === 'ok'
+  const hasLiveData = Boolean(usage || servers.length > 0 || shadow || drifted.length > 0 || audit.length > 0 || scanHistory.length > 0)
+  const backendOnline = isOk || hasLiveData
+  const backendError = Boolean(errors.health && !hasLiveData)
+  const backendLabel = backendError ? 'Backend unreachable' : backendOnline ? 'Backend online' : 'Checking...'
+  const shadowMetric = getShadowMetric(shadow)
+  const driftUnavailable = Boolean(errors.drifted && drifted.length === 0)
+  const recentActivity = [
+    ...scanHistory.map(scanToActivity),
+    ...audit.map(mcpToActivity),
+  ].sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime())
 
   return (
     <div className="dash-main">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div className={`status-dot ${healthErr ? 'err' : isOk ? 'ok' : 'loading'}`} />
+          <div className={`status-dot ${backendError ? 'err' : backendOnline ? 'ok' : 'loading'}`} />
           <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--dim)' }}>
-            {healthErr ? 'Backend unreachable' : isOk ? 'Backend online' : 'Checking…'}
+            {backendLabel}
           </span>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}>
-          <RefreshCw size={12} />Refresh
+        <button className="btn btn-ghost btn-sm" onClick={refreshAll} disabled={loading}>
+          <RefreshCw size={12} />{loading ? 'Loading' : 'Refresh'}
         </button>
       </div>
 
-      {!hasApiKey() ? (
-        <EmptyState />
+      {!configured ? (
+        <>
+          <EmptyState message="Add an API key to run live scans. The demo prompts below show what Interlock is built to catch." />
+          <PromptLibrary />
+        </>
       ) : (
         <>
           <div className="dash-section-title">Overview</div>
           <div className="metrics-grid">
-            {usageErr
-              ? <ErrorCard message={usageErr} />
+            {errors.usage && !usage
+              ? <ErrorCard message={errors.usage} />
               : <MetricCard
                   label="Usage This Month"
-                  value={usage ? usage.used_this_month : '—'}
-                  sub={usage ? `of ${usage.monthly_limit || '∞'} · ${usage.plan}` : 'Loading…'}
+                  value={usage ? usage.used_this_month : loaded ? '-' : '...'}
+                  sub={usage ? 'of ' + (usage.monthly_limit || 'infinity') + ' - ' + usage.plan : 'Loading...'}
                 />
             }
-            <MetricCard label="MCP Servers" value={serverCount ?? '—'} sub="Registered servers" />
+            <MetricCard
+              label="MCP Servers"
+              value={errors.servers && servers.length === 0 ? '-' : servers.length}
+              sub={errors.servers && servers.length === 0 ? 'Server registry unavailable' : 'Registered servers'}
+            />
             <MetricCard
               label="Drifted / Quarantined"
-              value={mcpErr ? '!' : drifted.length}
-              sub="Tools needing review"
+              value={driftUnavailable ? '-' : drifted.length}
+              sub={driftUnavailable ? 'Drift status unavailable' : 'Tools needing review'}
               accent={drifted.length > 0 ? 'red' : undefined}
             />
-            {shadow && (
-              <MetricCard
-                label="Shadow Threat Rate"
-                value={`${Math.round(shadow.threat_rate * 100)}%`}
-                sub={`${shadow.total} shadow scans`}
-              />
-            )}
+            <MetricCard
+              label={shadowMetric.label}
+              value={shadowMetric.value}
+              sub={errors.shadow && !shadow ? 'Shadow stats unavailable' : shadowMetric.sub}
+            />
           </div>
+
+          <SecurityPosture scanStats={scanStats} />
 
           <div className="dash-section-title">Quick Actions</div>
           <div className="quick-actions">
@@ -93,28 +232,30 @@ export default function Dashboard() {
             <Link to="/dashboard/audit" className="btn btn-ghost"><Activity size={13} />View Audit Log</Link>
           </div>
 
-          <div className="dash-section-title">Recent Audit Decisions</div>
+          <PromptLibrary />
+
+          <div className="dash-section-title">Recent Activity</div>
           <div className="card" style={{ padding: 0 }}>
-            {auditErr
-              ? <div style={{ padding: 16 }}><ErrorCard message={auditErr} onRetry={load} /></div>
-              : audit.length === 0
-                ? <div style={{ padding: 16 }}><EmptyState message="No audit events yet." showSettingsLink={false} /></div>
+            {errors.audit && scanHistory.length === 0
+              ? <div style={{ padding: 16 }}><EmptyState message="Audit log is unavailable right now. Run a scan to populate recent activity." showSettingsLink={false} /></div>
+              : recentActivity.length === 0
+                ? <div style={{ padding: 16 }}><EmptyState message="No scan or MCP events yet." showSettingsLink={false} /></div>
                 : <div className="table-wrap">
                     <table className="data-table">
                       <thead>
                         <tr>
-                          <th>Time</th><th>Server</th><th>Tool</th><th>Role</th><th>Action</th><th>Severity</th>
+                          <th>Time</th><th>Source</th><th>Target</th><th>Action</th><th>Severity</th><th>Reason</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {audit.slice(0, 10).map((e, i) => (
-                          <tr key={e.id ?? i}>
-                            <td className="mono dim">{new Date(e.timestamp).toLocaleTimeString()}</td>
-                            <td className="mono">{e.server_id}</td>
-                            <td className="mono">{e.tool_name}</td>
-                            <td className="dim">{e.role || '—'}</td>
-                            <td><StatusBadge value={e.action} /></td>
-                            <td>{e.drift_severity ? <StatusBadge value={e.drift_severity} /> : <span className="dim">—</span>}</td>
+                        {recentActivity.slice(0, 10).map(row => (
+                          <tr key={row.key}>
+                            <td className="mono dim">{row.timestamp ? new Date(row.timestamp).toLocaleTimeString() : '-'}</td>
+                            <td className="mono">{row.source}</td>
+                            <td className="mono dim" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.target}</td>
+                            <td><StatusBadge value={row.action} /></td>
+                            <td>{row.severity !== '-' ? <StatusBadge value={row.severity} /> : <span className="dim">-</span>}</td>
+                            <td className="dim" style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.reason}</td>
                           </tr>
                         ))}
                       </tbody>

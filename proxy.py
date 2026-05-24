@@ -228,6 +228,8 @@ list_providers = chat_routes.list_providers
 
 scan = scan_routes.scan
 scan_output = scan_routes.scan_output
+scan_history = scan_routes.scan_history
+scan_stats = scan_routes.scan_stats
 shadow_scan = scan_routes.shadow_scan
 shadow_logs = scan_routes.shadow_logs
 shadow_stats = scan_routes.shadow_stats

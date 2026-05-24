@@ -1,29 +1,29 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useState } from 'react'
 import { RefreshCw, CheckCircle, AlertOctagon } from 'lucide-react'
-import { api, hasApiKey, MCPServer, MCPTool } from '../api'
+import { api, MCPTool } from '../api'
+import { useDashboardData } from '../components/DashLayout'
 import StatusBadge from '../components/StatusBadge'
 import ErrorCard from '../components/ErrorCard'
 import EmptyState from '../components/EmptyState'
 
+function formatValue(value: unknown) {
+  if (Array.isArray(value)) return value.join(', ')
+  if (value == null || value === '') return '-'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
 export default function MCPGateway() {
-  const [servers, setServers] = useState<MCPServer[]>([])
-  const [tools, setTools] = useState<MCPTool[]>([])
-  const [drifted, setDrifted] = useState<MCPTool[]>([])
-  const [err, setErr] = useState('')
-  const [loading, setLoading] = useState(false)
+  const {
+    configured,
+    servers,
+    tools,
+    drifted,
+    errors,
+    loadingMcp,
+    refreshMcp,
+  } = useDashboardData()
   const [actionMsg, setActionMsg] = useState<Record<string, string>>({})
-
-  const load = useCallback(async () => {
-    if (!hasApiKey()) return
-    setLoading(true); setErr('')
-    try {
-      const [s, t, d] = await Promise.all([api.mcpServers(), api.mcpTools(), api.mcpDrifted()])
-      setServers(s.servers); setTools(t.tools); setDrifted(d.tools)
-    } catch (e) { setErr((e as Error).message) }
-    finally { setLoading(false) }
-  }, [])
-
-  useEffect(() => { load() }, [load])
 
   async function doAction(tool: MCPTool, approve: boolean) {
     const k = `${tool.server_id}/${tool.tool_name}`
@@ -33,13 +33,13 @@ export default function MCPGateway() {
     try {
       await fn(tool.server_id, tool.tool_name, { reviewer: 'operator', reason })
       setActionMsg(m => ({ ...m, [k]: msg }))
-      setTimeout(() => load(), 800)
+      window.setTimeout(() => void refreshMcp(), 800)
     } catch (e) {
       setActionMsg(m => ({ ...m, [k]: `Error: ${(e as Error).message}` }))
     }
   }
 
-  if (!hasApiKey()) return (
+  if (!configured) return (
     <div className="dash-main">
       <div className="dash-page-header"><div><h1>MCP Gateway</h1></div></div>
       <EmptyState />
@@ -50,17 +50,19 @@ export default function MCPGateway() {
     <div className="dash-main">
       <div className="dash-page-header">
         <div><h1>MCP Gateway</h1><p>Registered servers, tool inventory, and drift review</p></div>
-        <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}>
-          <RefreshCw size={12} />Refresh
+        <button className="btn btn-ghost btn-sm" onClick={refreshMcp} disabled={loadingMcp}>
+          <RefreshCw size={12} />{loadingMcp ? 'Loading' : 'Refresh'}
         </button>
       </div>
 
-      {err && <ErrorCard message={err} onRetry={load} />}
+      {errors.servers && servers.length === 0 && <ErrorCard message={`Server registry unavailable: ${errors.servers}`} onRetry={refreshMcp} />}
+      {errors.tools && tools.length === 0 && <ErrorCard message={`Tool inventory unavailable: ${errors.tools}`} onRetry={refreshMcp} />}
+      {errors.drifted && drifted.length === 0 && <ErrorCard message={`Drift review unavailable: ${errors.drifted}`} onRetry={refreshMcp} />}
 
       {drifted.length > 0 && (
         <>
           <div className="dash-section-title" style={{ color: 'var(--orange)' }}>
-            Drifted / Quarantined — {drifted.length} tool{drifted.length !== 1 ? 's' : ''} need review
+            Drifted / Quarantined - {drifted.length} tool{drifted.length !== 1 ? 's' : ''} need review
           </div>
           <div className="drift-grid" style={{ marginBottom: 28 }}>
             {drifted.map(tool => {
@@ -78,12 +80,12 @@ export default function MCPGateway() {
                   {tool.description && (
                     <div className="drift-card-field" style={{ color: 'rgba(245,240,232,.65)' }}>{tool.description}</div>
                   )}
-                  {tool.effects    && <div className="drift-card-field"><strong>Effects:</strong> {tool.effects}</div>}
-                  {tool.side_effect && <div className="drift-card-field"><strong>Side effect:</strong> {tool.side_effect}</div>}
-                  {tool.data_classes && <div className="drift-card-field"><strong>Data classes:</strong> {tool.data_classes}</div>}
-                  {tool.drift_action && <div className="drift-card-field"><strong>Drift action:</strong> {tool.drift_action}</div>}
+                  <div className="drift-card-field"><strong>Effects:</strong> {formatValue(tool.effects)}</div>
+                  <div className="drift-card-field"><strong>Side effect:</strong> {formatValue(tool.side_effect)}</div>
+                  <div className="drift-card-field"><strong>Data classes:</strong> {formatValue(tool.data_classes)}</div>
+                  <div className="drift-card-field"><strong>Drift action:</strong> {formatValue(tool.drift_action)}</div>
                   {actionMsg[k]
-                    ? <div style={{ marginTop: 12, fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--cyan)' }}>{actionMsg[k]}</div>
+                    ? <div style={{ marginTop: 12, fontSize: 12, fontFamily: 'var(--font-mono)', color: actionMsg[k].startsWith('Error') ? 'var(--red)' : 'var(--cyan)' }}>{actionMsg[k]}</div>
                     : <div className="drift-card-actions">
                         <button className="btn btn-cyan btn-sm" onClick={() => doAction(tool, true)}>
                           <CheckCircle size={11} />Approve
@@ -103,7 +105,7 @@ export default function MCPGateway() {
       <div className="dash-section-title">Registered Servers</div>
       <div className="card" style={{ padding: 0, marginBottom: 20 }}>
         {servers.length === 0
-          ? <div style={{ padding: 16 }}><EmptyState message="No MCP servers registered." showSettingsLink={false} /></div>
+          ? <div style={{ padding: 16 }}><EmptyState message={errors.servers ? 'Server registry is unavailable right now.' : 'No MCP servers registered.'} showSettingsLink={false} /></div>
           : <div className="table-wrap">
               <table className="data-table">
                 <thead><tr><th>Server ID</th><th>URL</th><th>Trust</th></tr></thead>
@@ -111,8 +113,8 @@ export default function MCPGateway() {
                   {servers.map(s => (
                     <tr key={s.server_id}>
                       <td className="mono">{s.server_id}</td>
-                      <td className="mono dim">{(s.url as string) || '—'}</td>
-                      <td>{s.trust_level ? <StatusBadge value={String(s.trust_level)} /> : <span className="dim">—</span>}</td>
+                      <td className="mono dim">{formatValue(s.url)}</td>
+                      <td>{s.trust_level ? <StatusBadge value={String(s.trust_level)} /> : <span className="dim">{formatValue(s.verified ? 'verified' : 'unknown')}</span>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -121,10 +123,10 @@ export default function MCPGateway() {
         }
       </div>
 
-      <div className="dash-section-title">All Tools — {tools.length}</div>
+      <div className="dash-section-title">All Tools - {tools.length}</div>
       <div className="card" style={{ padding: 0 }}>
         {tools.length === 0
-          ? <div style={{ padding: 16 }}><EmptyState message="No tools discovered yet." showSettingsLink={false} /></div>
+          ? <div style={{ padding: 16 }}><EmptyState message={errors.tools ? 'Tool inventory is unavailable right now.' : servers.length > 0 ? 'No tools discovered yet. Registered servers are listed above.' : 'No tools discovered yet.'} showSettingsLink={false} /></div>
           : <div className="table-wrap">
               <table className="data-table">
                 <thead><tr><th>Server</th><th>Tool</th><th>Status</th><th>Description</th></tr></thead>
@@ -133,9 +135,9 @@ export default function MCPGateway() {
                     <tr key={`${t.server_id}/${t.tool_name}`}>
                       <td className="mono">{t.server_id}</td>
                       <td className="mono">{t.tool_name}</td>
-                      <td>{t.status ? <StatusBadge value={t.status} /> : <span className="dim">—</span>}</td>
+                      <td>{t.status ? <StatusBadge value={t.status} /> : <span className="dim">-</span>}</td>
                       <td className="dim" style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {t.description || '—'}
+                        {formatValue(t.description)}
                       </td>
                     </tr>
                   ))}

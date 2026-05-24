@@ -21,7 +21,7 @@ async def chat_completions(
     Universal AI proxy: works with OpenAI, Anthropic, Gemini, Groq, Ollama.
     Just change base_url and use any model name from any provider.
     """
-    api_key = authorization or x_api_key
+    api_key = x_api_key or authorization
     key_info, raw_key = proxy.verify_key(api_key)
     proxy.check_rate(raw_key, key_info["rate_per_min"])
 
@@ -34,7 +34,7 @@ async def chat_completions(
     user_prompts = [m.content for m in chat.messages if m.role == "user"]
     for prompt in user_prompts:
         result = proxy.run_scan(prompt, raw_key)
-        save_scan(raw_key, result)
+        save_scan(raw_key, result, endpoint="/v1/chat/completions")
         if result.is_threat:
             proxy.trigger_all_alerts(result, raw_key, key_info)
             raise HTTPException(

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "interlock": {
+      "type": "local",
+      "command": ["python3", "examples/opencode/interlock_mcp_adapter.py"],
+      "enabled": true,
+      "timeout": 10000
+    }
+  }
+}

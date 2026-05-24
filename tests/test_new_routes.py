@@ -76,6 +76,67 @@ def test_scan_output_rejects_missing_key():
     assert exc.value.status_code == 401
 
 
+
+def test_scan_output_is_saved_to_history():
+    run(proxy.scan_output(
+        proxy.ScanRequest(prompt="Test card 4532015112830366 should be caught."),
+        x_api_key=TEST_KEY,
+    ))
+
+    data = run(proxy.scan_history(limit=10, x_api_key=TEST_KEY))
+    assert data["events"]
+    latest = data["events"][0]
+    assert latest["endpoint"] == "/scan/output"
+    assert latest["risk_score"] is not None
+
+
+def test_scan_stats_include_visualization_fields():
+    stats = run(proxy.scan_stats(x_api_key=TEST_KEY))
+
+    assert "total" in stats
+    assert "block_rate" in stats
+    assert "avg_risk_score" in stats
+    assert "by_level" in stats
+
+
+
+def test_chat_proxy_prefers_x_api_key_over_authorization_header():
+    original_forward = proxy.chat_routes.forward_to_provider
+    original_run_scan = proxy.run_scan
+
+    async def fake_forward(_provider, _body):
+        return {"id": "chatcmpl-test", "choices": []}
+
+    def fake_scan(prompt, _raw_key):
+        return proxy.ScanResult(
+            is_threat=False,
+            threat_level=proxy.ThreatLevel.SAFE,
+            threat_type=None,
+            reason="Clean test prompt.",
+            original_prompt=prompt,
+            safe_to_proceed=True,
+            confidence=0.99,
+            layer_caught="test",
+            scan_time_ms=1.0,
+        )
+
+    proxy.chat_routes.forward_to_provider = fake_forward
+    proxy.run_scan = fake_scan
+    try:
+        data = run(proxy.chat_completions(
+            proxy.ChatRequest(
+                model="gpt-4o",
+                messages=[proxy.ChatMessage(role="user", content="hello")],
+            ),
+            authorization="Bearer not-an-interlock-key",
+            x_api_key=TEST_KEY,
+        ))
+    finally:
+        proxy.chat_routes.forward_to_provider = original_forward
+        proxy.run_scan = original_run_scan
+
+    assert data["firewall"]["status"] == "clean"
+
 def test_usage_returns_expected_fields():
     data = run(proxy.usage(x_api_key=TEST_KEY))
 

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Header, HTTPException
 import proxy
 from core import db
 from core.detector import PII_PATTERNS
-from core.history import save_scan
+from core.history import get_history, get_stats, save_scan
 from core.policy import rbac_scan
 from core.shadow_mode import (
     calculate_risk_score,
@@ -30,7 +30,7 @@ async def scan(request: ScanRequest, x_api_key: Optional[str] = Header(None)):
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
 
     result = proxy.run_scan(request.prompt, raw_key)
-    save_scan(raw_key, result)
+    save_scan(raw_key, result, endpoint="/scan")
     db.log_usage(key_info["id"], "/scan", threat_blocked=result.is_threat)
     if result.is_threat:
         proxy.trigger_all_alerts(result, raw_key, key_info)
@@ -68,6 +68,7 @@ async def scan_output(request: ScanRequest, x_api_key: Optional[str] = Header(No
                 scan_time_ms=round((time.time() - start) * 1000, 2),
             )
             result.risk_score = calculate_risk_score(result)
+            save_scan(raw_key, result, endpoint="/scan/output")
             db.log_usage(key_info["id"], "/scan/output", threat_blocked=True)
             return result
 
@@ -83,8 +84,21 @@ async def scan_output(request: ScanRequest, x_api_key: Optional[str] = Header(No
         scan_time_ms=round((time.time() - start) * 1000, 2),
     )
     result.risk_score = calculate_risk_score(result)
+    save_scan(raw_key, result, endpoint="/scan/output")
     db.log_usage(key_info["id"], "/scan/output", threat_blocked=False)
     return result
+
+
+@router.get("/scan/history")
+async def scan_history(limit: int = 50, x_api_key: Optional[str] = Header(None)):
+    _, raw_key = proxy.verify_key(x_api_key)
+    return {"events": get_history(raw_key, limit)}
+
+
+@router.get("/scan/stats")
+async def scan_stats(x_api_key: Optional[str] = Header(None)):
+    _, raw_key = proxy.verify_key(x_api_key)
+    return get_stats(raw_key)
 
 
 @router.post("/scan/shadow")
@@ -93,7 +107,7 @@ async def shadow_scan(request: ShadowScanRequest, x_api_key: Optional[str] = Hea
     proxy.check_rate(raw_key, key_info["rate_per_min"])
     result = proxy.run_scan(request.prompt, raw_key)
     log_shadow(result, raw_key)
-    save_scan(raw_key, result)
+    save_scan(raw_key, result, endpoint="/scan/shadow")
     return {
         "would_block": result.is_threat,
         "threat_level": result.threat_level.value,
@@ -131,10 +145,10 @@ async def inspect_tool(request: ToolCallRequest, x_api_key: Optional[str] = Head
         if rbac_result:
             rbac_result.scan_time_ms = 0.1
             rbac_result.risk_score = calculate_risk_score(rbac_result)
-            save_scan(raw_key, rbac_result)
+            save_scan(raw_key, rbac_result, endpoint="/inspect/tool-call")
             return rbac_result
 
     result = inspect_tool_call(request.tool_name, request.tool_args)
     result.risk_score = calculate_risk_score(result)
-    save_scan(raw_key, result)
+    save_scan(raw_key, result, endpoint="/inspect/tool-call")
     return result

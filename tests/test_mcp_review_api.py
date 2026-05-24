@@ -131,6 +131,24 @@ try:
         assert exc.status_code == 404
     print("  OK")
 
-    print("\nAll MCP review API tests passed. (4/4)")
+    print("Test 5: audit endpoint returns a graceful fallback if listing fails ...")
+    original_list = proxy.mcp_routes.db.list_mcp_audit_logs
+    original_log_exception = proxy.logger.exception
+
+    def broken_list(_limit):
+        raise RuntimeError("audit store unavailable")
+
+    proxy.mcp_routes.db.list_mcp_audit_logs = broken_list
+    proxy.logger.exception = lambda *args, **kwargs: None
+    try:
+        data = asyncio.run(proxy.mcp_audit(limit=10, x_api_key=TEST_KEY))
+        assert data["events"] == []
+        assert data["warning"] == "audit_unavailable"
+    finally:
+        proxy.mcp_routes.db.list_mcp_audit_logs = original_list
+        proxy.logger.exception = original_log_exception
+    print("  OK")
+
+    print("\nAll MCP review API tests passed. (5/5)")
 finally:
     cleanup()

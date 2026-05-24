@@ -110,7 +110,11 @@ async def mcp_quarantine_tool(
 async def mcp_audit(limit: int = 100, x_api_key: Optional[str] = Header(None)):
     """List recent MCP audit decisions."""
     proxy.verify_key(x_api_key)
-    return {"events": db.list_mcp_audit_logs(limit)}
+    try:
+        return {"events": db.list_mcp_audit_logs(limit)}
+    except Exception:
+        proxy.logger.exception("Failed to list MCP audit logs")
+        return {"events": [], "warning": "audit_unavailable"}
 
 
 @router.post("/mcp/validate-tool")

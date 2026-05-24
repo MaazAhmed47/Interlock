@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Save } from 'lucide-react'
 import { API_URL_KEY, API_KEY_KEY, DEFAULT_API_URL, api } from '../api'
 import ErrorCard from '../components/ErrorCard'
+import { useDashboardData } from '../components/DashLayout'
 
 export default function Settings() {
   const [url, setUrl] = useState(localStorage.getItem(API_URL_KEY) || DEFAULT_API_URL)
@@ -9,6 +10,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false)
   const [siemProviders, setSiemProviders] = useState<string[]>([])
   const [siemError, setSiemError] = useState('')
+  const { refreshAll } = useDashboardData()
 
   function save() {
     localStorage.setItem(API_URL_KEY, url.trim() || DEFAULT_API_URL)
@@ -18,6 +20,7 @@ export default function Settings() {
       localStorage.removeItem(API_KEY_KEY)
     }
     setSaved(true)
+    void refreshAll()
     setTimeout(() => setSaved(false), 2500)
   }
 
@@ -33,7 +36,7 @@ export default function Settings() {
   }, [])
 
   const storedKey = localStorage.getItem(API_KEY_KEY) || ''
-  const fingerprint = storedKey ? `…${storedKey.slice(-6)}` : null
+  const fingerprint = storedKey ? `...${storedKey.slice(-6)}` : null
 
   return (
     <div className="dash-main">
@@ -50,7 +53,7 @@ export default function Settings() {
         </div>
         <div className="form-group">
           <label className="form-label">API Key</label>
-          <input className="form-input" type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="sk-…" autoComplete="off" />
+          <input className="form-input" type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="API key" autoComplete="off" />
           {fingerprint && <div className="key-fingerprint">Active key: {fingerprint}</div>}
           <div className="form-hint">Stored in browser localStorage only. Never sent to any third party.</div>
         </div>
