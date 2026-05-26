@@ -32,7 +32,9 @@ body {
 /* ── NAV ── */
 nav {
   position: fixed; top: 0; left: 0; right: 0; z-index: 200;
-  display: flex; align-items: center; justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
+  align-items: center;
   padding: 0 40px; height: 60px;
   background: var(--black);
   border-bottom: 1px solid rgba(255,255,255,.08);
@@ -42,9 +44,11 @@ nav {
   font-size: 22px; font-weight: 700;
   color: var(--white); text-decoration: none;
   letter-spacing: -.5px;
+  justify-self: start;
 }
 .nav-links {
   display: flex; gap: 28px; list-style: none;
+  justify-self: center;
 }
 .nav-links a {
   color: rgba(245,240,232,.55);
@@ -54,7 +58,7 @@ nav {
   transition: color .2s;
 }
 .nav-links a:hover { color: var(--white); }
-.nav-actions { display: flex; gap: 10px; align-items: center; }
+.nav-actions { display: flex; gap: 10px; align-items: center; justify-self: end; }
 .btn-nav-ghost {
   padding: 7px 18px; font-size: 13px;
   color: rgba(245,240,232,.6);
@@ -777,25 +781,16 @@ nav {
   border-radius: 4px;
   overflow: hidden;
 }
-.code-tabs {
-  display: flex;
+.code-title {
   background: #0d1117;
   border-bottom: 1px solid rgba(245,240,232,.08);
+  color: rgba(245,240,232,.74);
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.8px;
+  padding: 12px 20px;
 }
-.code-tab {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  padding: 10px 20px;
-  font-size: 13px; font-weight: 500;
-  color: rgba(245,240,232,.4);
-  cursor: pointer; border-bottom: 2px solid transparent;
-  font-family: 'Geist', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  transition: all .2s;
-}
-.code-tab.active { color: var(--white); border-bottom-color: var(--cyan); }
-.code-tab:focus-visible { outline: 1px solid var(--cyan); outline-offset: -3px; }
-.code-body[hidden] { display: none; }
 .code-body {
   padding: 24px;
   font-family: 'DM Mono', monospace;
@@ -953,6 +948,94 @@ nav {
   position: relative; z-index: 1;
 }
 
+/* -- ENTERPRISE PROOF ------------------------------------------------------ */
+.enterprise-proof-section {
+  background: var(--black);
+  padding: 82px 60px;
+  border-top: 1px solid rgba(245,240,232,.06);
+}
+.enterprise-proof-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+.enterprise-proof-header {
+  display: grid;
+  grid-template-columns: minmax(260px, .9fr) minmax(320px, 1.1fr);
+  gap: 48px;
+  align-items: end;
+  margin-bottom: 34px;
+}
+.enterprise-proof-kicker {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--cyan);
+  margin-bottom: 14px;
+}
+.enterprise-proof-header h2 {
+  font-family: 'Geist', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: clamp(34px, 4.4vw, 58px);
+  line-height: 1.02;
+  font-weight: 900;
+  letter-spacing: -2px;
+}
+.enterprise-proof-header p {
+  color: rgba(245,240,232,.68);
+  font-size: 17px;
+  line-height: 1.65;
+}
+.enterprise-proof-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid rgba(245,240,232,.10);
+  background: rgba(245,240,232,.08);
+  gap: 1px;
+}
+.enterprise-proof-card {
+  background: var(--black);
+  padding: 28px;
+  min-height: 230px;
+}
+.enterprise-proof-card strong {
+  display: block;
+  color: var(--white);
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+.enterprise-proof-card p {
+  color: rgba(245,240,232,.60);
+  font-size: 14px;
+  line-height: 1.58;
+}
+.enterprise-proof-step {
+  font-family: 'DM Mono', monospace;
+  color: var(--cyan);
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 18px;
+}
+.enterprise-proof-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  padding: 20px 0 0;
+  color: rgba(245,240,232,.56);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.enterprise-proof-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.enterprise-proof-actions a {
+  white-space: nowrap;
+}
+
 /* ── METRICS STRIP ── */
 .metrics-strip {
   background: var(--black);
@@ -1012,7 +1095,7 @@ nav {
   background: #0a0e14;
 }
 .price-block.featured::after {
-  content: 'POPULAR';
+  content: 'BEST FIT';
   position: absolute; top: 0; right: 0;
   background: var(--red); color: #fff;
   font-family: 'DM Mono', monospace;
@@ -1227,7 +1310,10 @@ footer {
 svg text { font-size: 13px; }
 
 @media (max-width: 1100px) {
-  nav { height: auto; min-height: 64px; padding: 14px 24px; flex-wrap: wrap; gap: 14px; }
+  nav { display: flex; justify-content: space-between; height: auto; min-height: 64px; padding: 14px 24px; flex-wrap: wrap; gap: 14px; }
+  .enterprise-proof-header { grid-template-columns: 1fr; gap: 20px; }
+  .enterprise-proof-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .enterprise-proof-footer { flex-direction: column; align-items: flex-start; }
   .nav-links { order: 3; width: 100%; justify-content: center; flex-wrap: wrap; gap: 16px; }
   .arch-container, .split-section, .final-cta { flex-direction: column; }
   .flow-diagram-wrap { flex-direction: column; gap: 24px; }
@@ -1237,6 +1323,9 @@ svg text { font-size: 13px; }
 }
 @media (max-width: 760px) {
   .nav-links { display: none; }
+  .enterprise-proof-section { padding-left: 24px; padding-right: 24px; }
+  .enterprise-proof-grid { grid-template-columns: 1fr; }
+  .enterprise-proof-card { min-height: auto; }
   nav { align-items: flex-start; }
   .hero { min-height: auto; padding: 72px 0; }
   .hero h1 { font-size: clamp(38px, 12vw, 54px); }
@@ -1512,6 +1601,7 @@ svg text {
     <li><a href="#layers">HOW IT WORKS</a></li>
     <li><a href="#partner">DESIGN PARTNER</a></li>
     <li><a href="#architecture">ARCHITECTURE</a></li>
+    <li><a href="#enterprise-proof">PROOF</a></li>
     <li><a href="https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664" target="_blank">DOCS</a></li>
     <li><a href="https://calendly.com/maazahmed1856/interlock-demo-15-min" target="_blank">LIVE DEMO</a></li>
   </ul>
@@ -1529,10 +1619,10 @@ svg text {
 
   <div class="hero-content">
     <h1 class="fade-up">Runtime Security for <em>MCP Agents</em></h1>
-    <p class="hero-sub fade-up delay-1">Baseline MCP tools, detect risky drift, enforce role-aware policy, scan responses, and audit every gateway decision across your agent stack.</p>
+    <p class="hero-sub fade-up delay-1">Baseline MCP tools, enforce role-aware policy, quarantine risky drift, scan responses, and produce audit evidence your security team can inspect.</p>
     <div class="hero-actions fade-up delay-2">
       <a href="https://calendly.com/maazahmed1856/interlock-demo-15-min" target="_blank" class="btn-red-hero">REQUEST ACCESS</a>
-      <a href="https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664" target="_blank" class="btn-docs-hero">DOCS</a>
+      <a href="/dashboard/" class="btn-docs-hero">VIEW DASHBOARD</a>
     </div>
 
     <div class="hero-trusted fade-up delay-3">
@@ -1916,12 +2006,10 @@ svg text {
   </div>
   <div class="split-right">
     <div class="code-display">
-      <div class="code-tabs" role="tablist" aria-label="Integration examples">
-        <button class="code-tab active" type="button" role="tab" aria-selected="true" data-code-tab="python">Python</button>
-        <button class="code-tab" type="button" role="tab" aria-selected="false" data-code-tab="javascript">JavaScript</button>
-        <button class="code-tab" type="button" role="tab" aria-selected="false" data-code-tab="api">&lt;/&gt; API</button>
-      </div>
-      <div class="code-body" data-code-panel="python">
+      <div class="code-title">PYTHON SDK INTEGRATION</div>
+      <div class="code-body">
+<span class="ck">import</span> <span class="cf">os</span><br>
+<span class="ck">from</span> <span class="cf">openai</span> <span class="ck">import</span> <span class="cf">OpenAI</span><br><br>
 <span class="cm"># Before Interlock - direct to OpenAI</span><br>
 <span class="ck">client</span> = <span class="cf">OpenAI</span>(<br>
 &nbsp;&nbsp;<span class="ck">api_key</span>=<span class="cf">os.environ</span>[<span class="cs">"OPENAI_API_KEY"</span>]<br>
@@ -1935,32 +2023,6 @@ svg text {
 &nbsp;&nbsp;<span class="ck">model</span>=<span class="cs">"gpt-4o"</span>,<br>
 &nbsp;&nbsp;<span class="ck">messages</span>=[{<span class="cs">"role"</span>: <span class="cs">"user"</span>, <span class="cs">"content"</span>: <span class="cs">"Inspect this request"</span>}]<br>
 )
-      </div>
-      <div class="code-body" data-code-panel="javascript" hidden>
-<span class="cm">// Before Interlock - direct to OpenAI</span><br>
-<span class="ck">const client</span> = <span class="cf">new OpenAI</span>({<br>
-&nbsp;&nbsp;<span class="ck">apiKey</span>: <span class="ck">process.env.OPENAI_API_KEY</span><br>
-});<br><br>
-<span class="cm">// After Interlock - same SDK, new gateway URL</span><br>
-<span class="ck">const client</span> = <span class="cf">new OpenAI</span>({<br>
-&nbsp;&nbsp;<span class="ck">apiKey</span>: <span class="ck">process.env.INTERLOCK_KEY</span>,<br>
-&nbsp;&nbsp;<span class="ck">baseURL</span>: <span class="cs">"https://interlock.onrender.com/v1"</span><br>
-});<br><br>
-<span class="ck">await client.chat.completions.create</span>({<br>
-&nbsp;&nbsp;<span class="ck">model</span>: <span class="cs">"gpt-4o"</span>,<br>
-&nbsp;&nbsp;<span class="ck">messages</span>: [{ <span class="ck">role</span>: <span class="cs">"user"</span>, <span class="ck">content</span>: <span class="cs">"Inspect this request"</span> }]<br>
-});
-      </div>
-      <div class="code-body" data-code-panel="api" hidden>
-<span class="cm"># OpenAI-compatible HTTP call through Interlock</span><br>
-<span class="ck">curl</span> <span class="cs">https://interlock.onrender.com/v1/chat/completions</span> \<br>
-&nbsp;&nbsp;-H <span class="cs">"Authorization: Bearer $INTERLOCK_KEY"</span> \<br>
-&nbsp;&nbsp;-H <span class="cs">"Content-Type: application/json"</span> \<br>
-&nbsp;&nbsp;-d <span class="cs">'{</span><br>
-&nbsp;&nbsp;&nbsp;&nbsp;<span class="cs">"model": "gpt-4o",</span><br>
-&nbsp;&nbsp;&nbsp;&nbsp;<span class="cs">"messages": [{"role": "user", "content": "Inspect this request"}]</span><br>
-&nbsp;&nbsp;<span class="cs">}'</span><br><br>
-<span class="cm"># Interlock scans, applies policy, logs evidence, then forwards upstream.</span>
       </div>
     </div>
   </div>
@@ -2014,7 +2076,7 @@ svg text {
     <div style="position:relative;z-index:1;">
       <div class="split-label">OBSERVABILITY</div>
       <div class="split-title">Every Decision,<br>Fully Auditable</div>
-      <p class="split-body">Real-time feed of every allow, block, monitor, and quarantine decision. Full decision context stored. Export to Datadog, Splunk, Elastic, Slack, PagerDuty, or webhook. Built for teams that need clear evidence for security review, compliance workflows, and incident response.</p>
+      <p class="split-body">Complete feed of every allow, block, monitor, and quarantine decision. Full decision context stored. Export to Datadog, Splunk, Elastic, Slack, PagerDuty, or webhook. Built for teams that need clear evidence for security review, compliance workflows, and incident response.</p>
       <a href="https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664" target="_blank" class="btn-outline">READ MORE</a>
     </div>
   </div>
@@ -2044,6 +2106,48 @@ svg text {
   </div>
 </div>
 
+<!-- ENTERPRISE PROOF -->
+<section class="enterprise-proof-section" id="enterprise-proof">
+  <div class="enterprise-proof-inner">
+    <div class="enterprise-proof-header">
+      <div>
+        <div class="enterprise-proof-kicker">Enterprise evaluation path</div>
+        <h2>Proof a CTO can inspect in one session.</h2>
+      </div>
+      <p>Interlock's demo is built around evidence, not a slide deck: run a request through the gateway, watch risky tool behavior get blocked or quarantined, and open the audit trail that explains the decision.</p>
+    </div>
+    <div class="enterprise-proof-grid">
+      <div class="enterprise-proof-card">
+        <div class="enterprise-proof-step">01 / Integrate</div>
+        <strong>OpenAI-compatible base URL swap</strong>
+        <p>Point an existing SDK client at Interlock and keep provider keys on the gateway host instead of inside every agent app.</p>
+      </div>
+      <div class="enterprise-proof-card">
+        <div class="enterprise-proof-step">02 / Enforce</div>
+        <strong>Runtime policy before tool execution</strong>
+        <p>Evaluate prompt injection, risky tool arguments, role permissions, and MCP server trust before the call reaches Slack, files, databases, or APIs.</p>
+      </div>
+      <div class="enterprise-proof-card">
+        <div class="enterprise-proof-step">03 / Review</div>
+        <strong>Drift and quarantine workflow</strong>
+        <p>Compare tool schemas against approved baselines, flag new capabilities, and require an operator decision for high-risk changes.</p>
+      </div>
+      <div class="enterprise-proof-card">
+        <div class="enterprise-proof-step">04 / Audit</div>
+        <strong>Evidence for security review</strong>
+        <p>Show allow, block, monitor, and quarantine decisions with reason, severity, role, target, scan time, and export-ready context.</p>
+      </div>
+    </div>
+    <div class="enterprise-proof-footer">
+      <span>Best first pilot: one real agent, one MCP server, one policy, one audit review with the security owner.</span>
+      <div class="enterprise-proof-actions">
+        <a href="/dashboard/" class="btn-outline">OPEN DASHBOARD</a>
+        <a href="https://github.com/MaazAhmed47/Interlock#2-minute-chat-proxy-integration" target="_blank" class="btn-outline">2-MIN QUICKSTART</a>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- METRICS -->
 <div class="metrics-strip">
   <div class="metric-block">
@@ -2067,7 +2171,7 @@ svg text {
 <!-- PRICING -->
 <section class="pricing-section" id="partner">
   <h2>Design Partner Program</h2>
-  <p>Pre-release. Working with a small group of teams for honest feedback.</p>
+  <p>Pre-release. Working with a small group of teams to validate real MCP security workflows.</p>
   <div class="pricing-grid">
     <div class="price-block">
       <div class="price-tier">Builder</div>
@@ -2221,24 +2325,6 @@ if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
   window.setInterval(renderStatusState, 3600);
 }
 
-// Code tab switching
-document.querySelectorAll('[data-code-tab]').forEach(tab => {
-  tab.addEventListener('click', function() {
-    const display = this.closest('.code-display');
-    const target = this.dataset.codeTab;
-    if (!display || !target) return;
-
-    display.querySelectorAll('[data-code-tab]').forEach(t => {
-      const active = t === this;
-      t.classList.toggle('active', active);
-      t.setAttribute('aria-selected', active ? 'true' : 'false');
-    });
-
-    display.querySelectorAll('[data-code-panel]').forEach(panel => {
-      panel.hidden = panel.dataset.codePanel !== target;
-    });
-  });
-});
 
 // Restart terminal animation on scroll into view
 const terminal = document.querySelector('.audit-terminal');
