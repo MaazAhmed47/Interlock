@@ -14,7 +14,7 @@ from core.response_scanner import scan_injection, scan_pii_and_volume
 # Used only as seed data for db.seed_mcp_servers() — never read directly at runtime.
 TRUSTED_MCP_SERVERS = {
     "trusted-filesystem": {
-        "url": "http://localhost:3000/mcp",
+        "url": "https://mcp.acme-corp.internal/filesystem",
         "description": "Sandboxed file system access",
         "allowed_tools": ["read_file", "list_directory"],
         "blocked_tools": ["write_file", "delete_file", "execute"],
@@ -22,7 +22,7 @@ TRUSTED_MCP_SERVERS = {
         "verified": True,
     },
     "trusted-search": {
-        "url": "http://localhost:3001/mcp",
+        "url": "https://mcp.acme-corp.internal/search",
         "description": "Web search MCP",
         "allowed_tools": ["search", "fetch"],
         "blocked_tools": [],

@@ -73,6 +73,14 @@ THREAT_SIGNALS = {
     "hidden instructions": 8,
     "secret instructions": 8,
     "confidential instructions": 8,
+    "system message": 8,
+    "reveal the system": 9,
+    "reveal system message": 10,
+    "secret environment": 9,
+    "environment variables": 8,
+    "forget prior rules": 9,
+    "forget all prior rules": 10,
+    "root instruction": 8,
 
     # ── Social engineering ────────────────────────────────────────
     "my boss told you": 6,

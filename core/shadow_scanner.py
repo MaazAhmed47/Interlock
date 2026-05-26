@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 import httpx
 
+from core import db
+
 logger = logging.getLogger("interlock.shadow_scanner")
 
 _TIMEOUT = 5.0
@@ -91,13 +93,14 @@ async def run_shadow_scan(conn: sqlite3.Connection,
         "SELECT url, probe_path FROM shadow_scan_targets WHERE enabled = 1"
     ).fetchall()
     registered_urls = {
-        row[0].rstrip("/")
+        db.row_value(row, "url", 0).rstrip("/")
         for row in conn.execute("SELECT url FROM mcp_servers").fetchall()
     }
 
     findings: list[ShadowFinding] = []
     for row in targets:
-        url, probe_path = row[0], row[1] or "/tools/list"
+        url = db.row_value(row, "url", 0)
+        probe_path = db.row_value(row, "probe_path", 1) or "/tools/list"
         probe = await probe_target(url, probe_path, client=client)
         if not (probe.responded and probe.looks_like_mcp):
             continue

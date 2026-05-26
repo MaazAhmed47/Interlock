@@ -24,6 +24,53 @@ from models.schemas import (
 router = APIRouter()
 
 
+def _tool_inventory_with_server_policy(server_id: Optional[str] = None) -> list[dict]:
+    tools = db.list_mcp_tool_metadata(server_id)
+    seen = {(tool.get("server_id"), tool.get("tool_name")) for tool in tools}
+
+    for server in list_mcp_servers():
+        sid = server.get("server_id")
+        if server_id and sid != server_id:
+            continue
+
+        description = server.get("description") or sid or "MCP server"
+        for name in server.get("allowed_tools") or []:
+            key = (sid, name)
+            if key in seen:
+                continue
+            tools.append({
+                "server_id": sid,
+                "tool_name": name,
+                "status": "allowed",
+                "description": f"Allowed by server policy: {description}",
+                "normalized_metadata": {
+                    "effects": ["server_policy"],
+                    "side_effect": "unknown",
+                    "data_classes": [],
+                },
+            })
+            seen.add(key)
+
+        for name in server.get("blocked_tools") or []:
+            key = (sid, name)
+            if key in seen:
+                continue
+            tools.append({
+                "server_id": sid,
+                "tool_name": name,
+                "status": "blocked",
+                "description": f"Blocked by server policy: {description}",
+                "normalized_metadata": {
+                    "effects": ["blocked"],
+                    "side_effect": "blocked",
+                    "data_classes": [],
+                },
+            })
+            seen.add(key)
+
+    return tools
+
+
 @router.get("/mcp/servers")
 async def mcp_list_servers(x_api_key: Optional[str] = Header(None)):
     """List all registered MCP servers."""
@@ -52,7 +99,7 @@ async def mcp_discover(request: MCPDiscoverRequest, x_api_key: Optional[str] = H
 async def mcp_tools(server_id: Optional[str] = None, x_api_key: Optional[str] = Header(None)):
     """List persisted MCP tool metadata, optionally for one server."""
     proxy.verify_key(x_api_key)
-    return {"tools": db.list_mcp_tool_metadata(server_id)}
+    return {"tools": _tool_inventory_with_server_policy(server_id)}
 
 
 @router.get("/mcp/tools/drifted")

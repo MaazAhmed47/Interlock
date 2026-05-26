@@ -76,7 +76,13 @@ try:
     db.seed_mcp_servers()
     seed_drifted_tool()
 
-    print("Test 1: GET /mcp/tools/drifted lists review-needed tools ...")
+    print("Test 1: GET /mcp/tools includes server-policy fallback inventory ...")
+    inventory = asyncio.run(proxy.mcp_tools(x_api_key=TEST_KEY))
+    assert any(t["server_id"] == "trusted-filesystem" and t["tool_name"] == "read_file" for t in inventory["tools"])
+    assert any(t["server_id"] == "trusted-search" and t["tool_name"] == "search" for t in inventory["tools"])
+    print("  OK")
+
+    print("Test 2: GET /mcp/tools/drifted lists review-needed tools ...")
     data = asyncio.run(proxy.mcp_drifted_tools(x_api_key=TEST_KEY))
     assert len(data["tools"]) == 1
     assert data["tools"][0]["server_id"] == "_review_server"
@@ -84,7 +90,7 @@ try:
     assert data["tools"][0]["drift_action"] == "monitor"
     print("  OK")
 
-    print("Test 2: approve endpoint resets drift baseline ...")
+    print("Test 3: approve endpoint resets drift baseline ...")
     data = asyncio.run(proxy.mcp_approve_tool_baseline(
         "_review_server",
         "read_profile",
@@ -102,7 +108,7 @@ try:
     assert data["tools"] == []
     print("  OK")
 
-    print("Test 3: quarantine endpoint marks the tool quarantined ...")
+    print("Test 4: quarantine endpoint marks the tool quarantined ...")
     data = asyncio.run(proxy.mcp_quarantine_tool(
         "_review_server",
         "read_profile",
@@ -118,7 +124,7 @@ try:
     assert "operator_quarantine" in data["tool"]["drift_types"]
     print("  OK")
 
-    print("Test 4: approve missing tool returns 404 ...")
+    print("Test 5: approve missing tool returns 404 ...")
     try:
         asyncio.run(proxy.mcp_approve_tool_baseline(
             "_review_server",
@@ -131,7 +137,7 @@ try:
         assert exc.status_code == 404
     print("  OK")
 
-    print("Test 5: audit endpoint returns a graceful fallback if listing fails ...")
+    print("Test 6: audit endpoint returns a graceful fallback if listing fails ...")
     original_list = proxy.mcp_routes.db.list_mcp_audit_logs
     original_log_exception = proxy.logger.exception
 
@@ -149,6 +155,6 @@ try:
         proxy.logger.exception = original_log_exception
     print("  OK")
 
-    print("\nAll MCP review API tests passed. (5/5)")
+    print("\nAll MCP review API tests passed. (6/6)")
 finally:
     cleanup()

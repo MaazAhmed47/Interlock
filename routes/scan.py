@@ -21,6 +21,26 @@ from models.schemas import ScanRequest, ScanResult, ShadowScanRequest, ThreatLev
 router = APIRouter()
 
 
+OUTPUT_REDACTION_PATTERNS = [
+    ("REDACTED-SSN", r"\b\d{3}-\d{2}-\d{4}\b"),
+    ("REDACTED-CARD", r"\b4[0-9]{12}(?:[0-9]{3})?\b"),
+    ("REDACTED-EMAIL", r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+    ("REDACTED-PHONE", r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b"),
+    ("REDACTED-SECRET", r"(?i)(password|api[_-]?key|secret)\s*[:=]\s*\S+"),
+]
+
+
+def redact_output_content(content: str) -> tuple[str, list[str]]:
+    sanitized = content
+    redactions: list[str] = []
+    for label, pattern in OUTPUT_REDACTION_PATTERNS:
+        replacement = f"[{label}]"
+        sanitized, count = _re.subn(pattern, replacement, sanitized)
+        if count > 0:
+            redactions.append(label)
+    return sanitized, redactions
+
+
 @router.post("/scan", response_model=ScanResult)
 async def scan(request: ScanRequest, x_api_key: Optional[str] = Header(None)):
     key_info, raw_key = proxy.verify_key(x_api_key)
@@ -29,7 +49,11 @@ async def scan(request: ScanRequest, x_api_key: Optional[str] = Header(None)):
     if not request.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt cannot be empty.")
 
-    result = proxy.run_scan(request.prompt, raw_key)
+    mode = (request.mode or "").lower()
+    if mode in proxy.FAST_SCAN_MODES:
+        result = proxy.run_fast_scan(request.prompt, raw_key)
+    else:
+        result = proxy.run_scan(request.prompt, raw_key)
     save_scan(raw_key, result, endpoint="/scan")
     db.log_usage(key_info["id"], "/scan", threat_blocked=result.is_threat)
     if result.is_threat:
@@ -54,23 +78,25 @@ async def scan_output(request: ScanRequest, x_api_key: Optional[str] = Header(No
     proxy.check_rate(raw_key, key_info["rate_per_min"])
 
     start = time.time()
-    for pattern in PII_PATTERNS:
-        if _re.search(pattern, request.prompt):
-            result = ScanResult(
-                is_threat=True,
-                threat_level=ThreatLevel.HIGH,
-                threat_type="OUTPUT_DATA_LEAK",
-                reason="LLM response contains sensitive data.",
-                original_prompt=request.prompt,
-                safe_to_proceed=False,
-                confidence=0.95,
-                layer_caught="Output Scanner",
-                scan_time_ms=round((time.time() - start) * 1000, 2),
-            )
-            result.risk_score = calculate_risk_score(result)
-            save_scan(raw_key, result, endpoint="/scan/output")
-            db.log_usage(key_info["id"], "/scan/output", threat_blocked=True)
-            return result
+    sanitized_output, redactions = redact_output_content(request.prompt)
+    if redactions or any(_re.search(pattern, request.prompt) for pattern in PII_PATTERNS):
+        result = ScanResult(
+            is_threat=True,
+            threat_level=ThreatLevel.HIGH,
+            threat_type="OUTPUT_DATA_LEAK",
+            reason="LLM response contains sensitive data.",
+            original_prompt=request.prompt,
+            safe_to_proceed=False,
+            confidence=0.95,
+            layer_caught="Output Scanner",
+            scan_time_ms=round((time.time() - start) * 1000, 2),
+            sanitized_output=sanitized_output,
+            redactions=redactions,
+        )
+        result.risk_score = calculate_risk_score(result)
+        save_scan(raw_key, result, endpoint="/scan/output")
+        db.log_usage(key_info["id"], "/scan/output", threat_blocked=True)
+        return result
 
     result = ScanResult(
         is_threat=False,
