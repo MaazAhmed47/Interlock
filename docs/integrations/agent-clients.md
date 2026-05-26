@@ -4,20 +4,27 @@ Interlock is designed to sit between an agent runtime and MCP/tool infrastructur
 
 ---
 
-## OpenAI-Compatible Chat Proxy
+## 2-Minute OpenAI-Compatible Chat Proxy
 
-For OpenAI-compatible clients, change the base URL and pass an Interlock API key:
+Start Interlock locally:
+
+```bash
+./scripts/quickstart.sh
+```
+
+For OpenAI-compatible clients, the application change is intentionally small: use the Interlock key as the client API key and point `base_url` at Interlock.
 
 ```python
 import os
 from openai import OpenAI
 
 client = OpenAI(
-    api_key=os.environ["OPENAI_API_KEY"],
+    api_key=os.environ["INTERLOCK_KEY"],
     base_url="https://interlock.onrender.com/v1",
-    default_headers={"x-api-key": os.environ["INTERLOCK_KEY"]},
 )
 ```
+
+Your upstream provider keys, such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, stay on the Interlock gateway host. The app does not need direct provider credentials once traffic is routed through Interlock.
 
 Use this path for prompt and chat-completion protection. Use the MCP gateway path for agent tool execution.
 
@@ -86,6 +93,16 @@ def guarded_tool_call(tool_name: str, args: dict, role: str):
 ```
 
 For MCP servers, prefer `/mcp/call` because it adds server trust, whitelist, drift, provenance, response scanning, and audit.
+
+---
+
+## Trust Model For Integrators
+
+- The app sends an Interlock API key; provider credentials stay server-side on the gateway.
+- Raw Interlock keys are returned once and stored hashed in the key database.
+- Use one key per environment or pilot team so audit logs and quotas remain clear.
+- Pass an explicit `role` on tool calls so RBAC decisions are explainable.
+- Start with one agent and one MCP server, then expand after allow/block/quarantine/audit are proven.
 
 ---
 

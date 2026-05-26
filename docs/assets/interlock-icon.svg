@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Interlock">
+  <rect width="256" height="256" rx="48" fill="#050608"/>
+  <path d="M76 122V92c0-31 21-52 52-52s52 21 52 52v30" fill="none" stroke="#00f5d4" stroke-width="18" stroke-linecap="round"/>
+  <rect x="54" y="104" width="148" height="104" rx="22" fill="#111417" stroke="#00f5d4" stroke-width="10"/>
+  <path d="M92 156h72" stroke="#f5ff00" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="128" cy="156" r="16" fill="#ff1744"/>
+</svg>

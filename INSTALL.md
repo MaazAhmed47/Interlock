@@ -6,7 +6,21 @@ This guide is intentionally conservative. Do not run multiple workers or multipl
 
 ---
 
-## 5-Minute Docker Quickstart
+## 2-Minute Docker Quickstart
+
+Recommended local path:
+
+```bash
+./scripts/quickstart.sh
+```
+
+Windows PowerShell:
+
+```powershell
+.\scripts\quickstart.ps1
+```
+
+Manual equivalent:
 
 ```bash
 cp .env.example .env
@@ -51,14 +65,23 @@ python -m uvicorn proxy:app --host 127.0.0.1 --port 8001 --workers 1
 
 ## Kubernetes Pilot Install
 
-Use Helm for a controlled pilot, not for high-availability production yet.
+Use Helm for a controlled pilot. Keep real credentials in a Kubernetes Secret, not in `values.yaml`.
 
 ```bash
+kubectl create namespace interlock
+
+kubectl create secret generic interlock-runtime-secrets \
+  --namespace interlock \
+  --from-literal=ADMIN_TOKEN="<admin-token>" \
+  --from-literal=GROQ_API_KEY="<optional-groq-key>" \
+  --from-literal=OPENAI_API_KEY="<optional-openai-key>" \
+  --from-literal=ANTHROPIC_API_KEY="<optional-anthropic-key>" \
+  --from-literal=DATABASE_URL="<postgres-url>" \
+  --from-literal=REDIS_URL="<redis-url>"
+
 helm install interlock ./helm \
   --namespace interlock \
-  --create-namespace \
-  --set secrets.data.ADMIN_TOKEN="<admin-token>" \
-  --set secrets.data.GROQ_API_KEY="<optional-groq-key>" \
+  -f helm/values-production.example.yaml \
   --set ingress.enabled=false
 
 kubectl wait --for=condition=ready pod \
@@ -69,25 +92,36 @@ kubectl port-forward -n interlock svc/interlock 8001:80
 curl http://localhost:8001/health
 ```
 
-Default Helm values use one replica and autoscaling disabled. That is intentional while SQLite and in-memory rate-limit state are the default.
+For a single-node pilot without Postgres/Redis, use the default `helm/values.yaml` instead. For multi-pod production, use `helm/values-production.example.yaml`, external Postgres, and Redis-backed rate limiting.
 
 ---
 
 ## Day 0 Operations
 
-### Generate an admin token
+### Generate the bootstrap admin token
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Set it as `ADMIN_TOKEN`. Treat it like a root credential.
+Set it as `ADMIN_TOKEN`. Treat it like a root credential and use it to issue scoped admin tokens.
+
+### Issue a scoped admin token
+
+```bash
+curl -s -X POST http://localhost:8001/admin/tokens \
+  -H "X-Admin-Token: <bootstrap-admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"label":"pilot-operator","role":"operator"}'
+```
+
+Roles: `owner`, `operator`, `security_reviewer`, and `auditor`. Raw admin tokens are returned once; only hashes are stored.
 
 ### Issue a customer API key
 
 ```bash
 curl -s -X POST http://localhost:8001/admin/keys \
-  -H "X-Admin-Token: <admin-token>" \
+  -H "X-Admin-Token: <scoped-admin-token>" \
   -H "Content-Type: application/json" \
   -d '{
     "plan": "developer",
@@ -97,20 +131,42 @@ curl -s -X POST http://localhost:8001/admin/keys \
   }'
 ```
 
-The raw key is returned once. Store it immediately.
+The raw customer API key is returned once. Store it immediately.
 
 ### Configure SIEM or Slack alerts
 
 Add `webhook_url` or `siem_configs` on the API key record. See `docs/siem-integrations.md`.
 
+### Configure audit retention
+
+Defaults are conservative for pilots: 30 days of scan history, 90 days of MCP audit events, and 365 days of usage logs. Tune them with admin endpoints:
+
+```bash
+curl -s http://localhost:8001/admin/retention \
+  -H "X-Admin-Token: <admin-token>"
+
+curl -s -X PUT http://localhost:8001/admin/retention \
+  -H "X-Admin-Token: <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"scan_history_days":30,"mcp_audit_days":180,"usage_log_days":365}'
+
+curl -s -X POST http://localhost:8001/admin/retention/prune \
+  -H "X-Admin-Token: <admin-token>"
+```
+
 ---
 
 ## Production Readiness Boundaries
+
+For the buyer-facing hardening checklist, see [docs/production-readiness.md](docs/production-readiness.md). For exposed secrets, use [docs/secret-rotation.md](docs/secret-rotation.md).
+
 
 Ready for pilots:
 
 - single-node Docker deployment
 - single-replica Kubernetes deployment
+- optional Redis-backed shared rate limiting via `REDIS_URL`
+- configurable retention policy for scan history, MCP audit, and usage logs
 - MCP gateway, drift detection, RBAC, response scanning, and audit APIs
 - persistent SQLite for local/pilot state
 - Slack/SIEM dispatch that does not block scan decisions
@@ -118,7 +174,7 @@ Ready for pilots:
 Do before broad production rollout:
 
 - shared database migration plan for high availability
-- shared rate-limit state, likely Redis
+- managed Postgres backups, restore testing, and migration review for customer environments
 - admin SSO or a hardened admin auth layer
 - backup and retention policy for audit logs
 - load testing against the target agent/MCP traffic pattern
