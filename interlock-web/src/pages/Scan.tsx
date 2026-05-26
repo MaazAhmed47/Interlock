@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { ScanLine, Loader2 } from 'lucide-react'
-import { api, hasApiKey, ScanResult, DEMO_PROMPTS, DemoPrompt } from '../api'
+import { api, demoScan, normalizeLayerLabel, ScanMode, ScanResult, DEMO_PROMPTS, DemoPrompt } from '../api'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
 import ErrorCard from '../components/ErrorCard'
@@ -25,7 +25,8 @@ function formatMs(ms: number) {
   return String(Math.round(ms * 10) / 10) + 'ms'
 }
 
-function progressMessage(ms: number, endpoint: string) {
+function progressMessage(ms: number, endpoint: string, mode: ScanMode) {
+  if (endpoint === '/scan' && mode === 'fast') return 'Running deterministic runtime checks without waiting on the external judge.'
   if (endpoint === '/scan/output') return 'Output scans should return quickly because they use deterministic response checks.'
   if (ms >= 35000) return 'Still waiting on the backend/provider. This scan will stop at 45s instead of hanging.'
   if (ms >= 15000) return 'Still running. Cold hosted backends and Layer 3 judge calls can be slow.'
@@ -40,6 +41,7 @@ function ScanForm({
   examples,
   initialPrompt = '',
   endpoint,
+  scanMode = 'fast',
   onComplete,
 }: {
   title: string
@@ -47,6 +49,7 @@ function ScanForm({
   examples: DemoPrompt[]
   initialPrompt?: string
   endpoint: string
+  scanMode?: ScanMode
   onComplete?: (result: ScanResult, endpoint: string) => void | Promise<void>
 }) {
   const [prompt, setPrompt] = useState(initialPrompt)
@@ -92,9 +95,8 @@ function ScanForm({
   const rows: [string, string | number | null | undefined][] = [
     ['Reason', result?.reason],
     ['Threat Type', result?.threat_type],
-    ['Layer Caught', result?.layer_caught],
+    ['Layer Caught', normalizeLayerLabel(result?.layer_caught)],
     ['Confidence', result?.confidence != null ? `${Math.round(result.confidence * 100)}%` : null],
-    ['Risk Score', result?.risk_score != null ? String(result.risk_score) : null],
     ['Engine Time', result?.scan_time_ms != null ? formatMs(result.scan_time_ms) : null],
     ['Request Time', result ? formatElapsed(elapsedMs) : null],
   ]
@@ -130,7 +132,7 @@ function ScanForm({
           {loading ? <Loader2 size={13} className="spin" /> : <ScanLine size={13} />}
           {loading ? 'Scanning ' + formatElapsed(elapsedMs) : 'Scan'}
         </button>
-        {loading && <span className="scan-progress-note">{progressMessage(elapsedMs, endpoint)}</span>}
+        {loading && <span className="scan-progress-note">{progressMessage(elapsedMs, endpoint, scanMode)}</span>}
       </div>
 
       {error && <ErrorCard message={error} />}
@@ -177,20 +179,21 @@ function ScanForm({
 }
 
 export default function Scan() {
-  const { refreshScans, recordScanResult } = useDashboardData()
+  const { configured, demoMode, refreshScans, recordScanResult } = useDashboardData()
   const location = useLocation()
   const state = location.state as { prompt?: string; target?: 'prompt' | 'output' } | null
   const initialTarget = state?.target === 'output' ? 'output' : 'prompt'
   const initialPrompt = typeof state?.prompt === 'string' ? state.prompt : ''
   const promptExamples = DEMO_PROMPTS.filter(p => p.target === 'prompt')
   const outputExamples = DEMO_PROMPTS.filter(p => p.target === 'output')
+  const [scanMode, setScanMode] = useState<ScanMode>('fast')
 
   function handleComplete(result: ScanResult, endpoint: string) {
     recordScanResult(result, endpoint)
-    void refreshScans()
+    if (configured) void refreshScans()
   }
 
-  if (!hasApiKey()) return (
+  if (!configured && !demoMode) return (
     <div className="dash-main">
       <div className="dash-page-header"><div><h1>Scan</h1></div></div>
       <EmptyState message="Add an API key before running scans. The dashboard includes sample prompts you can test once connected." />
@@ -200,22 +203,30 @@ export default function Scan() {
     <div className="dash-main">
       <div className="dash-page-header">
         <div><h1>Scan</h1><p>Run prompt and output scans against the Interlock pipeline</p></div>
+        {configured && (
+          <div className="segmented-control" aria-label="Prompt scan mode">
+            <button className={scanMode === 'fast' ? 'active' : ''} onClick={() => setScanMode('fast')}>Runtime Policy</button>
+            <button className={scanMode === 'full' ? 'active' : ''} onClick={() => setScanMode('full')}>Full Judge</button>
+          </div>
+        )}
       </div>
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
         <ScanForm
           title="Prompt Scan"
-          action={api.scan}
+          action={prompt => configured ? api.scan(prompt, scanMode) : demoScan(prompt, 'prompt')}
           examples={promptExamples}
           initialPrompt={initialTarget === 'prompt' ? initialPrompt : ''}
           endpoint="/scan"
+          scanMode={scanMode}
           onComplete={handleComplete}
         />
         <ScanForm
           title="Output Scan"
-          action={api.scanOutput}
+          action={prompt => configured ? api.scanOutput(prompt) : demoScan(prompt, 'output')}
           examples={outputExamples}
           initialPrompt={initialTarget === 'output' ? initialPrompt : ''}
           endpoint="/scan/output"
+          scanMode="fast"
           onComplete={handleComplete}
         />
       </div>

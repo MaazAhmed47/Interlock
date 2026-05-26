@@ -5,6 +5,8 @@ import Scan from './pages/Scan'
 import MCPGateway from './pages/MCPGateway'
 import Audit from './pages/Audit'
 import Settings from './pages/Settings'
+import Login from './pages/Login'
+import OIDCCallback from './pages/OIDCCallback'
 
 export default function App() {
   return (
@@ -15,6 +17,8 @@ export default function App() {
         <Route path="mcp" element={<MCPGateway />} />
         <Route path="audit" element={<Audit />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="login" element={<Login />} />
+        <Route path="auth/callback" element={<OIDCCallback />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

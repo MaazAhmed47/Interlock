@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
-import { RefreshCw, ScanLine, Server, Activity } from 'lucide-react'
+import { RefreshCw, ScanLine, Server, Activity, ShieldCheck } from 'lucide-react'
 import { AuditEvent, ScanHistoryEvent, ScanStats, ShadowStats, DEMO_PROMPTS } from '../api'
 import { useDashboardData } from '../components/DashLayout'
 import MetricCard from '../components/MetricCard'
@@ -99,6 +99,45 @@ function mcpToActivity(event: AuditEvent, index: number): ActivityRow {
   }
 }
 
+function ExecutiveDemoBrief({
+  demoMode,
+  driftedCount,
+  auditCount,
+  scanCount,
+}: {
+  demoMode: boolean
+  driftedCount: number
+  auditCount: number
+  scanCount: number
+}) {
+  const environmentLabel = demoMode ? 'Demo evidence' : 'Live environment'
+  const auditLabel = auditCount > 0 ? auditCount + ' evidence events' : 'No evidence yet'
+  const driftLabel = driftedCount > 0 ? driftedCount + ' tools need review' : 'No drift pending'
+  const scanLabel = scanCount > 0 ? scanCount + ' scan events' : 'Ready for scans'
+
+  return (
+    <div className="exec-demo-panel glow-card">
+      <div className="exec-demo-copy">
+        <div className="exec-demo-kicker">Enterprise demo brief</div>
+        <h2>Runtime control for agent tool access, with evidence a security team can inspect.</h2>
+        <p>Evaluate one agent workflow through Interlock: policy enforcement before execution, MCP drift review, response scanning, and a unified decision timeline.</p>
+      </div>
+      <div className="exec-demo-grid">
+        <div className="exec-demo-item"><span>Environment</span><strong>{environmentLabel}</strong></div>
+        <div className="exec-demo-item"><span>Prompt / output scans</span><strong>{scanLabel}</strong></div>
+        <div className="exec-demo-item"><span>MCP review queue</span><strong>{driftLabel}</strong></div>
+        <div className="exec-demo-item"><span>Audit readiness</span><strong>{auditLabel}</strong></div>
+      </div>
+      <div className="pilot-readiness">
+        <div><span>Integration</span><strong>base_url swap</strong></div>
+        <div><span>Policy</span><strong>RBAC + fail modes</strong></div>
+        <div><span>MCP</span><strong>baseline + drift</strong></div>
+        <div><span>Evidence</span><strong>audit + SIEM-ready</strong></div>
+      </div>
+    </div>
+  )
+}
+
 function SecurityPosture({ scanStats }: { scanStats: ScanStats | null }) {
   const total = scanStats?.total ?? 0
   const blocked = scanStats?.threats ?? 0
@@ -148,6 +187,7 @@ function SecurityPosture({ scanStats }: { scanStats: ScanStats | null }) {
 export default function Dashboard() {
   const {
     configured,
+    demoMode,
     loaded,
     loading,
     health,
@@ -165,8 +205,11 @@ export default function Dashboard() {
   const isOk = health?.status === 'ok'
   const hasLiveData = Boolean(usage || servers.length > 0 || shadow || drifted.length > 0 || audit.length > 0 || scanHistory.length > 0)
   const backendOnline = isOk || hasLiveData
-  const backendError = Boolean(errors.health && !hasLiveData)
-  const backendLabel = backendError ? 'Backend unreachable' : backendOnline ? 'Backend online' : 'Checking...'
+  const demoBackendError = demoMode && Boolean(errors.health)
+  const backendError = Boolean(errors.health && !hasLiveData && !demoMode)
+  const backendLabel = demoMode
+    ? demoBackendError ? 'Demo mode - backend unreachable' : isOk ? 'Demo mode - backend online' : 'Demo mode'
+    : backendError ? 'Backend unreachable' : backendOnline ? 'Backend online' : 'Checking...'
   const shadowMetric = getShadowMetric(shadow)
   const driftUnavailable = Boolean(errors.drifted && drifted.length === 0)
   const recentActivity = [
@@ -178,7 +221,7 @@ export default function Dashboard() {
     <div className="dash-main">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div className={`status-dot ${backendError ? 'err' : backendOnline ? 'ok' : 'loading'}`} />
+          <div className={'status-dot ' + (backendError || demoBackendError ? 'err' : backendOnline || demoMode ? 'ok' : 'loading')} />
           <span style={{ fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--dim)' }}>
             {backendLabel}
           </span>
@@ -188,13 +231,20 @@ export default function Dashboard() {
         </button>
       </div>
 
-      {!configured ? (
+      {!configured && !demoMode ? (
         <>
           <EmptyState message="Add an API key to run live scans. The demo prompts below show what Interlock is built to catch." />
           <PromptLibrary />
         </>
       ) : (
         <>
+          {demoMode && <div className="demo-note">Demo dataset</div>}
+          <ExecutiveDemoBrief
+            demoMode={demoMode}
+            driftedCount={drifted.length}
+            auditCount={audit.length + scanHistory.length}
+            scanCount={scanHistory.length}
+          />
           <div className="dash-section-title">Overview</div>
           <div className="metrics-grid">
             {errors.usage && !usage
@@ -230,12 +280,13 @@ export default function Dashboard() {
             <Link to="/dashboard/scan" className="btn btn-ghost"><ScanLine size={13} />Run Prompt Scan</Link>
             <Link to="/dashboard/mcp" className="btn btn-ghost"><Server size={13} />View MCP Gateway</Link>
             <Link to="/dashboard/audit" className="btn btn-ghost"><Activity size={13} />View Audit Log</Link>
+            <Link to="/dashboard/login" className="btn btn-cyan"><ShieldCheck size={13} />Admin Login</Link>
           </div>
 
           <PromptLibrary />
 
           <div className="dash-section-title">Recent Activity</div>
-          <div className="card" style={{ padding: 0 }}>
+          <div className="card glow-card" style={{ padding: 0 }}>
             {errors.audit && scanHistory.length === 0
               ? <div style={{ padding: 16 }}><EmptyState message="Audit log is unavailable right now. Run a scan to populate recent activity." showSettingsLink={false} /></div>
               : recentActivity.length === 0

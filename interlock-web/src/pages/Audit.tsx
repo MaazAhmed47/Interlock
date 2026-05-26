@@ -1,6 +1,8 @@
-import { useState } from 'react'
-import { RefreshCw } from 'lucide-react'
-import { AuditEvent, ScanHistoryEvent } from '../api'
+import { useEffect, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { LockKeyhole, LogIn, RefreshCw, ShieldCheck } from 'lucide-react'
+import { AdminAuditEvent, api, AuditEvent, ScanHistoryEvent } from '../api'
+import { authDisplayName, beginOidcLogin, useAuthSession } from '../auth'
 import { useDashboardData } from '../components/DashLayout'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
@@ -51,10 +53,33 @@ function mcpRow(event: AuditEvent, index: number): AuditRow {
   }
 }
 
+function adminTimestamp(event: AdminAuditEvent) {
+  return event.ts || event.timestamp || ''
+}
+
+function detailSummary(details?: Record<string, unknown>) {
+  if (!details || Object.keys(details).length === 0) return '-'
+  return Object.entries(details)
+    .slice(0, 3)
+    .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(',') : String(value)}`)
+    .join(' | ')
+}
+
 export default function Audit() {
-  const { configured, audit, scanHistory, errors, loadingAudit, loadingScans, refreshAudit, refreshScans } = useDashboardData()
+  const { configured, demoMode, audit, scanHistory, errors, loadingAudit, loadingScans, refreshAudit, refreshScans } = useDashboardData()
+  const [params, setParams] = useSearchParams()
+  const [view, setView] = useState<'runtime' | 'admin'>(() => params.get('view') === 'admin' ? 'admin' : 'runtime')
   const [action, setAction] = useState('all')
   const [severity, setSeverity] = useState('all')
+  const [adminEvents, setAdminEvents] = useState<AdminAuditEvent[]>([])
+  const [adminLoading, setAdminLoading] = useState(false)
+  const [adminError, setAdminError] = useState('')
+  const session = useAuthSession()
+
+  function selectView(next: 'runtime' | 'admin') {
+    setView(next)
+    setParams(next === 'admin' ? { view: 'admin' } : {})
+  }
 
   const rows = [...scanHistory.map(scanRow), ...audit.map(mcpRow)]
     .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime())
@@ -64,12 +89,37 @@ export default function Audit() {
     if (severity !== 'all' && e.severity.toLowerCase() !== severity) return false
     return true
   })
+  const blockedEvents = rows.filter(e => ['block', 'deny'].includes(e.action.toLowerCase())).length
+  const quarantinedEvents = rows.filter(e => e.action.toLowerCase() === 'quarantine').length
+  const allowedEvents = rows.filter(e => e.action.toLowerCase() === 'allow').length
+  const adminActors = new Set(adminEvents.map(e => e.actor_label || e.actor_email || e.actor_subject).filter(Boolean)).size
+  const adminFailures = adminEvents.filter(e => (e.result || 'success').toLowerCase() !== 'success').length
+  const oidcActions = adminEvents.filter(e => e.actor_auth_type === 'oidc').length
+
+  async function loadAdminAudit() {
+    if (!session) return
+    setAdminLoading(true)
+    setAdminError('')
+    try {
+      const data = await api.adminAudit(session.accessToken, 200)
+      setAdminEvents(data.events)
+    } catch (err) {
+      setAdminError(err instanceof Error ? err.message : 'Admin audit is unavailable.')
+    } finally {
+      setAdminLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (view === 'admin' && session) void loadAdminAudit()
+  }, [view, session?.accessToken])
 
   async function refresh() {
+    if (view === 'admin') return loadAdminAudit()
     await Promise.all([refreshAudit(), refreshScans()])
   }
 
-  if (!configured) return (
+  if (!configured && !demoMode && view === 'runtime') return (
     <div className="dash-main">
       <div className="dash-page-header"><div><h1>Audit Log</h1></div></div>
       <EmptyState />
@@ -79,63 +129,135 @@ export default function Audit() {
   return (
     <div className="dash-main">
       <div className="dash-page-header">
-        <div><h1>Audit Log</h1><p>Prompt, output, and MCP gateway decisions in one timeline</p></div>
-        <button className="btn btn-ghost btn-sm" onClick={refresh} disabled={loadingAudit || loadingScans}>
-          <RefreshCw size={12} />{loadingAudit || loadingScans ? 'Loading' : 'Refresh'}
+        <div><h1>Audit Log</h1><p>Runtime decisions and admin control-plane actions in one evidence workspace</p></div>
+        <button className="btn btn-ghost btn-sm" onClick={refresh} disabled={loadingAudit || loadingScans || adminLoading}>
+          <RefreshCw size={12} />{loadingAudit || loadingScans || adminLoading ? 'Loading' : 'Refresh'}
         </button>
       </div>
 
-      {(errors.audit || errors.scanHistory) && (
-        <div className="inline-note">
-          {errors.audit ? 'MCP audit is unavailable. ' : ''}{errors.scanHistory ? 'Scan history is unavailable.' : ''}
-        </div>
-      )}
-
-      <div className="filters-row">
-        <span style={{ fontSize: 12, color: 'var(--dim)', fontFamily: 'var(--font-mono)' }}>Action:</span>
-        <select className="filter-select" value={action} onChange={e => setAction(e.target.value)}>
-          {ACTIONS.map(a => <option key={a} value={a}>{a === 'all' ? 'All actions' : a.toUpperCase()}</option>)}
-        </select>
-        <span style={{ fontSize: 12, color: 'var(--dim)', fontFamily: 'var(--font-mono)' }}>Severity:</span>
-        <select className="filter-select" value={severity} onChange={e => setSeverity(e.target.value)}>
-          {SEVERITIES.map(s => <option key={s} value={s}>{s === 'all' ? 'All severities' : s.toUpperCase()}</option>)}
-        </select>
-        <span style={{ fontSize: 12, color: 'var(--dim)' }}>{filtered.length} events</span>
+      <div className="segmented-control audit-tabs">
+        <button className={view === 'runtime' ? 'active' : ''} onClick={() => selectView('runtime')}>Runtime Decisions</button>
+        <button className={view === 'admin' ? 'active' : ''} onClick={() => selectView('admin')}>Admin Audit</button>
       </div>
 
-      <div className="card" style={{ padding: 0 }}>
-        {filtered.length === 0
-          ? <div style={{ padding: 16 }}><EmptyState message="No audit events match the current filter. Run a prompt or output scan to populate this timeline." showSettingsLink={false} /></div>
-          : <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Timestamp</th><th>Source</th><th>Actor</th><th>Target</th>
-                    <th>Action</th><th>Severity</th><th>Scan Time</th><th>Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map(e => (
-                    <tr key={e.key}>
-                      <td className="mono dim" style={{ whiteSpace: 'nowrap' }}>
-                        {e.timestamp ? new Date(e.timestamp).toLocaleString() : '-'}
-                      </td>
-                      <td><StatusBadge value={e.source} /></td>
-                      <td className="mono">{e.actor}</td>
-                      <td className="mono dim" style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.target}</td>
-                      <td><StatusBadge value={e.action} /></td>
-                      <td>{e.severity !== '-' ? <StatusBadge value={e.severity} /> : <span className="dim">-</span>}</td>
-                      <td className="mono dim">{e.scanTime != null ? e.scanTime + 'ms' : '-'}</td>
-                      <td className="dim" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {e.reason}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {view === 'runtime' ? (
+        <>
+          {demoMode && <div className="demo-note">Demo audit timeline</div>}
+
+          {(errors.audit || errors.scanHistory) && (
+            <div className="inline-note">
+              {errors.audit ? 'MCP audit is unavailable. ' : ''}{errors.scanHistory ? 'Scan history is unavailable.' : ''}
             </div>
-        }
-      </div>
+          )}
+
+          <div className="control-summary-grid">
+            <div><span>Total evidence</span><strong>{rows.length}</strong></div>
+            <div><span>Blocked / denied</span><strong>{blockedEvents}</strong></div>
+            <div><span>Quarantined</span><strong>{quarantinedEvents}</strong></div>
+            <div><span>Allowed</span><strong>{allowedEvents}</strong></div>
+          </div>
+
+          <div className="filters-row">
+            <span style={{ fontSize: 12, color: 'var(--dim)', fontFamily: 'var(--font-mono)' }}>Action:</span>
+            <select className="filter-select" value={action} onChange={e => setAction(e.target.value)}>
+              {ACTIONS.map(a => <option key={a} value={a}>{a === 'all' ? 'All actions' : a.toUpperCase()}</option>)}
+            </select>
+            <span style={{ fontSize: 12, color: 'var(--dim)', fontFamily: 'var(--font-mono)' }}>Severity:</span>
+            <select className="filter-select" value={severity} onChange={e => setSeverity(e.target.value)}>
+              {SEVERITIES.map(s => <option key={s} value={s}>{s === 'all' ? 'All severities' : s.toUpperCase()}</option>)}
+            </select>
+            <span style={{ fontSize: 12, color: 'var(--dim)' }}>{filtered.length} events</span>
+          </div>
+
+          <div className="card glow-card" style={{ padding: 0 }}>
+            {filtered.length === 0
+              ? <div style={{ padding: 16 }}><EmptyState message="No audit events match the current filter. Run a prompt or output scan to populate this timeline." showSettingsLink={false} /></div>
+              : <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Timestamp</th><th>Source</th><th>Actor</th><th>Target</th>
+                        <th>Action</th><th>Severity</th><th>Scan Time</th><th>Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.map(e => (
+                        <tr key={e.key}>
+                          <td className="mono dim" style={{ whiteSpace: 'nowrap' }}>
+                            {e.timestamp ? new Date(e.timestamp).toLocaleString() : '-'}
+                          </td>
+                          <td><StatusBadge value={e.source} /></td>
+                          <td className="mono">{e.actor}</td>
+                          <td className="mono dim" style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.target}</td>
+                          <td><StatusBadge value={e.action} /></td>
+                          <td>{e.severity !== '-' ? <StatusBadge value={e.severity} /> : <span className="dim">-</span>}</td>
+                          <td className="mono dim">{e.scanTime != null ? e.scanTime + 'ms' : '-'}</td>
+                          <td className="dim" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {e.reason}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+            }
+          </div>
+        </>
+      ) : !session ? (
+        <div className="auth-required-panel glow-card">
+          <div className="auth-state-icon"><LockKeyhole size={22} /></div>
+          <h2>Admin audit requires SSO</h2>
+          <p>Runtime scans use the customer API key. Control-plane evidence uses your admin identity, so sign in with OIDC to read token issuance, key changes, retention updates, and review actions.</p>
+          {adminError && <div className="auth-error">{adminError}</div>}
+          <div className="login-actions centered">
+            <button className="btn btn-primary" onClick={() => void beginOidcLogin('/dashboard/audit?view=admin').catch(err => setAdminError(err instanceof Error ? err.message : 'Could not start SSO login.'))}><LogIn size={14} />Sign In With SSO</button>
+            <Link className="btn btn-ghost" to="/dashboard/settings">Configure SSO</Link>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="admin-auth-strip">
+            <ShieldCheck size={16} />
+            <div><strong>{authDisplayName(session)}</strong><span>{session.profile.role || 'Backend role mapping'} via OIDC</span></div>
+          </div>
+          {adminError && <div className="inline-note">{adminError}</div>}
+          <div className="control-summary-grid">
+            <div><span>Admin events</span><strong>{adminEvents.length}</strong></div>
+            <div><span>Actors</span><strong>{adminActors}</strong></div>
+            <div><span>OIDC actions</span><strong>{oidcActions}</strong></div>
+            <div><span>Failures</span><strong>{adminFailures}</strong></div>
+          </div>
+          <div className="card glow-card" style={{ padding: 0 }}>
+            {adminEvents.length === 0
+              ? <div style={{ padding: 16 }}><EmptyState message={adminLoading ? 'Loading admin audit events...' : 'No admin audit events found yet.'} showSettingsLink={false} /></div>
+              : <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Timestamp</th><th>Actor</th><th>Role</th><th>Auth</th>
+                        <th>Action</th><th>Target</th><th>Result</th><th>Reason / Details</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminEvents.map(e => (
+                        <tr key={(e.id || adminTimestamp(e)) + e.action}>
+                          <td className="mono dim" style={{ whiteSpace: 'nowrap' }}>{adminTimestamp(e) ? new Date(adminTimestamp(e)).toLocaleString() : '-'}</td>
+                          <td className="mono">{e.actor_label || e.actor_email || e.actor_subject || '-'}</td>
+                          <td><StatusBadge value={e.actor_role || '-'} /></td>
+                          <td><StatusBadge value={e.actor_auth_type || '-'} /></td>
+                          <td className="mono">{e.action}</td>
+                          <td className="mono dim" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{[e.target_type, e.target_id].filter(Boolean).join(': ') || '-'}</td>
+                          <td><StatusBadge value={e.result || 'success'} /></td>
+                          <td className="dim" style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.reason || detailSummary(e.details)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+            }
+          </div>
+        </>
+      )}
     </div>
   )
 }

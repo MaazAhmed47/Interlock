@@ -13,9 +13,16 @@ function formatValue(value: unknown) {
   return String(value)
 }
 
+function toolField(tool: MCPTool, key: string) {
+  const normalized = tool.normalized_metadata as Record<string, unknown> | undefined
+  const rawDefinition = tool.raw_tool_definition as Record<string, unknown> | undefined
+  return tool[key] ?? normalized?.[key] ?? rawDefinition?.[key]
+}
+
 export default function MCPGateway() {
   const {
     configured,
+    demoMode,
     servers,
     tools,
     drifted,
@@ -27,6 +34,10 @@ export default function MCPGateway() {
 
   async function doAction(tool: MCPTool, approve: boolean) {
     const k = `${tool.server_id}/${tool.tool_name}`
+    if (demoMode) {
+      setActionMsg(m => ({ ...m, [k]: 'Demo mode - connect an API key to review tools' }))
+      return
+    }
     const fn = approve ? api.approveTool : api.quarantineTool
     const msg = approve ? 'Approved' : 'Quarantined'
     const reason = approve ? 'Approved via dashboard' : 'Quarantined via dashboard'
@@ -39,7 +50,7 @@ export default function MCPGateway() {
     }
   }
 
-  if (!configured) return (
+  if (!configured && !demoMode) return (
     <div className="dash-main">
       <div className="dash-page-header"><div><h1>MCP Gateway</h1></div></div>
       <EmptyState />
@@ -53,6 +64,15 @@ export default function MCPGateway() {
         <button className="btn btn-ghost btn-sm" onClick={refreshMcp} disabled={loadingMcp}>
           <RefreshCw size={12} />{loadingMcp ? 'Loading' : 'Refresh'}
         </button>
+      </div>
+
+      {demoMode && <div className="demo-note">Demo MCP inventory</div>}
+
+      <div className="control-summary-grid">
+        <div><span>Registered servers</span><strong>{servers.length}</strong></div>
+        <div><span>Tool inventory</span><strong>{tools.length}</strong></div>
+        <div><span>Review queue</span><strong>{drifted.length}</strong></div>
+        <div><span>Control path</span><strong>trust - policy - audit</strong></div>
       </div>
 
       {errors.servers && servers.length === 0 && <ErrorCard message={`Server registry unavailable: ${errors.servers}`} onRetry={refreshMcp} />}
@@ -77,20 +97,20 @@ export default function MCPGateway() {
                     </div>
                     {tool.drift_severity && <StatusBadge value={tool.drift_severity} />}
                   </div>
-                  {tool.description && (
-                    <div className="drift-card-field" style={{ color: 'rgba(245,240,232,.65)' }}>{tool.description}</div>
+                  {formatValue(toolField(tool, 'description')) !== '-' && (
+                    <div className="drift-card-field" style={{ color: 'rgba(245,240,232,.65)' }}>{formatValue(toolField(tool, 'description'))}</div>
                   )}
-                  <div className="drift-card-field"><strong>Effects:</strong> {formatValue(tool.effects)}</div>
-                  <div className="drift-card-field"><strong>Side effect:</strong> {formatValue(tool.side_effect)}</div>
-                  <div className="drift-card-field"><strong>Data classes:</strong> {formatValue(tool.data_classes)}</div>
+                  <div className="drift-card-field"><strong>Effects:</strong> {formatValue(toolField(tool, 'effects'))}</div>
+                  <div className="drift-card-field"><strong>Side effect:</strong> {formatValue(toolField(tool, 'side_effect'))}</div>
+                  <div className="drift-card-field"><strong>Data classes:</strong> {formatValue(toolField(tool, 'data_classes'))}</div>
                   <div className="drift-card-field"><strong>Drift action:</strong> {formatValue(tool.drift_action)}</div>
                   {actionMsg[k]
                     ? <div style={{ marginTop: 12, fontSize: 12, fontFamily: 'var(--font-mono)', color: actionMsg[k].startsWith('Error') ? 'var(--red)' : 'var(--cyan)' }}>{actionMsg[k]}</div>
                     : <div className="drift-card-actions">
-                        <button className="btn btn-cyan btn-sm" onClick={() => doAction(tool, true)}>
+                        <button className="btn btn-cyan btn-sm" onClick={() => doAction(tool, true)} disabled={demoMode}>
                           <CheckCircle size={11} />Approve
                         </button>
-                        <button className="btn btn-orange btn-sm" onClick={() => doAction(tool, false)}>
+                        <button className="btn btn-orange btn-sm" onClick={() => doAction(tool, false)} disabled={demoMode}>
                           <AlertOctagon size={11} />Quarantine
                         </button>
                       </div>
@@ -103,7 +123,7 @@ export default function MCPGateway() {
       )}
 
       <div className="dash-section-title">Registered Servers</div>
-      <div className="card" style={{ padding: 0, marginBottom: 20 }}>
+      <div className="card glow-card" style={{ padding: 0, marginBottom: 20 }}>
         {servers.length === 0
           ? <div style={{ padding: 16 }}><EmptyState message={errors.servers ? 'Server registry is unavailable right now.' : 'No MCP servers registered.'} showSettingsLink={false} /></div>
           : <div className="table-wrap">
@@ -124,7 +144,7 @@ export default function MCPGateway() {
       </div>
 
       <div className="dash-section-title">All Tools - {tools.length}</div>
-      <div className="card" style={{ padding: 0 }}>
+      <div className="card glow-card" style={{ padding: 0 }}>
         {tools.length === 0
           ? <div style={{ padding: 16 }}><EmptyState message={errors.tools ? 'Tool inventory is unavailable right now.' : servers.length > 0 ? 'No tools discovered yet. Registered servers are listed above.' : 'No tools discovered yet.'} showSettingsLink={false} /></div>
           : <div className="table-wrap">
@@ -137,7 +157,7 @@ export default function MCPGateway() {
                       <td className="mono">{t.tool_name}</td>
                       <td>{t.status ? <StatusBadge value={t.status} /> : <span className="dim">-</span>}</td>
                       <td className="dim" style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {formatValue(t.description)}
+                        {formatValue(toolField(t, 'description'))}
                       </td>
                     </tr>
                   ))}

@@ -5,7 +5,8 @@ const MAP: Record<string, string> = {
   block: 'badge-block', blocked: 'badge-block', deny: 'badge-block', denied: 'badge-block',
   monitor: 'badge-monitor', monitored: 'badge-monitor',
   quarantine: 'badge-quarantine', quarantined: 'badge-quarantine',
-  safe: 'badge-safe',
+  safe: 'badge-safe', scan: 'badge-safe', mcp: 'badge-low', active: 'badge-safe', verified: 'badge-safe', review: 'badge-monitor', changed: 'badge-monitor',
+  success: 'badge-safe', oidc: 'badge-safe', owner: 'badge-safe', operator: 'badge-monitor', auditor: 'badge-low', security_reviewer: 'badge-monitor', scoped_token: 'badge-monitor', bootstrap: 'badge-critical', failure: 'badge-block', failed: 'badge-block',
   high: 'badge-high', critical: 'badge-critical', medium: 'badge-medium', low: 'badge-low',
 }
 

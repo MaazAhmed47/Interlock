@@ -1,13 +1,15 @@
-import { Outlet, NavLink } from 'react-router-dom'
-import { LayoutDashboard, ScanLine, Server, BookOpen, Settings, ArrowLeft, Menu, X } from 'lucide-react'
+import { Outlet, Link, NavLink } from 'react-router-dom'
+import { LayoutDashboard, ScanLine, Server, BookOpen, Settings, ArrowLeft, Menu, X, LogIn, LogOut, ShieldCheck } from 'lucide-react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, hasApiKey, HealthResponse, UsageResponse, MCPServer, MCPTool, AuditEvent, ShadowStats, ScanHistoryEvent, ScanResult, ScanStats } from '../api'
+import { api, hasApiKey, HealthResponse, UsageResponse, MCPServer, MCPTool, AuditEvent, ShadowStats, ScanHistoryEvent, ScanResult, ScanStats, normalizeLayerLabel, DEMO_USAGE, DEMO_MCP_SERVERS, DEMO_MCP_TOOLS, DEMO_DRIFTED_TOOLS, DEMO_AUDIT_EVENTS, DEMO_SCAN_HISTORY, DEMO_SCAN_STATS, DEMO_SHADOW_STATS } from '../api'
+import { authDisplayName, clearAuthSession, useAuthSession } from '../auth'
 
 const NAV = [
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, end: true },
   { to: '/dashboard/scan', label: 'Scan', icon: ScanLine, end: false },
   { to: '/dashboard/mcp', label: 'MCP Gateway', icon: Server, end: false },
   { to: '/dashboard/audit', label: 'Audit Log', icon: BookOpen, end: false },
+  { to: '/dashboard/login', label: 'Admin Login', icon: ShieldCheck, end: false },
   { to: '/dashboard/settings', label: 'Settings', icon: Settings, end: false },
 ]
 
@@ -15,6 +17,7 @@ type DashboardErrors = Partial<Record<'health' | 'usage' | 'servers' | 'tools' |
 
 type DashboardDataContextValue = {
   configured: boolean
+  demoMode: boolean
   loaded: boolean
   loading: boolean
   loadingMcp: boolean
@@ -59,12 +62,19 @@ function scanEventFromResult(result: ScanResult, endpoint: string): ScanHistoryE
     threat_type: result.threat_type,
     reason: result.reason,
     confidence: result.confidence,
-    layer_caught: result.layer_caught,
+    layer_caught: normalizeLayerLabel(result.layer_caught),
     scan_time_ms: result.scan_time_ms,
     risk_score: result.risk_score,
     endpoint,
     prompt_preview: original.length > 80 ? original.slice(0, 80) + '...' : original,
   }
+}
+
+function normalizeScanEvents(events: ScanHistoryEvent[]) {
+  return events.map(event => ({
+    ...event,
+    layer_caught: normalizeLayerLabel(event.layer_caught),
+  }));
 }
 
 function statsFromHistory(history: ScanHistoryEvent[]): ScanStats {
@@ -109,12 +119,34 @@ function DashboardDataProvider({ children }: { children: ReactNode }) {
   const [scanStats, setScanStats] = useState<ScanStats | null>(null)
   const [shadow, setShadow] = useState<ShadowStats | null>(null)
   const [errors, setErrors] = useState<DashboardErrors>({})
+  const [configured, setConfigured] = useState<boolean>(() => hasApiKey())
+  const [demoMode, setDemoMode] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
   const [loadingMcp, setLoadingMcp] = useState(false)
   const [loadingAudit, setLoadingAudit] = useState(false)
   const [loadingScans, setLoadingScans] = useState(false)
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null)
+
+  const loadDemoData = useCallback((healthSnapshot?: HealthResponse | null, healthError?: string) => {
+    setDemoMode(true)
+    if (healthSnapshot !== undefined) setHealth(healthSnapshot)
+    setUsage(DEMO_USAGE)
+    setServers(DEMO_MCP_SERVERS)
+    setTools(DEMO_MCP_TOOLS)
+    setDrifted(DEMO_DRIFTED_TOOLS)
+    setAudit(DEMO_AUDIT_EVENTS)
+    setScanHistory(DEMO_SCAN_HISTORY)
+    setScanStats(DEMO_SCAN_STATS)
+    setShadow(DEMO_SHADOW_STATS)
+    setErrors(healthError ? { health: healthError } : {})
+    setLoaded(true)
+    setLoading(false)
+    setLoadingMcp(false)
+    setLoadingAudit(false)
+    setLoadingScans(false)
+    setLastLoadedAt(new Date().toISOString())
+  }, [])
 
   const recordScanResult = useCallback((result: ScanResult, endpoint: string) => {
     setScanHistory(prev => {
@@ -125,13 +157,19 @@ function DashboardDataProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const refreshScans = useCallback(async () => {
-    if (!hasApiKey()) return
+    const isConfigured = hasApiKey()
+    setConfigured(isConfigured)
+    if (!isConfigured) {
+      loadDemoData()
+      return
+    }
+    setDemoMode(false)
     setLoadingScans(true)
     setErrors(prev => clearErrors(prev, ['scanHistory', 'scanStats']))
 
     await Promise.all([
       api.scanHistory(100)
-        .then(data => setScanHistory(data.events))
+        .then(data => setScanHistory(normalizeScanEvents(data.events)))
         .catch(error => setErrors(prev => ({ ...prev, scanHistory: errorMessage(error) }))),
       api.scanStats()
         .then(setScanStats)
@@ -139,10 +177,16 @@ function DashboardDataProvider({ children }: { children: ReactNode }) {
     ])
 
     setLoadingScans(false)
-  }, [])
+  }, [loadDemoData])
 
   const refreshMcp = useCallback(async () => {
-    if (!hasApiKey()) return
+    const isConfigured = hasApiKey()
+    setConfigured(isConfigured)
+    if (!isConfigured) {
+      loadDemoData()
+      return
+    }
+    setDemoMode(false)
     setLoadingMcp(true)
     setErrors(prev => clearErrors(prev, ['servers', 'tools', 'drifted']))
 
@@ -159,10 +203,16 @@ function DashboardDataProvider({ children }: { children: ReactNode }) {
     ])
 
     setLoadingMcp(false)
-  }, [])
+  }, [loadDemoData])
 
   const refreshAudit = useCallback(async () => {
-    if (!hasApiKey()) return
+    const isConfigured = hasApiKey()
+    setConfigured(isConfigured)
+    if (!isConfigured) {
+      loadDemoData()
+      return
+    }
+    setDemoMode(false)
     setLoadingAudit(true)
     setErrors(prev => clearErrors(prev, ['audit']))
 
@@ -171,31 +221,39 @@ function DashboardDataProvider({ children }: { children: ReactNode }) {
       .catch(error => setErrors(prev => ({ ...prev, audit: errorMessage(error) })))
 
     setLoadingAudit(false)
-  }, [])
+  }, [loadDemoData])
 
   const refreshAll = useCallback(async () => {
+    const isConfigured = hasApiKey()
+    setConfigured(isConfigured)
     setLoading(true)
     setErrors({})
+
+    if (!isConfigured) {
+      let healthSnapshot: HealthResponse | null = null
+      let healthError = ''
+      try {
+        healthSnapshot = await api.health()
+      } catch (error) {
+        healthError = errorMessage(error)
+      }
+      loadDemoData(healthSnapshot, healthError)
+      return
+    }
+
+    setDemoMode(false)
+    setUsage(null)
+    setServers([])
+    setTools([])
+    setDrifted([])
+    setAudit([])
+    setScanHistory([])
+    setScanStats(null)
+    setShadow(null)
 
     const healthRequest = api.health()
       .then(setHealth)
       .catch(error => setErrors(prev => ({ ...prev, health: errorMessage(error) })))
-
-    if (!hasApiKey()) {
-      setUsage(null)
-      setServers([])
-      setTools([])
-      setDrifted([])
-      setAudit([])
-      setScanHistory([])
-      setScanStats(null)
-      setShadow(null)
-      await healthRequest
-      setLoaded(true)
-      setLoading(false)
-      setLastLoadedAt(new Date().toISOString())
-      return
-    }
 
     await Promise.all([
       healthRequest,
@@ -215,7 +273,7 @@ function DashboardDataProvider({ children }: { children: ReactNode }) {
         .then(data => setAudit(data.events))
         .catch(error => setErrors(prev => ({ ...prev, audit: errorMessage(error) }))),
       api.scanHistory(100)
-        .then(data => setScanHistory(data.events))
+        .then(data => setScanHistory(normalizeScanEvents(data.events)))
         .catch(error => setErrors(prev => ({ ...prev, scanHistory: errorMessage(error) }))),
       api.scanStats()
         .then(setScanStats)
@@ -228,14 +286,15 @@ function DashboardDataProvider({ children }: { children: ReactNode }) {
     setLoaded(true)
     setLoading(false)
     setLastLoadedAt(new Date().toISOString())
-  }, [])
+  }, [loadDemoData])
 
   useEffect(() => {
     if (!loaded && !loading) void refreshAll()
   }, [loaded, loading, refreshAll])
 
   const value = useMemo<DashboardDataContextValue>(() => ({
-    configured: hasApiKey(),
+    configured,
+    demoMode,
     loaded,
     loading,
     loadingMcp,
@@ -258,6 +317,8 @@ function DashboardDataProvider({ children }: { children: ReactNode }) {
     refreshScans,
     recordScanResult,
   }), [
+    configured,
+    demoMode,
     loaded,
     loading,
     loadingMcp,
@@ -292,6 +353,9 @@ export function useDashboardData() {
 
 export default function DashLayout() {
   const [mobileOpen, setMobileOpen] = useState(false)
+  const session = useAuthSession()
+  const signedInAs = authDisplayName(session)
+  const topbarIdentity = session ? 'Interlock Admin' : 'Admin SSO not signed in'
 
   return (
     <DashboardDataProvider>
@@ -318,6 +382,17 @@ export default function DashLayout() {
               <ArrowLeft size={13} />Back to site
             </a>
           </nav>
+          <div className="dash-auth-panel">
+            {session ? (
+              <>
+                <div className="dash-auth-kicker"><ShieldCheck size={12} /> SSO active</div>
+                <div className="dash-auth-name" title={signedInAs}>{signedInAs}</div>
+                <button className="dash-auth-button" onClick={clearAuthSession}><LogOut size={13} />Sign out</button>
+              </>
+            ) : (
+              <NavLink to="/dashboard/login" className="dash-auth-button"><LogIn size={13} />SSO login</NavLink>
+            )}
+          </div>
         </aside>
 
         <div className="dash-mobile-nav">
@@ -349,10 +424,41 @@ export default function DashLayout() {
               onClick={() => setMobileOpen(false)}>
               <ArrowLeft size={14} />Back to site
             </a>
+            {session ? (
+              <button className="dash-nav-item mobile-auth-action" onClick={() => { clearAuthSession(); setMobileOpen(false) }}>
+                <LogOut size={14} />Sign out
+              </button>
+            ) : (
+              <NavLink to="/dashboard/login" className="dash-nav-item" style={{ fontSize: 13, padding: '14px 24px' }} onClick={() => setMobileOpen(false)}>
+                <LogIn size={14} />SSO login
+              </NavLink>
+            )}
           </div>
         )}
 
         <div className="dash-content">
+          <div className="dash-topbar">
+            <div className="dash-topbar-identity">
+              <ShieldCheck size={16} />
+              <div>
+                <span>Control plane</span>
+                <strong title={signedInAs || undefined}>{topbarIdentity}</strong>
+              </div>
+            </div>
+            <div className="dash-topbar-actions">
+              {session ? (
+                <>
+                  <Link to="/dashboard/audit?view=admin" className="btn btn-cyan btn-sm">Admin Audit</Link>
+                  <button className="btn btn-ghost btn-sm" onClick={clearAuthSession}><LogOut size={12} />Sign Out</button>
+                </>
+              ) : (
+                <>
+                  <Link to="/dashboard/login" className="btn btn-primary btn-sm"><LogIn size={12} />Admin Login</Link>
+                  <Link to="/dashboard/settings" className="btn btn-ghost btn-sm">SSO Settings</Link>
+                </>
+              )}
+            </div>
+          </div>
           <Outlet />
         </div>
       </div>
