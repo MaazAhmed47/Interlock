@@ -29,6 +29,7 @@ class ScanRequest(BaseModel):
     prompt: str
     user_id: Optional[str] = "anonymous"
     context: Optional[str] = None
+    mode: Optional[str] = None
 
 
 class ToolCallRequest(BaseModel):
@@ -88,6 +89,8 @@ class ScanResult(BaseModel):
     layer_caught: Optional[str] = None
     scan_time_ms: Optional[float] = None
     risk_score: Optional[int] = None
+    sanitized_output: Optional[str] = None
+    redactions: Optional[List[str]] = None
     tool_metadata: Optional[dict] = None
 
 

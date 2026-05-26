@@ -123,7 +123,15 @@ rec = db.lookup_key(k2["raw_key"])
 assert rec["custom_policy"] == policy, f"custom_policy round-trip failed: {rec['custom_policy']}"
 print("  OK")
 
-print("Test 14: update_key returns False when only non-editable fields are passed ...")
+print("Test 14: update_key persists response-size guardrail fields ...")
+ok = db.update_key(k2["key_prefix"], max_response_bytes=12345, max_array_items=123)
+assert ok is True, f"update_key returned {ok}"
+rec = db.lookup_key(k2["raw_key"])
+assert rec["max_response_bytes"] == 12345, f"max_response_bytes not updated: {rec.get('max_response_bytes')}"
+assert rec["max_array_items"] == 123, f"max_array_items not updated: {rec.get('max_array_items')}"
+print("  OK")
+
+print("Test 15: update_key returns False when only non-editable fields are passed ...")
 result_bool = db.update_key(k2["key_prefix"], key_hash="not_allowed", id=999)
 assert result_bool is False, f"Expected False when only non-editable fields given, got {result_bool}"
 print("  OK")
@@ -131,7 +139,7 @@ print("  OK")
 
 # ── list_keys ──────────────────────────────────────────────────────────────────
 
-print("Test 15: list_keys excludes revoked keys by default ...")
+print("Test 16: list_keys excludes revoked keys by default ...")
 k_active  = db.generate_key("startup", label="stays-active")
 k_revoked = db.generate_key("free",    label="gets-revoked")
 db.revoke_key(k_revoked["key_prefix"])
@@ -140,12 +148,12 @@ assert k_active["key_prefix"]  in active_prefixes, "Active key missing from defa
 assert k_revoked["key_prefix"] not in active_prefixes, "Revoked key must not appear in default list"
 print("  OK")
 
-print("Test 16: list_keys with include_inactive=True surfaces revoked keys ...")
+print("Test 17: list_keys with include_inactive=True surfaces revoked keys ...")
 all_prefixes = {r["key_prefix"] for r in db.list_keys(include_inactive=True)}
 assert k_revoked["key_prefix"] in all_prefixes, "Revoked key must appear when include_inactive=True"
 print("  OK")
 
-print("Test 17: list_keys never exposes key_hash in any row ...")
+print("Test 18: list_keys never exposes key_hash in any row ...")
 for rec in db.list_keys(include_inactive=True):
     assert "key_hash" not in rec, f"key_hash leaked via list_keys: {list(rec.keys())}"
 print("  OK")
@@ -153,7 +161,7 @@ print("  OK")
 
 # ── log_usage / usage_this_month ────────────────────────────────────────────────
 
-print("Test 18: log_usage increments usage_this_month ...")
+print("Test 19: log_usage increments usage_this_month ...")
 k3  = db.generate_key("free", label="usage-test")
 rec3 = db.lookup_key(k3["raw_key"])
 kid  = rec3["id"]
@@ -165,20 +173,20 @@ assert db.usage_this_month(kid) == 3, \
     f"Expected 3 usage entries, got {db.usage_this_month(kid)}"
 print("  OK")
 
-print("Test 19: usage_this_month returns 0 for a key_id with no log entries ...")
+print("Test 20: usage_this_month returns 0 for a key_id with no log entries ...")
 assert db.usage_this_month(999_999) == 0
 print("  OK")
 
 
 # ── seed_legacy_keys ───────────────────────────────────────────────────────────
 
-print("Test 20: seed_legacy_keys inserts the three hard-coded legacy keys ...")
+print("Test 21: seed_legacy_keys inserts the three hard-coded legacy keys ...")
 db.seed_legacy_keys()
 for raw in ("lf-free-demo-key-123", "lf-dev-key-456", "lf-startup-key-789"):
     assert db.lookup_key(raw) is not None, f"Legacy key {raw[:12]}... not found after seed"
 print("  OK")
 
-print("Test 21: seed_legacy_keys is idempotent — calling twice keeps exactly 3 legacy rows ...")
+print("Test 22: seed_legacy_keys is idempotent — calling twice keeps exactly 3 legacy rows ...")
 db.seed_legacy_keys()
 legacy_rows = [
     r for r in db.list_keys(include_inactive=True)
@@ -191,7 +199,7 @@ print("  OK")
 
 # ── Key hashing ────────────────────────────────────────────────────────────────
 
-print("Test 22: raw key is never stored — DB holds only the sha256 hash ...")
+print("Test 23: raw key is never stored — DB holds only the sha256 hash ...")
 k4 = db.generate_key("free", label="hash-check")
 raw4 = k4["raw_key"]
 expected_hash = hashlib.sha256(raw4.encode()).hexdigest()
@@ -217,4 +225,4 @@ for path in (_tmp_db, _tmp_db + "-wal", _tmp_db + "-shm"):
     except OSError:
         pass
 
-print("\nAll DB tests passed. (22/22)")
+print("\nAll DB tests passed. (23/23)")

@@ -20,8 +20,12 @@ annotated-types==0.7.0
 # LLM judge (Groq)
 groq==1.2.0
 
-# Production database (Supabase/Postgres)
+# Production database/cache (Postgres + shared rate limits)
 psycopg2-binary
+redis==7.1.0
+
+# OIDC admin JWT verification
+PyJWT[crypto]==2.10.1
 
 # Environment / config
 python-dotenv==1.2.2

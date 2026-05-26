@@ -7,9 +7,9 @@ All per-key state lives in one row. JSON columns for the things that vary in sha
 (custom policies, SIEM configs) so we don't need a migration every time the rule
 engine grows a new field.
 
-Postgres support is available behind DATABASE_URL for hosted deployments, but
-production HA still needs schema, migration, and operations review. We use plain
-SQL — no ORM — to keep the surface tiny and review-able.
+Postgres support is available behind DATABASE_URL for hosted deployments. The
+schema initializer is backend-aware and idempotent for SQLite/Postgres. We use
+plain SQL — no ORM — to keep the surface tiny and review-able.
 """
 
 import os
@@ -19,8 +19,9 @@ import sqlite3
 import hashlib
 import logging
 import copy
+import re
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from threading import Lock
 from typing import Optional, List, Dict, Any
 from core.mcp_drift import classify_tool_drift
@@ -53,15 +54,63 @@ class _PostgresConn:
         self._conn.close()
 
 
-def _pg_sql(sql: str) -> str:
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_POSTGRES_BOOLEAN_COLUMNS = ("is_active", "verified")
+
+
+def _postgres_column_definition(definition: str, column: str = "") -> str:
+    converted = definition.strip()
+    if column in _POSTGRES_BOOLEAN_COLUMNS:
+        converted = re.sub(r"\bINTEGER\b", "BOOLEAN", converted, count=1)
+        converted = re.sub(r"DEFAULT\s+1\b", "DEFAULT TRUE", converted, flags=re.IGNORECASE)
+        converted = re.sub(r"DEFAULT\s+0\b", "DEFAULT FALSE", converted, flags=re.IGNORECASE)
+    return converted
+
+
+def _postgres_schema_sql(sql: str) -> str:
     converted = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
-    converted = converted.replace("is_active       INTEGER NOT NULL DEFAULT 1", "is_active       BOOLEAN NOT NULL DEFAULT TRUE")
+    for column in _POSTGRES_BOOLEAN_COLUMNS:
+        converted = re.sub(
+            rf"(\b{column}\s+)INTEGER(\s+NOT NULL)?\s+DEFAULT\s+1\b",
+            lambda m: f"{m.group(1)}BOOLEAN{m.group(2) or ''} DEFAULT TRUE",
+            converted,
+            flags=re.IGNORECASE,
+        )
+        converted = re.sub(
+            rf"(\b{column}\s+)INTEGER(\s+NOT NULL)?\s+DEFAULT\s+0\b",
+            lambda m: f"{m.group(1)}BOOLEAN{m.group(2) or ''} DEFAULT FALSE",
+            converted,
+            flags=re.IGNORECASE,
+        )
+    return converted
+
+
+def _pg_sql(sql: str) -> str:
+    converted = _postgres_schema_sql(sql)
     insert_ignore = "INSERT OR IGNORE INTO" in converted
+    insert_replace_system_config = "INSERT OR REPLACE INTO system_config" in converted
     converted = converted.replace("INSERT OR IGNORE INTO", "INSERT INTO")
+    converted = converted.replace("INSERT OR REPLACE INTO system_config", "INSERT INTO system_config")
     converted = converted.replace("?", "%s")
     if insert_ignore:
         converted = converted.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
+    if insert_replace_system_config:
+        converted = converted.rstrip().rstrip(";") + " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
     return converted
+
+
+def _schema_statements(script: str) -> List[str]:
+    return [statement.strip() for statement in script.split(";") if statement.strip()]
+
+
+def _is_index_statement(statement: str) -> bool:
+    return statement.lstrip().upper().startswith("CREATE INDEX")
+
+
+def _run_schema_statements(conn, *, indexes: bool) -> None:
+    for statement in _schema_statements(SCHEMA):
+        if _is_index_statement(statement) == indexes:
+            conn.execute(statement)
 
 
 @contextmanager
@@ -117,6 +166,26 @@ CREATE TABLE IF NOT EXISTS usage_log (
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_key_ts ON usage_log(key_id, ts);
+
+CREATE TABLE IF NOT EXISTS scan_history (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_hash         TEXT    NOT NULL,
+    ts               TEXT    NOT NULL,
+    is_threat        INTEGER NOT NULL DEFAULT 0,
+    threat_level     TEXT    NOT NULL DEFAULT 'SAFE',
+    threat_type      TEXT    NOT NULL DEFAULT '',
+    reason           TEXT    NOT NULL DEFAULT '',
+    confidence       REAL,
+    layer_caught     TEXT    NOT NULL DEFAULT '',
+    scan_time_ms     REAL,
+    risk_score       INTEGER,
+    endpoint         TEXT    NOT NULL DEFAULT '/scan',
+    prompt_preview   TEXT    NOT NULL DEFAULT '',
+    sanitized_output TEXT,
+    redactions       TEXT    NOT NULL DEFAULT '[]'
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_history_key_ts ON scan_history(key_hash, ts);
 
 CREATE TABLE IF NOT EXISTS mcp_servers (
     server_id       TEXT    PRIMARY KEY,
@@ -189,6 +258,43 @@ CREATE TABLE IF NOT EXISTS system_config (
     value TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS admin_tokens (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash      TEXT    NOT NULL UNIQUE,
+    token_prefix    TEXT    NOT NULL,
+    label           TEXT    NOT NULL DEFAULT '',
+    role            TEXT    NOT NULL DEFAULT 'operator',
+    permissions     TEXT    NOT NULL DEFAULT '[]',
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT    NOT NULL,
+    revoked_at      TEXT,
+    last_used_at    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_tokens_active ON admin_tokens(is_active);
+CREATE INDEX IF NOT EXISTS idx_admin_tokens_prefix ON admin_tokens(token_prefix);
+
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                 TEXT    NOT NULL,
+    actor_auth_type    TEXT    NOT NULL DEFAULT '',
+    actor_role         TEXT    NOT NULL DEFAULT '',
+    actor_label        TEXT    NOT NULL DEFAULT '',
+    actor_email        TEXT    NOT NULL DEFAULT '',
+    actor_subject      TEXT    NOT NULL DEFAULT '',
+    actor_token_prefix TEXT    NOT NULL DEFAULT '',
+    action             TEXT    NOT NULL,
+    target_type        TEXT    NOT NULL DEFAULT '',
+    target_id          TEXT    NOT NULL DEFAULT '',
+    result             TEXT    NOT NULL DEFAULT 'success',
+    reason             TEXT    NOT NULL DEFAULT '',
+    details            TEXT    NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_audit_ts ON admin_audit_log(ts);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_actor ON admin_audit_log(actor_auth_type, actor_subject, actor_token_prefix);
+
 CREATE TABLE IF NOT EXISTS shadow_mcp_servers (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
     url                    TEXT NOT NULL UNIQUE,
@@ -213,11 +319,14 @@ CREATE TABLE IF NOT EXISTS shadow_scan_targets (
 
 
 def init_db() -> None:
-    if USE_POSTGRES:
-        logger.info("Using Postgres - skipping schema creation (tables already exist in Supabase)")
-        return
     with _db_lock, get_conn() as conn:
-        conn.executescript(SCHEMA)
+        _run_schema_statements(conn, indexes=False)
+        _ensure_column(conn, "scan_history", "key_hash", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "scan_history", "ts", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "scan_history", "confidence", "REAL")
+        _ensure_column(conn, "scan_history", "endpoint", "TEXT NOT NULL DEFAULT '/scan'")
+        _ensure_column(conn, "scan_history", "sanitized_output", "TEXT")
+        _ensure_column(conn, "scan_history", "redactions", "TEXT NOT NULL DEFAULT '[]'")
         _ensure_column(conn, "mcp_tool_metadata", "drift_severity", "TEXT NOT NULL DEFAULT 'none'")
         _ensure_column(conn, "mcp_tool_metadata", "drift_action", "TEXT NOT NULL DEFAULT 'allow'")
         _ensure_column(conn, "mcp_tool_metadata", "drift_types", "TEXT NOT NULL DEFAULT '[]'")
@@ -238,7 +347,13 @@ def init_db() -> None:
         _ensure_column(conn, "mcp_servers", "source_url",        "TEXT DEFAULT ''")
         _ensure_column(conn, "mcp_servers", "source_hash",       "TEXT DEFAULT ''")
         _ensure_column(conn, "mcp_servers", "provenance_status", "TEXT DEFAULT 'unknown'")
-    logger.info("SQLite DB initialized at %s", DB_PATH)
+        _ensure_column(conn, "admin_audit_log", "actor_email", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "admin_audit_log", "actor_subject", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "admin_audit_log", "actor_token_prefix", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "admin_audit_log", "reason", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "admin_audit_log", "details", "TEXT NOT NULL DEFAULT '{}'")
+        _run_schema_statements(conn, indexes=True)
+    logger.info("%s DB initialized", "Postgres" if USE_POSTGRES else f"SQLite at {DB_PATH}")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -256,6 +371,22 @@ def _row_to_dict(row) -> Dict[str, Any]:
                 d[col] = json.loads(d[col])
             except (json.JSONDecodeError, TypeError):
                 d[col] = None
+    return d
+
+
+def _row_to_admin_token(row, include_hash: bool = False) -> Dict[str, Any]:
+    d = dict(row)
+    raw_permissions = d.get("permissions") or "[]"
+    try:
+        permissions = json.loads(raw_permissions)
+    except (json.JSONDecodeError, TypeError):
+        permissions = []
+    if not isinstance(permissions, list):
+        permissions = []
+    d["permissions"] = permissions
+    d["is_active"] = bool(d.get("is_active", False))
+    if not include_hash:
+        d.pop("token_hash", None)
     return d
 
 
@@ -278,12 +409,69 @@ def _hash_text(value: Any) -> str:
     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
 
 
+def _is_postgres_conn(conn) -> bool:
+    return isinstance(conn, _PostgresConn)
+
+
+def _validate_identifier(value: str) -> None:
+    if not _IDENTIFIER_RE.match(value or ""):
+        raise ValueError(f"Unsafe SQL identifier: {value!r}")
+
+
+def _table_columns(conn, table: str) -> List[str]:
+    _validate_identifier(table)
+    if _is_postgres_conn(conn):
+        rows = conn.execute(
+            """
+            SELECT column_name
+              FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = ?
+             ORDER BY ordinal_position
+            """,
+            (table,),
+        ).fetchall()
+        return [row_value(row, "column_name", 0) for row in rows]
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return [row_value(row, "name", 1) for row in rows]
+
+
+def table_columns(table: str, conn=None) -> List[str]:
+    if conn is not None:
+        return _table_columns(conn, table)
+    with get_conn() as owned_conn:
+        return _table_columns(owned_conn, table)
+
+
+def row_value(row, key: str, index: int = 0):
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row.get(key)
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return row[index]
+
+
+def row_to_plain_dict(row, columns: Optional[List[str]] = None) -> Dict[str, Any]:
+    if row is None:
+        return {}
+    if isinstance(row, (dict, sqlite3.Row)):
+        return dict(row)
+    if columns is None:
+        raise ValueError("columns are required for positional rows")
+    return dict(zip(columns, row))
+
+
 def _ensure_column(conn, table: str, column: str, definition: str) -> None:
     try:
-        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-        existing = {row["name"] if isinstance(row, sqlite3.Row) else row[1] for row in rows}
+        _validate_identifier(table)
+        _validate_identifier(column)
+        existing = set(_table_columns(conn, table))
         if column not in existing:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            column_definition = _postgres_column_definition(definition, column) if _is_postgres_conn(conn) else definition
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_definition}")
     except Exception:
         logger.exception("Failed to ensure column %s.%s", table, column)
         raise
@@ -303,6 +491,32 @@ PLAN_DEFAULTS = {
     "developer": {"monthly_limit": 50000,  "rate_per_min": 60,   "fail_mode": "fail_open_safe",  "max_response_bytes": 50_000, "max_array_items": 500},
     "startup":   {"monthly_limit": 500000, "rate_per_min": 300,  "fail_mode": "fail_open_safe",  "max_response_bytes": 50_000, "max_array_items": 500},
     "enterprise":{"monthly_limit": 0,      "rate_per_min": 1000, "fail_mode": "fail_open_safe",  "max_response_bytes": 50_000, "max_array_items": 500},  # 0 = unlimited
+}
+
+
+ADMIN_ROLE_DEFAULTS = {
+    "owner": ["*"],
+    "operator": [
+        "keys:read", "keys:write",
+        "retention:read", "retention:write",
+        "mcp:read", "mcp:write",
+        "shadow:read", "shadow:write",
+        "admin_audit:read",
+    ],
+    "security_reviewer": [
+        "keys:read",
+        "retention:read",
+        "mcp:read", "mcp:write",
+        "shadow:read", "shadow:write",
+        "admin_audit:read",
+    ],
+    "auditor": [
+        "keys:read",
+        "retention:read",
+        "mcp:read",
+        "shadow:read",
+        "admin_audit:read",
+    ],
 }
 
 
@@ -409,6 +623,7 @@ def update_key(key_prefix: str, **fields) -> bool:
     EDITABLE = {
         "label", "plan", "monthly_limit", "rate_per_min", "fail_mode",
         "webhook_url", "custom_policy", "siem_configs", "upstream_key",
+        "max_response_bytes", "max_array_items",
     }
     fields = {k: v for k, v in fields.items() if k in EDITABLE}
     if not fields:
@@ -430,12 +645,159 @@ def update_key(key_prefix: str, **fields) -> bool:
     return cursor.rowcount > 0
 
 
+
+# -- Admin token management ---------------------------------------------------
+def _normalize_permissions(permissions: Optional[List[str]]) -> List[str]:
+    if not permissions:
+        return []
+    clean = []
+    for permission in permissions:
+        value = str(permission or "").strip()
+        if value and value not in clean:
+            clean.append(value)
+    return clean
+
+
+def generate_admin_token(label: str, role: str = "operator", permissions: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Generate a scoped admin token. Returns the raw token once."""
+    role = (role or "operator").strip()
+    if role not in ADMIN_ROLE_DEFAULTS:
+        raise ValueError(f"Unknown admin role '{role}'. Valid: {list(ADMIN_ROLE_DEFAULTS)}")
+
+    effective_permissions = _normalize_permissions(permissions)
+    if not effective_permissions:
+        effective_permissions = list(ADMIN_ROLE_DEFAULTS[role])
+
+    raw = f"ia_{secrets.token_urlsafe(32)}"
+    token_hash = _hash_key(raw)
+    token_prefix = raw[:16]
+    now = datetime.now(timezone.utc).isoformat()
+
+    with _db_lock, get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO admin_tokens
+              (token_hash, token_prefix, label, role, permissions, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (token_hash, token_prefix, label or "", role, json.dumps(effective_permissions), True, now),
+        )
+
+    logger.info("Issued scoped admin token: prefix=%s role=%s label=%s", token_prefix, role, label)
+    return {
+        "raw_token": raw,
+        "token_prefix": token_prefix,
+        "label": label or "",
+        "role": role,
+        "permissions": effective_permissions,
+        "warning": "Store this admin token now. It will never be shown again.",
+    }
+
+
+def lookup_admin_token(raw_token: str) -> Optional[Dict[str, Any]]:
+    if not raw_token:
+        return None
+    token_hash = _hash_key(raw_token.strip())
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM admin_tokens WHERE token_hash = ? AND is_active = TRUE",
+            (token_hash,),
+        ).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE admin_tokens SET last_used_at = ? WHERE token_hash = ?",
+                (now, token_hash),
+            )
+    return _row_to_admin_token(row) if row else None
+
+
+def list_admin_tokens(include_inactive: bool = False) -> List[Dict[str, Any]]:
+    q = "SELECT * FROM admin_tokens" if include_inactive else "SELECT * FROM admin_tokens WHERE is_active = TRUE"
+    with get_conn() as conn:
+        rows = conn.execute(q + " ORDER BY created_at DESC").fetchall()
+    return [_row_to_admin_token(row) for row in rows]
+
+
+def revoke_admin_token(token_prefix: str) -> bool:
+    with _db_lock, get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE admin_tokens SET is_active = FALSE, revoked_at = ? WHERE token_prefix = ? AND is_active = TRUE",
+            (datetime.now(timezone.utc).isoformat(), token_prefix),
+        )
+        revoked = cursor.rowcount > 0
+    if revoked:
+        logger.info("Revoked admin token: prefix=%s", token_prefix)
+    return revoked
+
+
+# -- Admin audit log -----------------------------------------------------------
+def _json_dumps_object(value: Any) -> str:
+    if value is None:
+        return "{}"
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def log_admin_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist an auditable admin control-plane action."""
+    now = event.get("ts") or datetime.now(timezone.utc).isoformat()
+    details = _json_dumps_object(event.get("details") or {})
+    with _db_lock, get_conn() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO admin_audit_log
+              (ts, actor_auth_type, actor_role, actor_label, actor_email, actor_subject,
+               actor_token_prefix, action, target_type, target_id, result, reason, details)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                now,
+                event.get("actor_auth_type") or "",
+                event.get("actor_role") or "",
+                event.get("actor_label") or "",
+                event.get("actor_email") or "",
+                event.get("actor_subject") or "",
+                event.get("actor_token_prefix") or "",
+                event.get("action") or "",
+                event.get("target_type") or "",
+                event.get("target_id") or "",
+                event.get("result") or "success",
+                event.get("reason") or "",
+                details,
+            ),
+        )
+    stored = dict(event)
+    stored.update({"id": cursor.lastrowid, "ts": now, "details": event.get("details") or {}})
+    return stored
+
+
+def list_admin_audit_logs(limit: int = 100) -> List[Dict[str, Any]]:
+    limit = max(1, min(int(limit or 100), 500))
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM admin_audit_log ORDER BY ts DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    out = []
+    for row in rows:
+        item = row_to_plain_dict(row)
+        raw_details = item.get("details") or "{}"
+        try:
+            item["details"] = json.loads(raw_details)
+        except (json.JSONDecodeError, TypeError):
+            item["details"] = {}
+        out.append(item)
+    return out
+
+
 # ── Usage logging + monthly quota ────────────────────────────────────────────
 def log_usage(key_id: int, endpoint: str, threat_blocked: bool = False) -> None:
     with _db_lock, get_conn() as conn:
         conn.execute(
             "INSERT INTO usage_log (key_id, ts, endpoint, threat_blocked) VALUES (?, ?, ?, ?)",
-            (key_id, datetime.now(timezone.utc).isoformat(), endpoint, bool(threat_blocked)),
+            (key_id, datetime.now(timezone.utc).isoformat(), endpoint, int(bool(threat_blocked))),
         )
 
 
@@ -500,6 +862,84 @@ def seed_legacy_keys() -> None:
                 ),
             )
         logger.info("Seeded legacy key: %s (%s)", raw[:12], plan)
+
+
+
+# ── Retention policy ─────────────────────────────────────────────────────────
+DEFAULT_RETENTION_POLICY = {
+    "scan_history_days": 30,
+    "mcp_audit_days": 90,
+    "admin_audit_days": 365,
+    "usage_log_days": 365,
+}
+
+
+def get_system_config(key: str, default: Any = None) -> Any:
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM system_config WHERE key = ?", (key,)).fetchone()
+    if not row:
+        return default
+    raw = row["value"]
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return raw
+
+
+def set_system_config(key: str, value: Any) -> None:
+    raw = json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
+    with _db_lock, get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)",
+            (key, raw),
+        )
+
+
+def get_retention_policy() -> Dict[str, int]:
+    stored = get_system_config("retention_policy", {}) or {}
+    policy = dict(DEFAULT_RETENTION_POLICY)
+    if isinstance(stored, dict):
+        for key in policy:
+            try:
+                value = int(stored.get(key, policy[key]))
+            except (TypeError, ValueError):
+                value = policy[key]
+            policy[key] = max(1, value)
+    return policy
+
+
+def set_retention_policy(policy: Dict[str, int]) -> Dict[str, int]:
+    current = get_retention_policy()
+    for key in DEFAULT_RETENTION_POLICY:
+        if key in policy and policy[key] is not None:
+            current[key] = max(1, int(policy[key]))
+    set_system_config("retention_policy", current)
+    return current
+
+
+def _delete_older_than(conn, table: str, ts_column: str, days: int) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, int(days)))).isoformat()
+    cursor = conn.execute(
+        f"DELETE FROM {table} WHERE {ts_column} < ?",
+        (cutoff,),
+    )
+    return int(cursor.rowcount or 0)
+
+
+def prune_retention(policy: Optional[Dict[str, int]] = None) -> Dict[str, int]:
+    policy = policy or get_retention_policy()
+    with _db_lock, get_conn() as conn:
+        deleted_scan_history = _delete_older_than(conn, "scan_history", "ts", policy["scan_history_days"])
+        deleted_mcp_audit = _delete_older_than(conn, "mcp_audit_log", "ts", policy["mcp_audit_days"])
+        deleted_admin_audit = _delete_older_than(conn, "admin_audit_log", "ts", policy["admin_audit_days"])
+        deleted_usage = _delete_older_than(conn, "usage_log", "ts", policy["usage_log_days"])
+    return {
+        "scan_history_deleted": deleted_scan_history,
+        "mcp_audit_deleted": deleted_mcp_audit,
+        "admin_audit_deleted": deleted_admin_audit,
+        "usage_log_deleted": deleted_usage,
+        "policy": policy,
+    }
 
 
 # ── MCP server registry ───────────────────────────────────────────────────────
@@ -638,7 +1078,7 @@ def load_mcp04_policy() -> dict:
                 "SELECT value FROM system_config WHERE key='mcp04_policy'"
             ).fetchone()
             if row:
-                return json.loads(row[0])
+                return json.loads(row_value(row, "value", 0))
     except Exception:
         logger.exception("Failed to load mcp04 policy")
     return {}
@@ -679,7 +1119,7 @@ def seed_mcp_servers() -> None:
     seeds = [
         {
             "server_id": "trusted-filesystem",
-            "url": "http://localhost:3000/mcp",
+            "url": "https://mcp.acme-corp.internal/filesystem",
             "description": "Sandboxed file system access",
             "allowed_tools": ["read_file", "list_directory"],
             "blocked_tools": ["write_file", "delete_file", "execute"],
@@ -688,7 +1128,7 @@ def seed_mcp_servers() -> None:
         },
         {
             "server_id": "trusted-search",
-            "url": "http://localhost:3001/mcp",
+            "url": "https://mcp.acme-corp.internal/search",
             "description": "Web search MCP",
             "allowed_tools": ["search", "fetch"],
             "blocked_tools": [],

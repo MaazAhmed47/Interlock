@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, WebSocket, WebSocketDisconnect
 
 import proxy
-from core import db
+from core import db, rate_limit
 from models.schemas import SIEMTestRequest, ScanResult, ThreatLevel
 
 router = APIRouter()
@@ -24,7 +24,11 @@ def root():
 
 @router.get("/health")
 def health():
-    return {"status": "ok", "service": "interlock"}
+    return {
+        "status": "ok",
+        "service": "interlock",
+        "rate_limit": rate_limit.status(),
+    }
 
 
 @router.get("/roles")

@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import time
-from collections import defaultdict
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocketDisconnect
@@ -9,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 
 from core import db
+from core import rate_limit
 from core.detector import rule_based_scan
 from core.learning import check_learned_patterns, learn_from_result
 from core.llm_judge import llm_judge_scan
@@ -52,7 +52,6 @@ app.add_middleware(
 
 # API keys, rate limits, plan info, SIEM configs, and fail modes live in SQLite.
 # See core/db.py for the schema. Use /admin/keys endpoints to manage keys.
-request_counts = defaultdict(list)  # in-memory rate-limit window (replace with Redis for HA)
 _active_ws: list = []
 
 CONFIDENCE_MAP = {
@@ -121,57 +120,84 @@ def verify_key(api_key: Optional[str]):
 
 
 def check_rate(api_key: str, rate_per_min: int):
-    """Sliding-window per-minute rate limit. In-memory; not multi-worker safe."""
-    now = time.time()
-    request_counts[api_key] = [t for t in request_counts[api_key] if now - t < 60]
-    if len(request_counts[api_key]) >= rate_per_min:
+    """Sliding-window per-minute rate limit with optional Redis shared state."""
+    try:
+        return rate_limit.check_rate(api_key, rate_per_min)
+    except rate_limit.RateLimitExceeded:
         raise HTTPException(status_code=429, detail="Rate limit exceeded.")
-    request_counts[api_key].append(now)
+
+
+FAST_SCAN_MODES = {"fast", "runtime", "deterministic", "demo"}
+
+
+def _finalize_scan_result(
+    result: ScanResult,
+    start: float,
+    default_layer: str,
+    default_confidence: Optional[float] = None,
+) -> ScanResult:
+    if not result.layer_caught:
+        result.layer_caught = default_layer
+    if result.confidence is None:
+        result.confidence = default_confidence or CONFIDENCE_MAP.get(result.threat_level.value, 0.8)
+    result.scan_time_ms = round((time.time() - start) * 1000, 2)
+    result.risk_score = calculate_risk_score(result)
+    return result
+
+
+def _run_deterministic_scan_layers(prompt: str, api_key: str, start: float) -> Optional[ScanResult]:
+    result = check_learned_patterns(prompt)
+    if result:
+        return _finalize_scan_result(result, start, "Learned Pattern Cache")
+
+    result = policy_scan(prompt, api_key)
+    if result:
+        return _finalize_scan_result(result, start, "Custom Policy Engine")
+
+    result = rule_based_scan(prompt)
+    if result.is_threat:
+        return _finalize_scan_result(result, start, "Layer 1 - Rule Engine")
+
+    result = pattern_match_scan(prompt)
+    if result.is_threat:
+        return _finalize_scan_result(result, start, "Layer 2 - Pattern Matcher")
+
+    return None
+
+
+def run_fast_scan(prompt: str, api_key: str) -> ScanResult:
+    """Run only deterministic runtime checks so demos never wait on an external judge."""
+    start = time.time()
+    result = _run_deterministic_scan_layers(prompt, api_key, start)
+    if result:
+        return result
+
+    result = ScanResult(
+        is_threat=False,
+        threat_level=ThreatLevel.SAFE,
+        threat_type=None,
+        reason="No threats detected by policy, rule engine, or pattern matcher. LLM judge skipped in fast mode.",
+        original_prompt=prompt,
+        safe_to_proceed=True,
+        confidence=0.93,
+        layer_caught="Runtime Policy Engine",
+    )
+    return _finalize_scan_result(result, start, "Runtime Policy Engine")
 
 
 def run_scan(prompt: str, api_key: str) -> ScanResult:
     start = time.time()
 
-    result = check_learned_patterns(prompt)
+    result = _run_deterministic_scan_layers(prompt, api_key, start)
     if result:
-        result.scan_time_ms = round((time.time() - start) * 1000, 2)
-        result.risk_score = calculate_risk_score(result)
-        return result
-
-    result = policy_scan(prompt, api_key)
-    if result:
-        result.scan_time_ms = round((time.time() - start) * 1000, 2)
-        result.risk_score = calculate_risk_score(result)
-        return result
-
-    result = rule_based_scan(prompt)
-    if result.is_threat:
-        result.layer_caught = "Layer 1 - Rule Engine"
-        result.confidence = CONFIDENCE_MAP.get(result.threat_level.value, 0.8)
-        result.scan_time_ms = round((time.time() - start) * 1000, 2)
-        result.risk_score = calculate_risk_score(result)
-        return result
-
-    result = pattern_match_scan(prompt)
-    if result.is_threat:
-        result.layer_caught = "Layer 2 - Pattern Matcher"
-        result.confidence = CONFIDENCE_MAP.get(result.threat_level.value, 0.8)
-        result.scan_time_ms = round((time.time() - start) * 1000, 2)
-        result.risk_score = calculate_risk_score(result)
         return result
 
     # Layers 1 & 2 returned SAFE if we got here. Pass that context into the judge
     # so fail_open_safe can decide whether bypassing is acceptable on Groq outage.
     result = llm_judge_scan(prompt, api_key=api_key, prior_layers_safe=True)
-    if not result.layer_caught:
-        result.layer_caught = "Layer 3 - LLM Judge"
-    if result.confidence is None:
-        result.confidence = CONFIDENCE_MAP.get(result.threat_level.value, 0.8)
-    result.scan_time_ms = round((time.time() - start) * 1000, 2)
+    result = _finalize_scan_result(result, start, "Layer 3 - LLM Judge")
     learn_from_result(prompt, result)
-    result.risk_score = calculate_risk_score(result)
     return result
-
 
 def trigger_all_alerts(result, api_key, key_record=None):
     """Trigger webhook + SIEM in parallel. SIEM configs come from the key record."""

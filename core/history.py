@@ -1,34 +1,107 @@
-from collections import defaultdict
+import json
 from datetime import datetime, timezone
+
+from core import db
 from models.schemas import ScanResult
 
-# In-memory store (moves to PostgreSQL in production)
-scan_history = defaultdict(list)
 MAX_HISTORY = 500  # per key
 
-def save_scan(api_key: str, result: ScanResult, endpoint: str = "/scan"):
-    record = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "is_threat": result.is_threat,
-        "threat_level": result.threat_level.value,
-        "threat_type": result.threat_type,
-        "reason": result.reason,
-        "confidence": result.confidence,
-        "layer_caught": result.layer_caught,
-        "scan_time_ms": result.scan_time_ms,
-        "risk_score": result.risk_score,
-        "endpoint": endpoint,
-        "prompt_preview": result.original_prompt[:80] + "..." if len(result.original_prompt) > 80 else result.original_prompt,
+
+def _key_hash(api_key: str) -> str:
+    return db._hash_key(api_key)
+
+
+def _row_to_record(row) -> dict:
+    record = dict(row)
+    raw_redactions = record.pop("redactions", "[]")
+    try:
+        redactions = json.loads(raw_redactions or "[]")
+    except (json.JSONDecodeError, TypeError):
+        redactions = []
+    return {
+        "timestamp": record.get("ts"),
+        "is_threat": bool(record.get("is_threat")),
+        "threat_level": record.get("threat_level") or "SAFE",
+        "threat_type": record.get("threat_type") or None,
+        "reason": record.get("reason") or "",
+        "confidence": record.get("confidence"),
+        "layer_caught": record.get("layer_caught") or None,
+        "scan_time_ms": record.get("scan_time_ms"),
+        "risk_score": record.get("risk_score"),
+        "endpoint": record.get("endpoint") or "/scan",
+        "prompt_preview": record.get("prompt_preview") or "",
+        "sanitized_output": record.get("sanitized_output"),
+        "redactions": redactions,
     }
-    scan_history[api_key].insert(0, record)
-    # Keep only last 500
-    scan_history[api_key] = scan_history[api_key][:MAX_HISTORY]
+
+
+def save_scan(api_key: str, result: ScanResult, endpoint: str = "/scan"):
+    key_hash = _key_hash(api_key)
+    prompt = result.original_prompt or ""
+    prompt_preview = prompt[:80] + "..." if len(prompt) > 80 else prompt
+    now = datetime.now(timezone.utc).isoformat()
+
+    with db._db_lock, db.get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO scan_history
+              (key_hash, ts, is_threat, threat_level, threat_type, reason,
+               confidence, layer_caught, scan_time_ms, risk_score, endpoint,
+               prompt_preview, sanitized_output, redactions)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                key_hash,
+                now,
+                int(result.is_threat),
+                result.threat_level.value,
+                result.threat_type or "",
+                result.reason,
+                result.confidence,
+                result.layer_caught or "",
+                result.scan_time_ms,
+                result.risk_score,
+                endpoint,
+                prompt_preview,
+                result.sanitized_output,
+                json.dumps(result.redactions or []),
+            ),
+        )
+        conn.execute(
+            """
+            DELETE FROM scan_history
+             WHERE key_hash = ?
+               AND id NOT IN (
+                 SELECT id FROM scan_history
+                  WHERE key_hash = ?
+                  ORDER BY id DESC
+                  LIMIT ?
+               )
+            """,
+            (key_hash, key_hash, MAX_HISTORY),
+        )
+
 
 def get_history(api_key: str, limit: int = 50) -> list:
-    return scan_history[api_key][:limit]
+    key_hash = _key_hash(api_key)
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT ts, is_threat, threat_level, threat_type, reason, confidence,
+                   layer_caught, scan_time_ms, risk_score, endpoint, prompt_preview,
+                   sanitized_output, redactions
+              FROM scan_history
+             WHERE key_hash = ?
+             ORDER BY id DESC
+             LIMIT ?
+            """,
+            (key_hash, limit),
+        ).fetchall()
+    return [_row_to_record(row) for row in rows]
+
 
 def get_stats(api_key: str) -> dict:
-    history = scan_history[api_key]
+    history = get_history(api_key, MAX_HISTORY)
     if not history:
         return {
             "total": 0,
