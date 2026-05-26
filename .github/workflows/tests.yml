@@ -1,28 +1,101 @@
-name: Tests
+name: CI
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  backend:
+    name: Backend tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
-      - run: pip install -r requirements.txt
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile backend
+        run: python -m compileall proxy.py core routes models tests
 
       - name: Run core backend tests
         run: |
-          python tests/test_llm_judge_no_key.py
-          python tests/test_mcp_gateway.py
-          python tests/test_mcp_drift.py
-          python tests/test_tool_metadata.py
-          python tests/test_metadata_policy.py
-          python tests/test_mcp_registry_audit.py
-          python tests/test_mcp_review_api.py
-          python -m pytest tests/test_new_routes.py tests/test_response_scanner.py tests/test_provenance.py tests/test_shadow_scanner.py -v
+          python tests/test_db.py
+          python tests/test_mcp_db.py
+          python -m pytest -q \
+            tests/test_admin_audit.py \
+            tests/test_admin_oidc.py \
+            tests/test_admin_rbac.py \
+            tests/test_judge_failmodes.py \
+            tests/test_llm_judge_no_key.py \
+            tests/test_mcp_drift.py \
+            tests/test_mcp_gateway.py \
+            tests/test_mcp_registry_audit.py \
+            tests/test_mcp_review_api.py \
+            tests/test_metadata_policy.py \
+            tests/test_new_routes.py \
+            tests/test_policy_db.py \
+            tests/test_postgres_schema.py \
+            tests/test_provenance.py \
+            tests/test_rate_limit.py \
+            tests/test_response_scanner.py \
+            tests/test_retention.py \
+            tests/test_shadow_scanner.py \
+            tests/test_tool_metadata.py \
+            tests/test_webhook_fix.py
+
+  frontend:
+    name: Dashboard build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: interlock-web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: interlock-web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build dashboard and landing page
+        run: npm run build
+
+  helm:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v4.2.0
+
+      - name: Lint chart
+        run: helm lint ./helm
+
+      - name: Render production values
+        run: helm template interlock ./helm -f ./helm/values-production.example.yaml
+
+  docker:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build runtime image
+        run: docker build -t interlock:ci .

@@ -1,0 +1,62 @@
+# Production-style values for Interlock.
+# Do not put real secrets in this file. Create a Kubernetes Secret separately
+# and reference it through existingSecret.
+
+replicaCount: 2
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+secrets:
+  create: false
+
+existingSecret: interlock-runtime-secrets
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: api.your-domain.example
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: interlock-tls
+      hosts:
+        - api.your-domain.example
+
+# With DATABASE_URL enabled, runtime state should live outside the pod.
+persistence:
+  enabled: false
+
+networkPolicy:
+  enabled: true
+  ingress:
+    fromIngress: true
+  egress:
+    allowDNS: true
+    allowExternalHTTPS: true
+    allowExternalPostgres: true
+    allowExternalRedis: true
+    extraRules: []
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+
+config:
+  LOG_LEVEL: "info"
+  RATE_LIMIT_FREE: "10"
+  RATE_LIMIT_DEVELOPER: "60"
+  RATE_LIMIT_TEAM: "300"
+  WEBHOOK_TIMEOUT: "5"
+  MAX_PROMPT_LENGTH: "10000"
+  ENABLE_LEARNING: "true"
+  ENABLE_SHADOW_MODE: "true"
+  RATE_LIMIT_NAMESPACE: "interlock"
+  RATE_LIMIT_REDIS_TIMEOUT: "1.5"

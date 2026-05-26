@@ -1,6 +1,62 @@
-venv/
-__pycache__/
-*.pyc
+# Git and local metadata
+.git
+.github
+.gitignore
+.dockerignore
+
+# Secrets and local env
 .env
+.env.*
+!.env.example
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+llm-firewall/venv/
+
+# Node/frontend artifacts. The dashboard is deployed separately.
+node_modules/
+interlock-web/node_modules/
+interlock-web/dist/
+interlock-web/.vite/
+interlock-web/.vercel/
+interlock-web/
+
+# Local/generated data
+data/*
+!data/.gitkeep
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Non-runtime project material
+docs/
+demo/
+social-poster/
+design-plugin/
+monitoring/
+tests/
+
+# Media and generated assets
 *.png
 *.jpg
+*.jpeg
+*.gif
+*.webp
+*.mp4
+*.mov
+*.pdf
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

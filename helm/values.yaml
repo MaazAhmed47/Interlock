@@ -10,7 +10,7 @@ image:
   pullSecrets: []
 
 # ── Replica & Scaling ────────────────────────────────────────────────────────
-# Keep one replica until Postgres/shared rate-limit state is configured.
+# Keep one replica until Postgres and REDIS_URL are configured.
 replicaCount: 1
 
 autoscaling:
@@ -68,6 +68,8 @@ secrets:
     OPENAI_API_KEY: ""
     ANTHROPIC_API_KEY: ""
     ADMIN_TOKEN: ""
+    DATABASE_URL: ""
+    REDIS_URL: ""
 
 # Reference an existing secret instead of creating one (for Vault/external secrets)
 existingSecret: ""
@@ -82,6 +84,8 @@ config:
   MAX_PROMPT_LENGTH: "10000"
   ENABLE_LEARNING: "true"
   ENABLE_SHADOW_MODE: "true"
+  RATE_LIMIT_NAMESPACE: "interlock"
+  RATE_LIMIT_REDIS_TIMEOUT: "1.5"
 
 # ── Persistence (for learning patterns + audit logs) ─────────────────────────
 persistence:
@@ -176,6 +180,12 @@ networkPolicy:
     allowDNS: true
     # Allow HTTPS to upstream LLM providers
     allowExternalHTTPS: true
+    # Enable when DATABASE_URL points to an external managed Postgres endpoint.
+    allowExternalPostgres: false
+    # Enable when REDIS_URL points to an external managed Redis endpoint.
+    allowExternalRedis: false
+    # Add cluster-specific egress rules for private DB/Redis CIDRs or service selectors.
+    extraRules: []
 
 # ── Monitoring & Observability ───────────────────────────────────────────────
 metrics:

@@ -1,15 +1,15 @@
 #!/bin/bash
 # ============================================================================
-# LLM Firewall — One-Command Install Script
+# Interlock - Kubernetes Install Script
 # ============================================================================
 
 set -e
 
-NAMESPACE="${NAMESPACE:-llm-firewall}"
-RELEASE_NAME="${RELEASE_NAME:-firewall}"
-ENVIRONMENT="${ENVIRONMENT:-production}"
+NAMESPACE="${NAMESPACE:-interlock}"
+RELEASE_NAME="${RELEASE_NAME:-interlock}"
+ENVIRONMENT="${ENVIRONMENT:-dev}"
 
-echo "🛡️  LLM Firewall Installer"
+echo "Interlock Kubernetes Installer"
 echo "=========================="
 echo "Namespace:    $NAMESPACE"
 echo "Release:      $RELEASE_NAME"
@@ -86,5 +86,5 @@ echo "✓ Installation complete!"
 echo ""
 echo "Next steps:"
 echo "  kubectl get pods -n $NAMESPACE"
-echo "  kubectl logs -n $NAMESPACE -l app.kubernetes.io/name=llm-firewall -f"
+echo "  kubectl logs -n $NAMESPACE -l app.kubernetes.io/name=interlock -f"
 echo ""
