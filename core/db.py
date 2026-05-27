@@ -797,7 +797,7 @@ def log_usage(key_id: int, endpoint: str, threat_blocked: bool = False) -> None:
     with _db_lock, get_conn() as conn:
         conn.execute(
             "INSERT INTO usage_log (key_id, ts, endpoint, threat_blocked) VALUES (?, ?, ?, ?)",
-            (key_id, datetime.now(timezone.utc).isoformat(), endpoint, int(bool(threat_blocked))),
+            (key_id, datetime.now(timezone.utc).isoformat(), endpoint, bool(threat_blocked)),
         )
 
 

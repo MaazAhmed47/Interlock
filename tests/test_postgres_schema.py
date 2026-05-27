@@ -112,3 +112,37 @@ def test_database_url_is_stripped_when_loaded(monkeypatch):
 
     monkeypatch.delenv("DATABASE_URL", raising=False)
     importlib.reload(db)
+
+def test_postgres_scan_and_usage_writes_use_boolean_params(monkeypatch):
+    from core import history
+    from models.schemas import ScanResult, ThreatLevel
+
+    raw = RecordingRaw()
+    conn = db._PostgresConn(raw)
+
+    class FakeConnManager:
+        def __enter__(self):
+            return conn
+
+        def __exit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(db, "get_conn", lambda: FakeConnManager())
+
+    result = ScanResult(
+        is_threat=False,
+        threat_level=ThreatLevel.SAFE,
+        threat_type=None,
+        reason="clean",
+        original_prompt="hello",
+        safe_to_proceed=True,
+    )
+
+    history.save_scan("lf-dev-key-456", result)
+    db.log_usage(1, "/scan", threat_blocked=False)
+
+    scan_insert = next(params for sql, params in raw.statements if "INSERT INTO scan_history" in sql)
+    usage_insert = next(params for sql, params in raw.statements if "INSERT INTO usage_log" in sql)
+
+    assert scan_insert[2] is False
+    assert usage_insert[3] is False

@@ -53,7 +53,7 @@ def save_scan(api_key: str, result: ScanResult, endpoint: str = "/scan"):
             (
                 key_hash,
                 now,
-                int(result.is_threat),
+                bool(result.is_threat),
                 result.threat_level.value,
                 result.threat_type or "",
                 result.reason,
