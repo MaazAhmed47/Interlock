@@ -90,6 +90,18 @@ Kubernetes pilot:
 - Enable ServiceMonitor when Prometheus Operator is present.
 - Keep persistent volume disabled when Postgres is configured.
 
+## Rate Limiting
+
+Interlock uses an in-memory sliding-window rate limiter by default. This works correctly with a single worker (the default). If you scale to multiple pods or workers, each instance maintains its own independent rate-limit window — meaning a single API key can exceed its configured limit by a factor equal to the number of replicas.
+
+Before running more than one worker or pod, set `REDIS_URL` to enable distributed rate limiting:
+
+```bash
+REDIS_URL=redis://your-redis-host:6379/0
+```
+
+Without Redis, run with `--workers 1` (already the default in the Dockerfile). The `/health` endpoint reports whether Redis is configured and reachable. If Redis is configured but unavailable, Interlock falls back to in-memory mode and the health response reflects the degraded state.
+
 ## Redis Production Check
 
 Redis is implemented as an optional shared rate-limit backend. Before scaling horizontally:

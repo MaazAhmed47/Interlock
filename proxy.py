@@ -4,9 +4,12 @@ import os
 import time
 from typing import Optional
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from core import db
 from core import rate_limit
@@ -37,19 +40,58 @@ from models.schemas import (
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 logger = logging.getLogger("interlock.proxy")
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init_db()
+    db.seed_legacy_keys()
+    db.seed_mcp_servers()
+    if os.getenv("SHADOW_SCAN_ENABLED", "false").lower() == "true":
+        from core.shadow_scanner import run_shadow_scan as _run_shadow_scan
+        _scan_interval = int(os.getenv("SHADOW_SCAN_INTERVAL", "3600"))
+
+        async def _shadow_scan_loop():
+            while True:
+                try:
+                    with db.get_conn() as conn:
+                        findings = await _run_shadow_scan(conn)
+                        if findings:
+                            logger.info("Shadow scan: %d new finding(s)", len(findings))
+                except Exception:
+                    logger.exception("Shadow scan loop error")
+                await asyncio.sleep(_scan_interval)
+
+        asyncio.get_running_loop().create_task(_shadow_scan_loop())
+    yield
+
+
 app = FastAPI(
     title="Interlock",
     description="OpenAI-compatible reverse proxy with AI security scanning",
     version="1.0.0",
+    lifespan=lifespan,
 )
 _default_openapi_builder = app.openapi
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=os.getenv("ALLOWED_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # API keys, rate limits, plan info, SIEM configs, and fail modes live in SQLite.
 # See core/db.py for the schema. Use /admin/keys endpoints to manage keys.
@@ -67,38 +109,6 @@ CONFIDENCE_MAP = {
     "LOW": 0.55,
     "SAFE": 0.95,
 }
-
-
-@app.on_event("startup")
-def _init_db():
-    db.init_db()
-    db.seed_legacy_keys()
-    db.seed_mcp_servers()
-
-
-@app.on_event("startup")
-async def _start_shadow_scan():
-    import os as _os
-
-    if _os.getenv("SHADOW_SCAN_ENABLED", "false").lower() != "true":
-        return
-    import asyncio as _asyncio
-    from core.shadow_scanner import run_shadow_scan as _run_shadow_scan
-
-    _scan_interval = int(_os.getenv("SHADOW_SCAN_INTERVAL", "3600"))
-
-    async def _shadow_scan_loop():
-        while True:
-            try:
-                with db.get_conn() as conn:
-                    findings = await _run_shadow_scan(conn)
-                    if findings:
-                        logger.info("Shadow scan: %d new finding(s)", len(findings))
-            except Exception:
-                logger.exception("Shadow scan loop error")
-            await _asyncio.sleep(_scan_interval)
-
-    _asyncio.get_running_loop().create_task(_shadow_scan_loop())
 
 
 def _cached_lookup_key(raw_key: str):
@@ -157,6 +167,9 @@ def verify_key(api_key: Optional[str]):
     return record, raw
 
 
+# WARNING: In-memory rate limiting. Does not work across multiple
+# workers or pods. Run with --workers 1 (default in Dockerfile)
+# or deploy Redis and swap this for a Redis-backed counter.
 def check_rate(api_key: str, rate_per_min: int):
     """Sliding-window per-minute rate limit with optional Redis shared state."""
     try:
