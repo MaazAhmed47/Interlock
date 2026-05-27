@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 from typing import Optional
 
@@ -54,6 +55,11 @@ app.add_middleware(
 # See core/db.py for the schema. Use /admin/keys endpoints to manage keys.
 _active_ws: list = []
 
+KEY_CACHE_TTL_S = float(os.getenv("INTERLOCK_KEY_CACHE_TTL_S", "10"))
+USAGE_CACHE_TTL_S = float(os.getenv("INTERLOCK_USAGE_CACHE_TTL_S", "5"))
+_key_record_cache: dict[str, tuple[float, dict]] = {}
+_usage_cache: dict[int, tuple[float, int]] = {}
+
 CONFIDENCE_MAP = {
     "CRITICAL": 0.99,
     "HIGH": 0.90,
@@ -95,6 +101,38 @@ async def _start_shadow_scan():
     _asyncio.get_running_loop().create_task(_shadow_scan_loop())
 
 
+def _cached_lookup_key(raw_key: str):
+    cache_key = db._hash_key(raw_key)
+    now = time.time()
+    cached = _key_record_cache.get(cache_key)
+    if cached and now - cached[0] <= KEY_CACHE_TTL_S:
+        return dict(cached[1])
+
+    record = db.lookup_key(raw_key)
+    if record:
+        _key_record_cache[cache_key] = (now, dict(record))
+    else:
+        _key_record_cache.pop(cache_key, None)
+    return record
+
+
+def _cached_usage_this_month(key_id: int) -> int:
+    now = time.time()
+    cached = _usage_cache.get(key_id)
+    if cached and now - cached[0] <= USAGE_CACHE_TTL_S:
+        return cached[1]
+
+    used = db.usage_this_month(key_id)
+    _usage_cache[key_id] = (now, used)
+    return used
+
+
+def _bump_usage_cache(key_id: int, delta: int = 1) -> None:
+    cached = _usage_cache.get(key_id)
+    if cached:
+        _usage_cache[key_id] = (time.time(), cached[1] + delta)
+
+
 def verify_key(api_key: Optional[str]):
     """
     Look the key up in the DB. Returns (key_record_dict, raw_key) on success.
@@ -104,12 +142,12 @@ def verify_key(api_key: Optional[str]):
         raise HTTPException(status_code=401, detail="Missing API key.")
     raw = api_key.replace("Bearer ", "").replace("bearer ", "").strip()
 
-    record = db.lookup_key(raw)
+    record = _cached_lookup_key(raw)
     if not record:
         raise HTTPException(status_code=403, detail="Invalid or revoked API key.")
 
     if record["monthly_limit"] > 0:
-        used = db.usage_this_month(record["id"])
+        used = _cached_usage_this_month(record["id"])
         if used >= record["monthly_limit"]:
             raise HTTPException(
                 status_code=429,
@@ -145,12 +183,17 @@ def _finalize_scan_result(
     return result
 
 
-def _run_deterministic_scan_layers(prompt: str, api_key: str, start: float) -> Optional[ScanResult]:
+def _run_deterministic_scan_layers(
+    prompt: str,
+    api_key: str,
+    start: float,
+    key_record: Optional[dict] = None,
+) -> Optional[ScanResult]:
     result = check_learned_patterns(prompt)
     if result:
         return _finalize_scan_result(result, start, "Learned Pattern Cache")
 
-    result = policy_scan(prompt, api_key)
+    result = policy_scan(prompt, api_key, key_record=key_record)
     if result:
         return _finalize_scan_result(result, start, "Custom Policy Engine")
 
@@ -165,10 +208,10 @@ def _run_deterministic_scan_layers(prompt: str, api_key: str, start: float) -> O
     return None
 
 
-def run_fast_scan(prompt: str, api_key: str) -> ScanResult:
+def run_fast_scan(prompt: str, api_key: str, key_record: Optional[dict] = None) -> ScanResult:
     """Run only deterministic runtime checks so demos never wait on an external judge."""
     start = time.time()
-    result = _run_deterministic_scan_layers(prompt, api_key, start)
+    result = _run_deterministic_scan_layers(prompt, api_key, start, key_record=key_record)
     if result:
         return result
 
@@ -185,10 +228,10 @@ def run_fast_scan(prompt: str, api_key: str) -> ScanResult:
     return _finalize_scan_result(result, start, "Runtime Policy Engine")
 
 
-def run_scan(prompt: str, api_key: str) -> ScanResult:
+def run_scan(prompt: str, api_key: str, key_record: Optional[dict] = None) -> ScanResult:
     start = time.time()
 
-    result = _run_deterministic_scan_layers(prompt, api_key, start)
+    result = _run_deterministic_scan_layers(prompt, api_key, start, key_record=key_record)
     if result:
         return result
 

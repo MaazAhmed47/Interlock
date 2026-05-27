@@ -43,7 +43,7 @@ async def get_roles(x_api_key: Optional[str] = Header(None)):
 async def usage(x_api_key: Optional[str] = Header(None)):
     """Return the calling key's own quota consumption for the current month."""
     key_info, _ = proxy.verify_key(x_api_key)
-    used = db.usage_this_month(key_info["id"])
+    used = proxy._cached_usage_this_month(key_info["id"])
     limit = key_info["monthly_limit"]
     return {
         "plan": key_info["plan"],

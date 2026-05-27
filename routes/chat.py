@@ -33,7 +33,7 @@ async def chat_completions(
 
     user_prompts = [m.content for m in chat.messages if m.role == "user"]
     for prompt in user_prompts:
-        result = proxy.run_scan(prompt, raw_key)
+        result = proxy.run_scan(prompt, raw_key, key_record=key_info)
         save_scan(raw_key, result, endpoint="/v1/chat/completions")
         if result.is_threat:
             proxy.trigger_all_alerts(result, raw_key, key_info)

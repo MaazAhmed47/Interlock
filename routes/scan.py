@@ -1,4 +1,7 @@
+import logging
+import os
 import re as _re
+import threading
 import time
 from typing import Optional
 
@@ -19,6 +22,46 @@ from core.tool_inspector import inspect_tool_call
 from models.schemas import ScanRequest, ScanResult, ShadowScanRequest, ThreatLevel, ToolCallRequest
 
 router = APIRouter()
+logger = logging.getLogger("interlock.scan")
+ASYNC_SCAN_PERSISTENCE = os.getenv("INTERLOCK_ASYNC_SCAN_PERSISTENCE", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+
+
+def _persist_scan_event(
+    raw_key: str,
+    key_id: int,
+    endpoint: str,
+    result: ScanResult,
+    count_usage: bool = True,
+) -> None:
+    try:
+        save_scan(raw_key, result, endpoint=endpoint)
+        if count_usage:
+            db.log_usage(key_id, endpoint, threat_blocked=result.is_threat)
+            proxy._bump_usage_cache(key_id)
+    except Exception:
+        logger.exception("Failed to persist scan event for %s", endpoint)
+
+
+def _record_scan_event(
+    raw_key: str,
+    key_id: int,
+    endpoint: str,
+    result: ScanResult,
+    count_usage: bool = True,
+) -> None:
+    if ASYNC_SCAN_PERSISTENCE:
+        threading.Thread(
+            target=_persist_scan_event,
+            args=(raw_key, key_id, endpoint, result, count_usage),
+            daemon=True,
+        ).start()
+        return
+
+    _persist_scan_event(raw_key, key_id, endpoint, result, count_usage=count_usage)
 
 
 OUTPUT_REDACTION_PATTERNS = [
@@ -51,11 +94,10 @@ async def scan(request: ScanRequest, x_api_key: Optional[str] = Header(None)):
 
     mode = (request.mode or "").lower()
     if mode in proxy.FAST_SCAN_MODES:
-        result = proxy.run_fast_scan(request.prompt, raw_key)
+        result = proxy.run_fast_scan(request.prompt, raw_key, key_record=key_info)
     else:
-        result = proxy.run_scan(request.prompt, raw_key)
-    save_scan(raw_key, result, endpoint="/scan")
-    db.log_usage(key_info["id"], "/scan", threat_blocked=result.is_threat)
+        result = proxy.run_scan(request.prompt, raw_key, key_record=key_info)
+    _record_scan_event(raw_key, key_info["id"], "/scan", result)
     if result.is_threat:
         proxy.trigger_all_alerts(result, raw_key, key_info)
     proxy.asyncio.get_running_loop().create_task(proxy._broadcast({
@@ -94,8 +136,7 @@ async def scan_output(request: ScanRequest, x_api_key: Optional[str] = Header(No
             redactions=redactions,
         )
         result.risk_score = calculate_risk_score(result)
-        save_scan(raw_key, result, endpoint="/scan/output")
-        db.log_usage(key_info["id"], "/scan/output", threat_blocked=True)
+        _record_scan_event(raw_key, key_info["id"], "/scan/output", result)
         return result
 
     result = ScanResult(
@@ -110,8 +151,7 @@ async def scan_output(request: ScanRequest, x_api_key: Optional[str] = Header(No
         scan_time_ms=round((time.time() - start) * 1000, 2),
     )
     result.risk_score = calculate_risk_score(result)
-    save_scan(raw_key, result, endpoint="/scan/output")
-    db.log_usage(key_info["id"], "/scan/output", threat_blocked=False)
+    _record_scan_event(raw_key, key_info["id"], "/scan/output", result)
     return result
 
 
@@ -131,9 +171,9 @@ async def scan_stats(x_api_key: Optional[str] = Header(None)):
 async def shadow_scan(request: ShadowScanRequest, x_api_key: Optional[str] = Header(None)):
     key_info, raw_key = proxy.verify_key(x_api_key)
     proxy.check_rate(raw_key, key_info["rate_per_min"])
-    result = proxy.run_scan(request.prompt, raw_key)
+    result = proxy.run_scan(request.prompt, raw_key, key_record=key_info)
     log_shadow(result, raw_key)
-    save_scan(raw_key, result, endpoint="/scan/shadow")
+    _record_scan_event(raw_key, key_info["id"], "/scan/shadow", result, count_usage=False)
     return {
         "would_block": result.is_threat,
         "threat_level": result.threat_level.value,
@@ -171,10 +211,10 @@ async def inspect_tool(request: ToolCallRequest, x_api_key: Optional[str] = Head
         if rbac_result:
             rbac_result.scan_time_ms = 0.1
             rbac_result.risk_score = calculate_risk_score(rbac_result)
-            save_scan(raw_key, rbac_result, endpoint="/inspect/tool-call")
+            _record_scan_event(raw_key, key_info["id"], "/inspect/tool-call", rbac_result, count_usage=False)
             return rbac_result
 
     result = inspect_tool_call(request.tool_name, request.tool_args)
     result.risk_score = calculate_risk_score(result)
-    save_scan(raw_key, result, endpoint="/inspect/tool-call")
+    _record_scan_event(raw_key, key_info["id"], "/inspect/tool-call", result, count_usage=False)
     return result

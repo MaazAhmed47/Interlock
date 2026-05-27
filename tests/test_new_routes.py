@@ -10,6 +10,7 @@ import asyncio
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -20,12 +21,16 @@ sys.path.insert(0, str(ROOT))
 os.environ["PYTHON_DOTENV_DISABLED"] = "1"
 os.environ.pop("DATABASE_URL", None)
 os.environ.pop("GROQ_API_KEY", None)
+os.environ["INTERLOCK_ASYNC_SCAN_PERSISTENCE"] = "false"
 
 TEST_DB = tempfile.mktemp(suffix="_new_routes_test.db")
 os.environ["FIREWALL_DB_PATH"] = TEST_DB
 
 from core import db
 import proxy
+import routes.scan as scan_routes
+
+scan_routes.ASYNC_SCAN_PERSISTENCE = False
 
 
 TEST_KEY = "lf-free-demo-key-123"
@@ -128,6 +133,85 @@ def test_scan_fast_mode_skips_llm_judge_and_saves_history():
     assert data["events"][0]["endpoint"] == "/scan"
 
 
+def test_scan_fast_mode_reuses_verified_key_record():
+    original_run_fast_scan = proxy.run_fast_scan
+    captured = {}
+
+    def fake_fast_scan(_prompt, _raw_key, key_record=None):
+        captured["key_record"] = key_record
+        return proxy.ScanResult(
+            is_threat=False,
+            threat_level=proxy.ThreatLevel.SAFE,
+            threat_type=None,
+            reason="Clean test prompt.",
+            original_prompt=_prompt,
+            safe_to_proceed=True,
+            confidence=0.99,
+            layer_caught="Runtime Policy Engine",
+            scan_time_ms=1.0,
+        )
+
+    proxy.run_fast_scan = fake_fast_scan
+    try:
+        result = run(proxy.scan(
+            proxy.ScanRequest(prompt="Summarize the Q2 support ticket trends.", mode="fast"),
+            x_api_key=TEST_KEY,
+        ))
+    finally:
+        proxy.run_fast_scan = original_run_fast_scan
+
+    assert result.is_threat is False
+    assert captured["key_record"]["key_prefix"] == TEST_KEY[:12]
+
+
+def test_runtime_scan_passes_key_record_to_policy_layer():
+    original_policy_scan = proxy.policy_scan
+    captured = {}
+
+    def fake_policy_scan(_prompt, _raw_key, key_record=None):
+        captured["key_record"] = key_record
+        return None
+
+    key_record = {"custom_policy": {"blocked_keywords": ["nevermatch"]}}
+    proxy.policy_scan = fake_policy_scan
+    try:
+        result = proxy.run_fast_scan("Clean runtime prompt.", TEST_KEY, key_record=key_record)
+    finally:
+        proxy.policy_scan = original_policy_scan
+
+    assert result.is_threat is False
+    assert captured["key_record"] is key_record
+
+
+def test_scan_async_persistence_does_not_block_response(monkeypatch):
+    import routes.scan as scan_routes
+
+    original_async_setting = scan_routes.ASYNC_SCAN_PERSISTENCE
+    scan_routes.ASYNC_SCAN_PERSISTENCE = True
+
+    def slow_save_scan(*_args, **_kwargs):
+        time.sleep(0.35)
+
+    def slow_log_usage(*_args, **_kwargs):
+        time.sleep(0.35)
+
+    monkeypatch.setattr(scan_routes, "save_scan", slow_save_scan)
+    monkeypatch.setattr(scan_routes.db, "log_usage", slow_log_usage)
+
+    try:
+        start = time.perf_counter()
+        result = run(proxy.scan(
+            proxy.ScanRequest(prompt="Summarize the Q2 support ticket trends.", mode="fast"),
+            x_api_key=TEST_KEY,
+        ))
+        elapsed = time.perf_counter() - start
+    finally:
+        scan_routes.ASYNC_SCAN_PERSISTENCE = original_async_setting
+
+    assert result.is_threat is False
+    assert elapsed < 0.2
+
+
 def test_scan_fast_mode_blocks_secret_system_message_exfiltration():
     result = run(proxy.scan(
         proxy.ScanRequest(
@@ -166,7 +250,7 @@ def test_chat_proxy_prefers_x_api_key_over_authorization_header():
     async def fake_forward(_provider, _body):
         return {"id": "chatcmpl-test", "choices": []}
 
-    def fake_scan(prompt, _raw_key):
+    def fake_scan(prompt, _raw_key, key_record=None):
         return proxy.ScanResult(
             is_threat=False,
             threat_level=proxy.ThreatLevel.SAFE,

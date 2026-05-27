@@ -2,8 +2,8 @@ from models.schemas import ScanResult, ThreatLevel
 from typing import Optional
 from core import db
 
-def policy_scan(prompt: str, api_key: str) -> Optional[ScanResult]:
-    record = db.lookup_key(api_key)
+def policy_scan(prompt: str, api_key: str, key_record: Optional[dict] = None) -> Optional[ScanResult]:
+    record = key_record if key_record is not None else db.lookup_key(api_key)
     policy = (record or {}).get("custom_policy")
     if not policy:
         return None
