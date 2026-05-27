@@ -6,7 +6,7 @@ import time
 from queue import Full, Queue
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 
 import proxy
 from core import db
@@ -85,8 +85,13 @@ def _record_scan_event(
     endpoint: str,
     result: ScanResult,
     count_usage: bool = True,
+    background_tasks: BackgroundTasks | None = None,
 ) -> None:
     if ASYNC_SCAN_PERSISTENCE:
+        if background_tasks is not None:
+            background_tasks.add_task(_persist_scan_event, raw_key, key_id, endpoint, result, count_usage)
+            return
+
         _ensure_persistence_worker()
         try:
             _persistence_queue.put_nowait((
@@ -121,7 +126,11 @@ def redact_output_content(content: str) -> tuple[str, list[str]]:
 
 
 @router.post("/scan", response_model=ScanResult)
-async def scan(request: ScanRequest, x_api_key: Optional[str] = Header(None)):
+async def scan(
+    request: ScanRequest,
+    background_tasks: BackgroundTasks = None,
+    x_api_key: Optional[str] = Header(None),
+):
     key_info, raw_key = proxy.verify_key(x_api_key)
     proxy.check_rate(raw_key, key_info["rate_per_min"])
 
@@ -133,7 +142,7 @@ async def scan(request: ScanRequest, x_api_key: Optional[str] = Header(None)):
         result = proxy.run_fast_scan(request.prompt, raw_key, key_record=key_info)
     else:
         result = proxy.run_scan(request.prompt, raw_key, key_record=key_info)
-    _record_scan_event(raw_key, key_info["id"], "/scan", result)
+    _record_scan_event(raw_key, key_info["id"], "/scan", result, background_tasks=background_tasks)
     if result.is_threat:
         proxy.trigger_all_alerts(result, raw_key, key_info)
     proxy.asyncio.get_running_loop().create_task(proxy._broadcast({
@@ -150,7 +159,11 @@ async def scan(request: ScanRequest, x_api_key: Optional[str] = Header(None)):
 
 
 @router.post("/scan/output", response_model=ScanResult)
-async def scan_output(request: ScanRequest, x_api_key: Optional[str] = Header(None)):
+async def scan_output(
+    request: ScanRequest,
+    background_tasks: BackgroundTasks = None,
+    x_api_key: Optional[str] = Header(None),
+):
     """Scan an LLM response for PII / data-leak patterns."""
     key_info, raw_key = proxy.verify_key(x_api_key)
     proxy.check_rate(raw_key, key_info["rate_per_min"])
@@ -172,7 +185,7 @@ async def scan_output(request: ScanRequest, x_api_key: Optional[str] = Header(No
             redactions=redactions,
         )
         result.risk_score = calculate_risk_score(result)
-        _record_scan_event(raw_key, key_info["id"], "/scan/output", result)
+        _record_scan_event(raw_key, key_info["id"], "/scan/output", result, background_tasks=background_tasks)
         return result
 
     result = ScanResult(
@@ -187,7 +200,7 @@ async def scan_output(request: ScanRequest, x_api_key: Optional[str] = Header(No
         scan_time_ms=round((time.time() - start) * 1000, 2),
     )
     result.risk_score = calculate_risk_score(result)
-    _record_scan_event(raw_key, key_info["id"], "/scan/output", result)
+    _record_scan_event(raw_key, key_info["id"], "/scan/output", result, background_tasks=background_tasks)
     return result
 
 
@@ -204,12 +217,16 @@ async def scan_stats(x_api_key: Optional[str] = Header(None)):
 
 
 @router.post("/scan/shadow")
-async def shadow_scan(request: ShadowScanRequest, x_api_key: Optional[str] = Header(None)):
+async def shadow_scan(
+    request: ShadowScanRequest,
+    background_tasks: BackgroundTasks = None,
+    x_api_key: Optional[str] = Header(None),
+):
     key_info, raw_key = proxy.verify_key(x_api_key)
     proxy.check_rate(raw_key, key_info["rate_per_min"])
     result = proxy.run_scan(request.prompt, raw_key, key_record=key_info)
     log_shadow(result, raw_key)
-    _record_scan_event(raw_key, key_info["id"], "/scan/shadow", result, count_usage=False)
+    _record_scan_event(raw_key, key_info["id"], "/scan/shadow", result, count_usage=False, background_tasks=background_tasks)
     return {
         "would_block": result.is_threat,
         "threat_level": result.threat_level.value,
@@ -238,7 +255,11 @@ async def shadow_stats(x_api_key: Optional[str] = Header(None)):
 
 
 @router.post("/inspect/tool-call")
-async def inspect_tool(request: ToolCallRequest, x_api_key: Optional[str] = Header(None)):
+async def inspect_tool(
+    request: ToolCallRequest,
+    background_tasks: BackgroundTasks = None,
+    x_api_key: Optional[str] = Header(None),
+):
     key_info, raw_key = proxy.verify_key(x_api_key)
     proxy.check_rate(raw_key, key_info["rate_per_min"])
 
@@ -247,10 +268,10 @@ async def inspect_tool(request: ToolCallRequest, x_api_key: Optional[str] = Head
         if rbac_result:
             rbac_result.scan_time_ms = 0.1
             rbac_result.risk_score = calculate_risk_score(rbac_result)
-            _record_scan_event(raw_key, key_info["id"], "/inspect/tool-call", rbac_result, count_usage=False)
+            _record_scan_event(raw_key, key_info["id"], "/inspect/tool-call", rbac_result, count_usage=False, background_tasks=background_tasks)
             return rbac_result
 
     result = inspect_tool_call(request.tool_name, request.tool_args)
     result.risk_score = calculate_risk_score(result)
-    _record_scan_event(raw_key, key_info["id"], "/inspect/tool-call", result, count_usage=False)
+    _record_scan_event(raw_key, key_info["id"], "/inspect/tool-call", result, count_usage=False, background_tasks=background_tasks)
     return result
