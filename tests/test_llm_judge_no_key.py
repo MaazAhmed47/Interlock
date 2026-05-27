@@ -21,7 +21,12 @@ db.DB_PATH = os.environ["FIREWALL_DB_PATH"]
 db.init_db()
 db.seed_legacy_keys()
 
+# Other pytest modules may import core.llm_judge after setting a dummy key.
+# Reload config + judge after clearing the env so this regression stays isolated.
+config = importlib.import_module("config")
+importlib.reload(config)
 judge = importlib.import_module("core.llm_judge")
+judge = importlib.reload(judge)
 assert judge.client is None, "Groq client should be disabled when GROQ_API_KEY is absent"
 
 result = judge.llm_judge_scan(
