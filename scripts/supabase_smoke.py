@@ -101,7 +101,7 @@ def main() -> int:
     args = parser.parse_args()
 
     load_dotenv(args.env_file)
-    database_url = os.getenv("DATABASE_URL")
+    database_url = (os.getenv("DATABASE_URL") or "").strip()
     if not database_url:
         print("DATABASE_URL is not set. Add it to .env or export it before running this smoke test.", file=sys.stderr)
         return 2

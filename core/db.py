@@ -28,8 +28,8 @@ from core.mcp_drift import classify_tool_drift
 
 logger = logging.getLogger("interlock.db")
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-USE_POSTGRES = DATABASE_URL is not None and DATABASE_URL.startswith("postgresql")
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+USE_POSTGRES = DATABASE_URL.startswith(("postgresql://", "postgres://"))
 DB_PATH = os.getenv("FIREWALL_DB_PATH", "data/firewall.db")
 _db_lock = Lock()  # SQLite is fine concurrent-read, one-writer; lock guards writes
 

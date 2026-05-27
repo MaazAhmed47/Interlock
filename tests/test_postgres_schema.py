@@ -100,3 +100,15 @@ def test_postgres_init_runs_schema_instead_of_skipping(monkeypatch):
     assert any("CREATE TABLE IF NOT EXISTS admin_tokens" in sql for sql in statements)
     assert any("information_schema.columns" in sql for sql in statements)
     assert not any("PRAGMA table_info" in sql for sql in statements)
+
+def test_database_url_is_stripped_when_loaded(monkeypatch):
+    import importlib
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@example.com:5432/postgres\n")
+    reloaded = importlib.reload(db)
+
+    assert reloaded.DATABASE_URL == "postgresql://user:pass@example.com:5432/postgres"
+    assert reloaded.USE_POSTGRES is True
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    importlib.reload(db)
