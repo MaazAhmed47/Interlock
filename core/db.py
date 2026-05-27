@@ -32,9 +32,41 @@ DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 USE_POSTGRES = DATABASE_URL.startswith(("postgresql://", "postgres://"))
 DB_PATH = os.getenv("FIREWALL_DB_PATH", "data/firewall.db")
 _db_lock = Lock()  # SQLite is fine concurrent-read, one-writer; lock guards writes
+_pg_pool = None
+_pg_pool_lock = Lock()
 
 
 # ── Connection helper ────────────────────────────────────────────────────────
+def _postgres_pool_size(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except ValueError:
+        return default
+
+
+def _get_postgres_pool():
+    global _pg_pool
+    if _pg_pool is not None:
+        return _pg_pool
+
+    with _pg_pool_lock:
+        if _pg_pool is not None:
+            return _pg_pool
+
+        import psycopg2.extras
+        import psycopg2.pool
+
+        minconn = _postgres_pool_size("POSTGRES_POOL_MIN", 1)
+        maxconn = max(minconn, _postgres_pool_size("POSTGRES_POOL_MAX", 5))
+        _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+            minconn,
+            maxconn,
+            DATABASE_URL,
+            cursor_factory=psycopg2.extras.RealDictCursor,
+        )
+        return _pg_pool
+
+
 class _PostgresConn:
     def __init__(self, conn):
         self._conn = conn
@@ -115,12 +147,11 @@ def _run_schema_statements(conn, *, indexes: bool) -> None:
 
 @contextmanager
 def get_conn():
+    raw = None
     if USE_POSTGRES:
-        import psycopg2
-        import psycopg2.extras
-        raw = psycopg2.connect(DATABASE_URL)
+        pool = _get_postgres_pool()
+        raw = pool.getconn()
         raw.autocommit = True
-        raw.cursor_factory = psycopg2.extras.RealDictCursor
         conn = _PostgresConn(raw)
     else:
         os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
@@ -131,7 +162,10 @@ def get_conn():
     try:
         yield conn
     finally:
-        conn.close()
+        if USE_POSTGRES:
+            _get_postgres_pool().putconn(raw)
+        else:
+            conn.close()
 
 
 # ── Schema ───────────────────────────────────────────────────────────────────
