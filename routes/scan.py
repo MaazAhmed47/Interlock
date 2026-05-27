@@ -3,6 +3,7 @@ import os
 import re as _re
 import threading
 import time
+from queue import Full, Queue
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -28,6 +29,11 @@ ASYNC_SCAN_PERSISTENCE = os.getenv("INTERLOCK_ASYNC_SCAN_PERSISTENCE", "true").l
     "false",
     "no",
 }
+PERSISTENCE_QUEUE_SIZE = int(os.getenv("INTERLOCK_SCAN_PERSISTENCE_QUEUE_SIZE", "1000"))
+PERSISTENCE_DEFER_S = float(os.getenv("INTERLOCK_SCAN_PERSISTENCE_DEFER_S", "0.05"))
+_persistence_queue: Queue = Queue(maxsize=PERSISTENCE_QUEUE_SIZE)
+_persistence_worker_started = False
+_persistence_worker_lock = threading.Lock()
 
 
 def _persist_scan_event(
@@ -46,6 +52,33 @@ def _persist_scan_event(
         logger.exception("Failed to persist scan event for %s", endpoint)
 
 
+def _persistence_worker() -> None:
+    while True:
+        not_before, args = _persistence_queue.get()
+        try:
+            delay = not_before - time.time()
+            if delay > 0:
+                time.sleep(delay)
+            _persist_scan_event(*args)
+        finally:
+            _persistence_queue.task_done()
+
+
+def _ensure_persistence_worker() -> None:
+    global _persistence_worker_started
+    if _persistence_worker_started:
+        return
+    with _persistence_worker_lock:
+        if _persistence_worker_started:
+            return
+        threading.Thread(
+            target=_persistence_worker,
+            name="interlock-scan-persistence",
+            daemon=True,
+        ).start()
+        _persistence_worker_started = True
+
+
 def _record_scan_event(
     raw_key: str,
     key_id: int,
@@ -54,11 +87,14 @@ def _record_scan_event(
     count_usage: bool = True,
 ) -> None:
     if ASYNC_SCAN_PERSISTENCE:
-        threading.Thread(
-            target=_persist_scan_event,
-            args=(raw_key, key_id, endpoint, result, count_usage),
-            daemon=True,
-        ).start()
+        _ensure_persistence_worker()
+        try:
+            _persistence_queue.put_nowait((
+                time.time() + PERSISTENCE_DEFER_S,
+                (raw_key, key_id, endpoint, result, count_usage),
+            ))
+        except Full:
+            logger.error("Scan persistence queue is full; dropping event for %s", endpoint)
         return
 
     _persist_scan_event(raw_key, key_id, endpoint, result, count_usage=count_usage)
