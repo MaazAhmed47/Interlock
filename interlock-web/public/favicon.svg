@@ -1,9 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- Shield shape -->
-  <path d="M16 2 L28 7 L28 16 C28 23 22 29 16 30 C10 29 4 23 4 16 L4 7 Z"
-        fill="none" stroke="white" stroke-width="2"/>
-  <!-- Letter I -->
-  <text x="16" y="21" text-anchor="middle"
-        font-family="monospace" font-size="14"
-        font-weight="bold" fill="white">I</text>
+  <!-- Black background -->
+  <rect width="32" height="32" rx="6" fill="#060608"/>
+  <!-- White filled shield -->
+  <path d="M16 3 L27 8 L27 17 C27 23 22 28 16 29 C10 28 5 23 5 17 L5 8 Z"
+        fill="white"/>
+  <!-- Black I letter -->
+  <text x="16" y="22" text-anchor="middle"
+        font-family="monospace" font-size="13"
+        font-weight="900" fill="#060608">I</text>
 </svg>
