@@ -53,8 +53,7 @@ nav {
 .nav-links a {
   color: rgba(245,240,232,.55);
   text-decoration: none; font-size: 13px;
-  font-weight: 500; letter-spacing: 1.5px;
-  text-transform: uppercase;
+  font-weight: 500; letter-spacing: .5px;
   transition: color .2s;
 }
 .nav-links a:hover { color: var(--white); }
@@ -1234,9 +1233,47 @@ footer {
   border-top: 1px solid rgba(245,240,232,.08);
   padding: 52px 60px 32px;
 }
+/* Code tabs */
+.code-tab-bar {
+  background: #0d1117;
+  border-bottom: 1px solid rgba(245,240,232,.08);
+  padding: 8px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.code-section-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.8px;
+  color: rgba(245,240,232,.40);
+  text-transform: uppercase;
+}
+.code-tab-buttons {
+  display: flex;
+}
+.code-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: rgba(245,240,232,.45);
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 6px 14px;
+  letter-spacing: .5px;
+  transition: color .2s, border-color .2s;
+}
+.code-tab:hover { color: rgba(245,240,232,.8); }
+.code-tab.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+.code-tab-content { display: none; }
+.code-tab-content.active { display: block; }
+
 .footer-grid {
   display: grid;
-  grid-template-columns: 1.5fr 1fr 1fr 1fr 1fr;
+  grid-template-columns: 1.5fr 1fr 1fr 1fr;
   gap: 40px; margin-bottom: 52px;
 }
 .footer-brand-name {
@@ -1598,12 +1635,12 @@ svg text {
 <nav>
   <a href="#top" class="nav-logo">Interlock</a>
   <ul class="nav-links">
-    <li><a href="#layers">HOW IT WORKS</a></li>
-    <li><a href="#partner">DESIGN PARTNER</a></li>
-    <li><a href="#architecture">ARCHITECTURE</a></li>
-    <li><a href="#enterprise-proof">PROOF</a></li>
-    <li><a href="https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664" target="_blank">DOCS</a></li>
-    <li><a href="https://calendly.com/maazahmed1856/interlock-demo-15-min" target="_blank">LIVE DEMO</a></li>
+    <li><a href="#layers">How It Works</a></li>
+    <li><a href="#partner">Design Partner</a></li>
+    <li><a href="#architecture">Architecture</a></li>
+    <li><a href="#enterprise-proof">Proof</a></li>
+    <li><a href="https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664" target="_blank">Docs</a></li>
+    <li><a href="https://calendly.com/maazahmed1856/interlock-demo-15-min" target="_blank">Live Demo</a></li>
   </ul>
   <div class="nav-actions">
     <a href="/dashboard/" class="btn-nav-ghost">DASHBOARD</a>
@@ -2006,8 +2043,38 @@ svg text {
   </div>
   <div class="split-right">
     <div class="code-display">
-      <div class="code-title">PYTHON SDK INTEGRATION</div>
-      <div class="code-body">
+      <div class="code-tab-bar">
+        <span class="code-section-label">Integration</span>
+        <div class="code-tab-buttons">
+          <button class="code-tab active" data-tab="mcp">MCP Tool Call</button>
+          <button class="code-tab" data-tab="openai">OpenAI Proxy</button>
+        </div>
+      </div>
+      <div class="code-tab-content active" data-tab-content="mcp">
+        <div class="code-body">
+<span class="ck">import</span> <span class="cf">httpx</span><br>
+<span class="ck">import</span> <span class="cf">os</span><br><br>
+<span class="cm"># Route MCP tool calls through Interlock</span><br>
+<span class="ck">response</span> = <span class="cf">httpx</span>.<span class="cf">post</span>(<br>
+&nbsp;&nbsp;<span class="cs">"https://interlock.onrender.com/mcp/call"</span>,<br>
+&nbsp;&nbsp;<span class="ck">headers</span>={<span class="cs">"x-api-key"</span>: <span class="cf">os</span>.<span class="cf">environ</span>[<span class="cs">"INTERLOCK_KEY"</span>]},<br>
+&nbsp;&nbsp;<span class="ck">json</span>={<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="cs">"server_id"</span>: <span class="cs">"trusted-filesystem"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="cs">"tool_name"</span>: <span class="cs">"read_file"</span>,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="cs">"arguments"</span>: {<span class="cs">"path"</span>: <span class="cs">"/workspace/report.csv"</span>},<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="cs">"role"</span>: <span class="cs">"finance_agent"</span><br>
+&nbsp;&nbsp;}<br>
+)<br><br>
+<span class="cm"># Interlock enforces policy, scans response,</span><br>
+<span class="cm"># and returns result with full audit context</span><br>
+<span class="ck">result</span> = <span class="ck">response</span>.<span class="cf">json</span>()<br>
+<span class="cm"># result["ok"]              — allowed or blocked</span><br>
+<span class="cm"># result["policy_decision"] — why</span><br>
+<span class="cm"># result["redactions"]      — what was sanitized</span>
+        </div>
+      </div>
+      <div class="code-tab-content" data-tab-content="openai">
+        <div class="code-body">
 <span class="ck">import</span> <span class="cf">os</span><br>
 <span class="ck">from</span> <span class="cf">openai</span> <span class="ck">import</span> <span class="cf">OpenAI</span><br><br>
 <span class="cm"># Before Interlock - direct to OpenAI</span><br>
@@ -2023,6 +2090,7 @@ svg text {
 &nbsp;&nbsp;<span class="ck">model</span>=<span class="cs">"gpt-4o"</span>,<br>
 &nbsp;&nbsp;<span class="ck">messages</span>=[{<span class="cs">"role"</span>: <span class="cs">"user"</span>, <span class="cs">"content"</span>: <span class="cs">"Inspect this request"</span>}]<br>
 )
+        </div>
       </div>
     </div>
   </div>
@@ -2085,22 +2153,22 @@ svg text {
 <!-- COLOR SPLIT FEATURES -->
 <div class="color-split">
   <div class="cs-block cs-cyan">
-    <div class="cs-icon">🔍</div>
+    <div class="cs-icon"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></div>
     <h3>Tool Drift Detection</h3>
     <p>Interlock baselines every MCP tool at discovery time. If schema, capability, or metadata changes later, the drift is classified and can be monitored, denied, or quarantined before execution.</p>
   </div>
   <div class="cs-block cs-lime">
-    <div class="cs-icon">📋</div>
+    <div class="cs-icon"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></div>
     <h3>Deployment Flexibility</h3>
     <p>Deploy in the cloud, your VPC, on-premises, or fully air-gapped. You control where your data lives and how it's secured. No vendor lock-in.</p>
   </div>
   <div class="cs-block cs-red">
-    <div class="cs-icon">🛡️</div>
+    <div class="cs-icon"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg></div>
     <h3>Response Scanning</h3>
     <p>Tool and model responses are scanned for injected instructions, secrets, PII, and exfiltration patterns before they are forwarded downstream.</p>
   </div>
   <div class="cs-block cs-purple">
-    <div class="cs-icon">⚡</div>
+    <div class="cs-icon"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></div>
     <h3>Configurable Fail Mode</h3>
     <p>Choose fail-open, fail-closed, or fail-open-safe per environment. If Interlock is unreachable, requests follow your configured policy instead of an implicit default.</p>
   </div>
@@ -2182,9 +2250,9 @@ svg text {
         <li>Limited audit log access pipeline</li>
         <li>Structured event review</li>
         <li>Email support</li>
-        <li class="off">Custom policies</li>
-        <li class="off">Webhook export</li>
-        <li class="off">Dedicated support terms</li>
+        <li>Custom policies</li>
+        <li>Webhook export</li>
+        <li>Dedicated support terms</li>
       </ul>
       <a href="mailto:maazahmed1856@gmail.com" class="btn-price" style="display:block;text-align:center;text-decoration:none;">APPLY VIA EMAIL</a>
     </div>
@@ -2259,11 +2327,6 @@ svg text {
       <a href="https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664" target="_blank">Spec Sheet</a>
       <a href="mailto:maazahmed1856@gmail.com">Contact</a>
     </div>
-    <div class="footer-col">
-      <h5>Legal</h5>
-      <a href="mailto:maazahmed1856@gmail.com">Email</a>
-      <a href="https://github.com/MaazAhmed47/Interlock" target="_blank">GitHub</a>
-    </div>
   </div>
   <div class="footer-bottom">
     <span>© 2026 Interlock</span>
@@ -2325,6 +2388,18 @@ if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
   window.setInterval(renderStatusState, 3600);
 }
 
+
+// Code tab switching
+document.querySelectorAll('.code-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const tabGroup = tab.closest('.code-display');
+    const targetTab = tab.dataset.tab;
+    tabGroup.querySelectorAll('.code-tab').forEach(t => t.classList.remove('active'));
+    tabGroup.querySelectorAll('.code-tab-content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    tabGroup.querySelector(`.code-tab-content[data-tab-content="${targetTab}"]`).classList.add('active');
+  });
+});
 
 // Restart terminal animation on scroll into view
 const terminal = document.querySelector('.audit-terminal');
