@@ -6,6 +6,8 @@
 
 Zero-trust security for AI agents and MCP servers. Interlock sits inline between agents and tools, validates MCP tool definitions, enforces role-aware policy before execution, scans responses before they reach the model, and audits every allow, deny, monitor, and quarantine decision.
 
+**Live at: https://getinterlock.dev**
+
 [![GitHub](https://img.shields.io/badge/GitHub-Interlock-181717?logo=github)](https://github.com/MaazAhmed47/Interlock)
 [![Status](https://img.shields.io/badge/status-pre--release-blue)](#current-state)
 [![MCP](https://img.shields.io/badge/MCP-security%20gateway-00b894)](#mcp-security-controls)
