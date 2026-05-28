@@ -1,16 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <rect width="32" height="32" rx="6" fill="#060608"/>
-  <!-- Shield outline -->
-  <path d="M16 4 L26 8 L26 17 C26 22.5 21.5 27 16 28 C10.5 27 6 22.5 6 17 L6 8 Z"
-        fill="none" stroke="#00e5c8" stroke-width="1.5" stroke-linejoin="round"/>
-  <!-- Shield fill (subtle) -->
-  <path d="M16 4 L26 8 L26 17 C26 22.5 21.5 27 16 28 C10.5 27 6 22.5 6 17 L6 8 Z"
-        fill="#00e5c8" fill-opacity="0.08"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Shield shape -->
+  <path d="M16 2 L28 7 L28 16 C28 23 22 29 16 30 C10 29 4 23 4 16 L4 7 Z"
+        fill="none" stroke="white" stroke-width="2"/>
   <!-- Letter I -->
-  <text x="16" y="21"
-        font-family="Geist, Inter, ui-sans-serif, system-ui, -apple-system, sans-serif"
-        font-size="13" font-weight="700"
-        fill="#00e5c8"
-        text-anchor="middle"
-        dominant-baseline="auto">I</text>
+  <text x="16" y="21" text-anchor="middle"
+        font-family="monospace" font-size="14"
+        font-weight="bold" fill="white">I</text>
 </svg>
