@@ -213,7 +213,7 @@ async def discover_mcp_tools(
                 validation_results.append({
                     "tool_name": tool.get("name"),
                     "is_safe": not validation.is_threat,
-                    "validation": validation.dict() if hasattr(validation, "dict") else vars(validation),
+                    "validation": validation.model_dump() if hasattr(validation, "model_dump") else vars(validation),
                     "tool_metadata": validation.tool_metadata,
                     "registry": registry,
                 })

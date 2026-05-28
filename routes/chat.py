@@ -53,7 +53,7 @@ async def chat_completions(
                 },
             )
 
-    body = chat.dict(exclude_none=True)
+    body = chat.model_dump(exclude_none=True)
     response = await forward_to_provider(provider, body)
 
     if isinstance(response, dict) and "error" not in response:
