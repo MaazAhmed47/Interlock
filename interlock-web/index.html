@@ -460,7 +460,7 @@ nav {
 .audit-detail {
   fill: rgba(245,240,232,.4);
   font-family: 'DM Mono', monospace;
-  font-size: 11px;
+  font-size: 10px;
 }
 .gateway-shell {
   fill: rgba(6,6,8,.78);
@@ -1789,16 +1789,18 @@ svg text {
           <text class="node-small"  x="960" y="428">operator decision</text>
         </g>
 
-        <!-- Audit Log — unchanged geometry -->
+        <!-- Audit Log -->
         <g class="flow-node audit-node">
-          <rect class="node-glow" x="632" y="418" width="196" height="108"
+          <rect class="node-glow" x="632" y="418" width="196" height="116"
                 fill="none" stroke="rgba(124,58,237,.78)" stroke-width="3"
                 opacity="0.45" filter="url(#blurPurple)"/>
-          <rect class="node-box" x="640" y="426" width="180" height="92"/>
-          <text class="node-kicker" x="668" y="443">LOG</text>
-          <text class="node-title"  x="668" y="461">Audit Log</text>
-          <text class="audit-detail" x="668" y="477"><tspan fill="#7c3aed">●</tspan> every allow · deny · quarantine</text>
-          <text class="audit-detail" x="668" y="491"><tspan fill="#7c3aed">●</tspan> role · rule · reason · evidence</text>
+          <rect class="node-box" x="640" y="426" width="180" height="100"/>
+          <text class="node-kicker" x="668" y="450">LOG</text>
+          <text class="node-title"  x="668" y="468">Audit Log</text>
+          <circle cx="654" cy="481" r="2" fill="rgba(124,58,237,.7)"/>
+          <text class="audit-detail" x="662" y="484">allow · deny · quarantine</text>
+          <circle cx="654" cy="494" r="2" fill="rgba(124,58,237,.7)"/>
+          <text class="audit-detail" x="662" y="497">role · rule · reason</text>
         </g>
 
         <!-- Interlock Gateway shell + stage cards — unchanged geometry -->
