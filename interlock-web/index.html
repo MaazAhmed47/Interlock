@@ -453,13 +453,10 @@ nav {
 .flow-path.quarantine { stroke: rgba(255,107,53,.66); }
 .flow-path.audit { stroke: rgba(124,58,237,.66); }
 @keyframes lineFlow { to { stroke-dashoffset: -32; } }
-.packet {
-  fill: #f5f0e8;
-  filter: drop-shadow(0 0 8px rgba(245,240,232,.5));
-}
-.packet.allow { fill: var(--lime); filter: drop-shadow(0 0 8px rgba(200,240,0,.65)); }
-.packet.quarantine { fill: var(--orange); filter: drop-shadow(0 0 9px rgba(255,107,53,.76)); }
-.packet.audit { fill: var(--purple); filter: drop-shadow(0 0 9px rgba(124,58,237,.76)); }
+.packet { fill: #f5f0e8; }
+.packet.allow { fill: #c8f000; }
+.packet.quarantine { fill: #ff6b35; }
+.packet.audit { fill: #7c3aed; }
 .pulse-ring {
   fill: rgba(0,229,200,.35);
   stroke: none;
@@ -1836,7 +1833,7 @@ svg text {
 
         <!-- Packets — each animateMotion path matches its visible connector exactly -->
         <!-- Primary: AI Agent right edge → Gateway left edge (stops at entry) -->
-        <circle class="packet" r="6">
+        <circle class="packet" r="5">
           <animateMotion dur="5.8s" repeatCount="indefinite" path="M214 252 C270 252 310 252 350 252"/>
         </circle>
         <!-- Allow: Gateway right edge → MCP Servers left edge -->
@@ -1844,7 +1841,7 @@ svg text {
           <animateMotion dur="5.8s" begin="1.85s" repeatCount="indefinite" path="M770 252 C836 252 880 182 930 182"/>
         </circle>
         <!-- Quarantine: Gateway right edge (policy level) → Quarantine left edge -->
-        <circle class="packet quarantine" r="5.5">
+        <circle class="packet quarantine" r="5">
           <animateMotion dur="5.8s" begin="3.55s" repeatCount="indefinite" path="M770 280 C840 280 882 390 930 406"/>
         </circle>
         <!-- Audit: Audit stage bottom → Audit Log left edge -->
