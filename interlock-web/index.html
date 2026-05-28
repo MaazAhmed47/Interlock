@@ -457,12 +457,6 @@ nav {
 .packet.allow { fill: #c8f000; }
 .packet.quarantine { fill: #ff6b35; }
 .packet.audit { fill: #7c3aed; }
-.pulse-ring {
-  fill: rgba(0,229,200,.35);
-  stroke: none;
-}
-.pulse-ring.warn { fill: rgba(255,107,53,.45); }
-.pulse-ring.audit { fill: rgba(124,58,237,.45); }
 .gateway-shell {
   fill: rgba(6,6,8,.78);
   stroke: rgba(0,229,200,.5);
@@ -1760,10 +1754,9 @@ svg text {
                 fill="none" stroke="rgba(245,240,232,.60)" stroke-width="3"
                 opacity="0.35" filter="url(#blurCyan)"/>
           <rect class="node-box hot" x="40" y="198" width="174" height="108"/>
-          <circle class="pulse-ring" cx="70" cy="228" r="18"/>
-          <text class="node-kicker" x="66" y="228">AI</text>
-          <text class="node-title"  x="66" y="258">AI Agent</text>
-          <text class="node-small"  x="66" y="278">tool call requested</text>
+          <text class="node-kicker" x="66" y="183">AI</text>
+          <text class="node-title"  x="66" y="230">AI Agent</text>
+          <text class="node-small"  x="66" y="254">tool call requested</text>
         </g>
 
         <!-- MCP Servers — unchanged geometry -->
@@ -1783,10 +1776,9 @@ svg text {
                 fill="none" stroke="rgba(255,107,53,.80)" stroke-width="3"
                 opacity="0.45" filter="url(#blurOrange)"/>
           <rect class="node-box warn" x="930" y="348" width="160" height="116"/>
-          <circle class="pulse-ring warn" cx="960" cy="378" r="18"/>
-          <text class="node-kicker" x="960" y="382">REVIEW</text>
-          <text class="node-title"  x="960" y="412">Quarantine</text>
-          <text class="node-small"  x="960" y="436">operator decision</text>
+          <text class="node-kicker" x="960" y="376">REVIEW</text>
+          <text class="node-title"  x="960" y="404">Quarantine</text>
+          <text class="node-small"  x="960" y="428">operator decision</text>
         </g>
 
         <!-- Audit Log — unchanged geometry -->
@@ -1795,9 +1787,8 @@ svg text {
                 fill="none" stroke="rgba(124,58,237,.78)" stroke-width="3"
                 opacity="0.45" filter="url(#blurPurple)"/>
           <rect class="node-box" x="640" y="426" width="180" height="92"/>
-          <circle class="pulse-ring audit" cx="672" cy="456" r="17"/>
-          <text class="node-kicker" x="668" y="460">LOG</text>
-          <text class="node-title"  x="668" y="488">Audit Log</text>
+          <text class="node-kicker" x="668" y="452">LOG</text>
+          <text class="node-title"  x="668" y="476">Audit Log</text>
         </g>
 
         <!-- Interlock Gateway shell + stage cards — unchanged geometry -->
