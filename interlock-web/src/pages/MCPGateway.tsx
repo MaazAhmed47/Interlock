@@ -31,6 +31,7 @@ export default function MCPGateway() {
     refreshMcp,
   } = useDashboardData()
   const [actionMsg, setActionMsg] = useState<Record<string, string>>({})
+  const [quarantinePending, setQuarantinePending] = useState<string | null>(null)
 
   async function doAction(tool: MCPTool, approve: boolean) {
     const k = `${tool.server_id}/${tool.tool_name}`
@@ -104,13 +105,27 @@ export default function MCPGateway() {
                   <div className="drift-card-field"><strong>Side effect:</strong> {formatValue(toolField(tool, 'side_effect'))}</div>
                   <div className="drift-card-field"><strong>Data classes:</strong> {formatValue(toolField(tool, 'data_classes'))}</div>
                   <div className="drift-card-field"><strong>Drift action:</strong> {formatValue(tool.drift_action)}</div>
-                  {actionMsg[k]
+                  {quarantinePending === k ? (
+                    <div className="drift-card-actions" style={{ flexDirection: 'column', gap: 8 }}>
+                      <div style={{ fontSize: 12, color: 'var(--orange)', fontFamily: 'var(--font-mono)' }}>
+                        Quarantine {tool.tool_name}? This will block all calls to this tool until an operator approves it.
+                      </div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button className="btn btn-orange btn-sm" onClick={() => { setQuarantinePending(null); void doAction(tool, false) }}>
+                          <AlertOctagon size={11} />Confirm Quarantine
+                        </button>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setQuarantinePending(null)}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : actionMsg[k]
                     ? <div style={{ marginTop: 12, fontSize: 12, fontFamily: 'var(--font-mono)', color: actionMsg[k].startsWith('Error') ? 'var(--red)' : 'var(--cyan)' }}>{actionMsg[k]}</div>
                     : <div className="drift-card-actions">
                         <button className="btn btn-cyan btn-sm" onClick={() => doAction(tool, true)} disabled={demoMode}>
                           <CheckCircle size={11} />Approve
                         </button>
-                        <button className="btn btn-orange btn-sm" onClick={() => doAction(tool, false)} disabled={demoMode}>
+                        <button className="btn btn-orange btn-sm" onClick={() => { if (demoMode) { void doAction(tool, false); return }; setQuarantinePending(k) }} disabled={demoMode}>
                           <AlertOctagon size={11} />Quarantine
                         </button>
                       </div>

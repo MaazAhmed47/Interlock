@@ -233,6 +233,7 @@ function profileFromClaims(claims: Record<string, unknown>): AuthProfile {
   }
 }
 
+// sessionStorage intentionally: auth tokens are cleared on tab close, limiting exposure window
 function saveAuthSession(session: AuthSession) {
   sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session))
   window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT))

@@ -7,8 +7,9 @@ import ErrorCard from '../components/ErrorCard'
 import { useDashboardData } from '../components/DashLayout'
 
 export default function Settings() {
-  const [url, setUrl] = useState(localStorage.getItem(API_URL_KEY) || DEFAULT_API_URL)
-  const [key, setKey] = useState(localStorage.getItem(API_KEY_KEY) || '')
+  const [url, setUrl] = useState(sessionStorage.getItem(API_URL_KEY) || DEFAULT_API_URL)
+  const [key, setKey] = useState(sessionStorage.getItem(API_KEY_KEY) || '')
+  const [urlError, setUrlError] = useState('')
   const [saved, setSaved] = useState(false)
   const [siemProviders, setSiemProviders] = useState<string[]>([])
   const [siemError, setSiemError] = useState('')
@@ -54,12 +55,28 @@ export default function Settings() {
   }
   const supabaseStatus = supabaseAuthStatus(supabaseDraft)
 
+  function validateUrl(raw: string): string {
+    const trimmed = raw.trim() || DEFAULT_API_URL
+    try {
+      const parsed = new URL(trimmed)
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        return 'Invalid URL. Must start with https:// or http://'
+      }
+    } catch {
+      return 'Invalid URL. Must start with https:// or http://'
+    }
+    return ''
+  }
+
   function save() {
-    localStorage.setItem(API_URL_KEY, url.trim() || DEFAULT_API_URL)
+    const err = validateUrl(url)
+    if (err) { setUrlError(err); return }
+    setUrlError('')
+    sessionStorage.setItem(API_URL_KEY, url.trim() || DEFAULT_API_URL)
     if (key.trim()) {
-      localStorage.setItem(API_KEY_KEY, key.trim())
+      sessionStorage.setItem(API_KEY_KEY, key.trim())
     } else {
-      localStorage.removeItem(API_KEY_KEY)
+      sessionStorage.removeItem(API_KEY_KEY)
     }
     setSaved(true)
     void refreshAll()
@@ -103,10 +120,10 @@ export default function Settings() {
   }
 
   useEffect(() => {
-    if (localStorage.getItem(API_KEY_KEY)) loadSiem()
+    if (sessionStorage.getItem(API_KEY_KEY)) loadSiem()
   }, [])
 
-  const storedKey = localStorage.getItem(API_KEY_KEY) || ''
+  const storedKey = sessionStorage.getItem(API_KEY_KEY) || ''
   const fingerprint = storedKey ? `...${storedKey.slice(-6)}` : null
 
   return (
@@ -122,12 +139,13 @@ export default function Settings() {
             <label className="form-label">API Base URL</label>
             <input className="form-input" value={url} onChange={e => setUrl(e.target.value)} placeholder={DEFAULT_API_URL} />
             <div className="form-hint">Default: {DEFAULT_API_URL}</div>
+            {urlError && <div className="form-error" style={{ color: 'var(--red)', fontSize: 12, marginTop: 4 }}>{urlError}</div>}
           </div>
           <div className="form-group">
             <label className="form-label">Customer API Key</label>
             <input className="form-input" type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="API key" autoComplete="off" />
             {fingerprint && <div className="key-fingerprint">Active key: {fingerprint}</div>}
-            <div className="form-hint">Stored in browser localStorage only. Used for scan, MCP inventory, and runtime audit views.</div>
+            <div className="form-hint">Stored in browser sessionStorage only. Cleared when the tab is closed. Used for scan, MCP inventory, and runtime audit views.</div>
           </div>
           <button className="btn btn-primary" onClick={save}>
             <Save size={13} />{saved ? 'Saved!' : 'Save Settings'}

@@ -15,12 +15,21 @@ export class ApiError extends Error {
   }
 }
 
-function getBaseUrl(): string {
-  return localStorage.getItem(API_URL_KEY) || DEFAULT_API_URL;
+function friendlyHttpError(status: number): string {
+  if (status === 401) return 'Invalid or missing API key'
+  if (status === 403) return 'Access denied'
+  if (status === 429) return 'Rate limit exceeded. Try again shortly.'
+  if (status >= 500) return 'Server error. Please try again.'
+  return `Request failed (${status})`
 }
 
+function getBaseUrl(): string {
+  return sessionStorage.getItem(API_URL_KEY) || DEFAULT_API_URL;
+}
+
+// sessionStorage intentionally: clears on tab close, limiting key exposure window
 function getApiKey(): string | null {
-  return localStorage.getItem(API_KEY_KEY);
+  return sessionStorage.getItem(API_KEY_KEY);
 }
 
 export function hasApiKey(): boolean {
@@ -47,6 +56,9 @@ async function request<T>(
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (requireKey && apiKey) headers['x-api-key'] = apiKey;
   if (requireKey && !apiKey) throw new ApiError(401, 'No API key configured.');
+  if (['POST', 'PATCH', 'DELETE'].includes(method.toUpperCase())) {
+    headers['x-requested-with'] = 'XMLHttpRequest'
+  }
 
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -63,18 +75,14 @@ async function request<T>(
     if (error instanceof Error && error.name === 'AbortError') {
       throw new ApiError(408, timeoutMessage(path, timeoutMs));
     }
-    throw error;
+    throw new ApiError(0, 'Cannot reach Interlock backend. Check your API URL in Settings.')
   } finally {
     window.clearTimeout(timeout);
   }
 
   if (!res.ok) {
-    let message = `HTTP ${res.status}`;
-    try {
-      const data = await res.json() as { detail?: string; message?: string };
-      message = data.detail || data.message || message;
-    } catch { /* ignore */ }
-    throw new ApiError(res.status, message);
+    const friendlyMessage = friendlyHttpError(res.status)
+    throw new ApiError(res.status, friendlyMessage)
   }
   return res.json() as Promise<T>;
 }
@@ -106,18 +114,14 @@ async function adminRequest<T>(
     if (error instanceof Error && error.name === 'AbortError') {
       throw new ApiError(408, timeoutMessage(path, timeoutMs));
     }
-    throw error;
+    throw new ApiError(0, 'Cannot reach Interlock backend. Check your API URL in Settings.')
   } finally {
     window.clearTimeout(timeout);
   }
 
   if (!res.ok) {
-    let message = `HTTP ${res.status}`;
-    try {
-      const data = await res.json() as { detail?: string; message?: string };
-      message = data.detail || data.message || message;
-    } catch { /* ignore */ }
-    throw new ApiError(res.status, message);
+    const friendlyMessage = friendlyHttpError(res.status)
+    throw new ApiError(res.status, friendlyMessage)
   }
   return res.json() as Promise<T>;
 }

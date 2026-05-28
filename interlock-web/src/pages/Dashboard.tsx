@@ -238,7 +238,27 @@ export default function Dashboard() {
         </>
       ) : (
         <>
-          {demoMode && <div className="demo-note">Demo dataset</div>}
+          {demoMode && (
+            <div style={{
+              width: '100%',
+              background: 'rgba(255, 193, 7, 0.12)',
+              border: '1px solid rgba(255, 193, 7, 0.4)',
+              borderRadius: 4,
+              padding: '10px 16px',
+              marginBottom: 20,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              fontSize: 13,
+              fontFamily: 'var(--font-mono)',
+              color: '#ffc107',
+              letterSpacing: '0.3px',
+            }}>
+              <span style={{ fontWeight: 700 }}>DEMO MODE</span>
+              <span style={{ color: 'rgba(255,193,7,0.7)' }}>—</span>
+              <span>Connect your API key in Settings to see live data</span>
+            </div>
+          )}
           <ExecutiveDemoBrief
             demoMode={demoMode}
             driftedCount={drifted.length}
@@ -301,7 +321,11 @@ export default function Dashboard() {
                       <tbody>
                         {recentActivity.slice(0, 10).map(row => (
                           <tr key={row.key}>
-                            <td className="mono dim">{row.timestamp ? new Date(row.timestamp).toLocaleTimeString() : '-'}</td>
+                            <td className="mono dim" style={{ whiteSpace: 'nowrap' }}>
+                              {row.timestamp
+                                ? new Date(row.timestamp).toLocaleString('en-US', { timeZone: 'UTC', dateStyle: 'short', timeStyle: 'medium' }) + ' UTC'
+                                : '-'}
+                            </td>
                             <td className="mono">{row.source}</td>
                             <td className="mono dim" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.target}</td>
                             <td><StatusBadge value={row.action} /></td>

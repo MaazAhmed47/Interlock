@@ -2,7 +2,7 @@ import { Outlet, Link, NavLink } from 'react-router-dom'
 import { LayoutDashboard, ScanLine, Server, BookOpen, Settings, ArrowLeft, Menu, X, LogIn, LogOut, ShieldCheck } from 'lucide-react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, hasApiKey, HealthResponse, UsageResponse, MCPServer, MCPTool, AuditEvent, ShadowStats, ScanHistoryEvent, ScanResult, ScanStats, normalizeLayerLabel, DEMO_USAGE, DEMO_MCP_SERVERS, DEMO_MCP_TOOLS, DEMO_DRIFTED_TOOLS, DEMO_AUDIT_EVENTS, DEMO_SCAN_HISTORY, DEMO_SCAN_STATS, DEMO_SHADOW_STATS } from '../api'
-import { authDisplayName, clearAuthSession, useAuthSession } from '../auth'
+import { authDisplayName, clearAuthSession, redirectToOidcLogout, useAuthSession } from '../auth'
 
 const NAV = [
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, end: true },
@@ -351,11 +351,36 @@ export function useDashboardData() {
   return ctx
 }
 
+function formatRelativeTime(isoString: string): string {
+  const diffMs = Date.now() - new Date(isoString).getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  if (diffMins < 1) return 'just now'
+  if (diffMins === 1) return '1 minute ago'
+  if (diffMins < 60) return `${diffMins} minutes ago`
+  const diffHours = Math.floor(diffMins / 60)
+  return diffHours === 1 ? '1 hour ago' : `${diffHours} hours ago`
+}
+
+function DashTopbarStatus() {
+  const { lastLoadedAt } = useDashboardData()
+  if (!lastLoadedAt) return null
+  return (
+    <span style={{ fontSize: 11, color: 'var(--dim)', fontFamily: 'var(--font-mono)' }}>
+      Last updated: {formatRelativeTime(lastLoadedAt)}
+    </span>
+  )
+}
+
 export default function DashLayout() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const session = useAuthSession()
   const signedInAs = authDisplayName(session)
   const topbarIdentity = session ? 'Interlock Admin' : 'Admin SSO not signed in'
+
+  function handleSignOut() {
+    const redirected = redirectToOidcLogout('/dashboard/login')
+    if (!redirected) clearAuthSession()
+  }
 
   return (
     <DashboardDataProvider>
@@ -387,7 +412,7 @@ export default function DashLayout() {
               <>
                 <div className="dash-auth-kicker"><ShieldCheck size={12} /> SSO active</div>
                 <div className="dash-auth-name" title={signedInAs}>{signedInAs}</div>
-                <button className="dash-auth-button" onClick={clearAuthSession}><LogOut size={13} />Sign out</button>
+                <button className="dash-auth-button" onClick={handleSignOut}><LogOut size={13} />Sign out</button>
               </>
             ) : (
               <NavLink to="/dashboard/login" className="dash-auth-button"><LogIn size={13} />SSO login</NavLink>
@@ -425,7 +450,7 @@ export default function DashLayout() {
               <ArrowLeft size={14} />Back to site
             </a>
             {session ? (
-              <button className="dash-nav-item mobile-auth-action" onClick={() => { clearAuthSession(); setMobileOpen(false) }}>
+              <button className="dash-nav-item mobile-auth-action" onClick={() => { handleSignOut(); setMobileOpen(false) }}>
                 <LogOut size={14} />Sign out
               </button>
             ) : (
@@ -443,13 +468,14 @@ export default function DashLayout() {
               <div>
                 <span>Control plane</span>
                 <strong title={signedInAs || undefined}>{topbarIdentity}</strong>
+                <DashTopbarStatus />
               </div>
             </div>
             <div className="dash-topbar-actions">
               {session ? (
                 <>
                   <Link to="/dashboard/audit?view=admin" className="btn btn-cyan btn-sm">Admin Audit</Link>
-                  <button className="btn btn-ghost btn-sm" onClick={clearAuthSession}><LogOut size={12} />Sign Out</button>
+                  <button className="btn btn-ghost btn-sm" onClick={handleSignOut}><LogOut size={12} />Sign Out</button>
                 </>
               ) : (
                 <>

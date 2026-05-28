@@ -86,7 +86,7 @@ export default function Audit() {
 
   const filtered = rows.filter(e => {
     if (action !== 'all' && e.action.toLowerCase() !== action) return false
-    if (severity !== 'all' && e.severity.toLowerCase() !== severity) return false
+    if (severity !== 'all' && (e.severity || '').toLowerCase() !== severity) return false
     return true
   })
   const blockedEvents = rows.filter(e => ['block', 'deny'].includes(e.action.toLowerCase())).length
@@ -170,9 +170,13 @@ export default function Audit() {
           </div>
 
           <div className="card glow-card" style={{ padding: 0 }}>
-            {filtered.length === 0
-              ? <div style={{ padding: 16 }}><EmptyState message="No audit events match the current filter. Run a prompt or output scan to populate this timeline." showSettingsLink={false} /></div>
-              : <div className="table-wrap">
+            {(loadingAudit || loadingScans) && filtered.length === 0
+              ? <div style={{ padding: 24, textAlign: 'center', color: 'var(--dim)', fontSize: 13, fontFamily: 'var(--font-mono)' }}>
+                  Loading audit events...
+                </div>
+              : filtered.length === 0
+                ? <div style={{ padding: 16 }}><EmptyState message="No audit events match the current filter. Run a prompt or output scan to populate this timeline." showSettingsLink={false} /></div>
+                : <div className="table-wrap">
                   <table className="data-table">
                     <thead>
                       <tr>

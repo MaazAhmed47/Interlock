@@ -113,16 +113,16 @@ export default function Login() {
                 <div><span>Admin boundary</span><strong>Backend email/domain allowlist</strong></div>
               </div>
               <button className="btn btn-primary auth-wide-action" onClick={signInWithSupabaseProvider} disabled={busy}>
-                <LogIn size={14} />{busy ? 'Redirecting' : 'Continue With ' + supabaseConfig.provider.toUpperCase()}
+                <LogIn size={14} />{busy ? 'Redirecting' : 'Continue with ' + supabaseConfig.provider.charAt(0).toUpperCase() + supabaseConfig.provider.slice(1)}
               </button>
               <div className="magic-link-box">
                 <label className="form-label">Passwordless Admin Email</label>
                 <div className="input-action-row">
-                  <input className="form-input" value={email} onChange={e => setEmail(e.target.value)} placeholder="maaz18ahmed@gmail.com" autoComplete="email" />
+                  <input className="form-input" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com" autoComplete="email" />
                   <button className="btn btn-cyan" onClick={sendMagicLink} disabled={busy}><Mail size={14} />Send Link</button>
                 </div>
               </div>
-              <div className="login-mode-note">For pilots, Supabase must allow this redirect URL: {supabaseConfig.redirectUri}</div>
+              <div className="login-mode-note">Enter your email to receive a secure login link. Supabase must allow this redirect URL: {supabaseConfig.redirectUri}</div>
               {notice && <div className="auth-success"><CheckCircle2 size={14} />{notice}</div>}
               {error && <div className="auth-error"><AlertTriangle size={14} />{error}</div>}
               <div className="login-actions">
