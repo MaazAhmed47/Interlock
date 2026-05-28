@@ -697,6 +697,7 @@ nav {
 .split-right::before {
   content: '';
   position: absolute; inset: 0;
+  pointer-events: none;
   background: repeating-conic-gradient(
     from 0deg at 80% 80%,
     rgba(245,240,232,.02) 0deg, transparent 2deg, transparent 6deg
@@ -793,6 +794,8 @@ nav {
   border: 1px solid rgba(245,240,232,.1);
   border-radius: 4px;
   overflow: hidden;
+  position: relative;
+  z-index: 1;
 }
 .code-title {
   background: #0d1117;
