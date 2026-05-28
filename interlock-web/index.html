@@ -457,6 +457,11 @@ nav {
 .packet.allow { fill: #c8f000; }
 .packet.quarantine { fill: #ff6b35; }
 .packet.audit { fill: #7c3aed; }
+.audit-detail {
+  fill: rgba(245,240,232,.4);
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+}
 .gateway-shell {
   fill: rgba(6,6,8,.78);
   stroke: rgba(0,229,200,.5);
@@ -1754,9 +1759,12 @@ svg text {
                 fill="none" stroke="rgba(245,240,232,.60)" stroke-width="3"
                 opacity="0.35" filter="url(#blurCyan)"/>
           <rect class="node-box hot" x="40" y="198" width="174" height="108"/>
-          <text class="node-kicker" x="66" y="183">AI</text>
-          <text class="node-title"  x="66" y="230">AI Agent</text>
-          <text class="node-small"  x="66" y="254">tool call requested</text>
+          <rect x="52" y="208" width="26" height="15" rx="3"
+                fill="rgba(245,240,232,0.1)" stroke="rgba(245,240,232,0.2)" stroke-width="0.8"/>
+          <text x="57" y="219" font-family="'DM Mono',monospace" font-size="10"
+                letter-spacing="0.5" fill="rgba(245,240,232,0.7)">AI</text>
+          <text class="node-title"  x="66" y="252">AI Agent</text>
+          <text class="node-small"  x="66" y="274">tool call requested</text>
         </g>
 
         <!-- MCP Servers — unchanged geometry -->
@@ -1787,8 +1795,10 @@ svg text {
                 fill="none" stroke="rgba(124,58,237,.78)" stroke-width="3"
                 opacity="0.45" filter="url(#blurPurple)"/>
           <rect class="node-box" x="640" y="426" width="180" height="92"/>
-          <text class="node-kicker" x="668" y="452">LOG</text>
-          <text class="node-title"  x="668" y="476">Audit Log</text>
+          <text class="node-kicker" x="668" y="443">LOG</text>
+          <text class="node-title"  x="668" y="461">Audit Log</text>
+          <text class="audit-detail" x="668" y="477"><tspan fill="#7c3aed">●</tspan> every allow · deny · quarantine</text>
+          <text class="audit-detail" x="668" y="491"><tspan fill="#7c3aed">●</tspan> role · rule · reason · evidence</text>
         </g>
 
         <!-- Interlock Gateway shell + stage cards — unchanged geometry -->
