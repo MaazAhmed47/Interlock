@@ -371,9 +371,9 @@ nav {
   filter: drop-shadow(0 0 14px rgba(0,229,200,.22));
 }
 .agent-node .node-box {
-  stroke: rgba(0,229,200,.6) !important;
-  fill: rgba(0,229,200,.05) !important;
-  filter: drop-shadow(0 0 20px rgba(0,229,200,.35)) !important;
+  stroke: rgba(245,240,232,.4) !important;
+  fill: rgba(245,240,232,.04) !important;
+  filter: drop-shadow(0 0 20px rgba(245,240,232,.15)) !important;
 }
 .mcp-node .node-box {
   stroke: rgba(200,240,0,.6) !important;
@@ -1532,7 +1532,7 @@ svg text {
 .node-box {
   fill: rgba(245,240,232,.09) !important;
 }
-.agent-node .node-box { fill: rgba(0,229,200,.05) !important; }
+.agent-node .node-box { fill: rgba(245,240,232,.04) !important; }
 .mcp-node .node-box { fill: rgba(200,240,0,.04) !important; }
 .quarantine-node .node-box { fill: rgba(255,107,53,.04) !important; }
 .audit-node .node-box {
@@ -1549,6 +1549,11 @@ svg text {
 }
 .mcp-node .node-title { fill: #c8f000 !important; }
 .quarantine-node .node-title { fill: #ff6b35 !important; }
+.agent-node .node-title { fill: #f5f0e8 !important; }
+.agent-node .node-kicker { fill: rgba(245,240,232,.5) !important; }
+.agent-node .node-small { fill: rgba(245,240,232,.4) !important; }
+.audit-node .node-title { fill: #7c3aed !important; }
+.audit-node .node-kicker { fill: rgba(124,58,237,.7) !important; }
 .flow-path {
   opacity: .95;
 }
@@ -1760,8 +1765,8 @@ svg text {
         <!-- AI Agent — widened box so "tool call requested" has clear right padding -->
         <g class="flow-node agent-node">
           <rect class="node-glow" x="32" y="190" width="190" height="124"
-                fill="none" stroke="rgba(0,229,200,.80)" stroke-width="3"
-                opacity="0.45" filter="url(#blurCyan)"/>
+                fill="none" stroke="rgba(245,240,232,.60)" stroke-width="3"
+                opacity="0.35" filter="url(#blurCyan)"/>
           <rect class="node-box hot" x="40" y="198" width="174" height="108"/>
           <circle class="pulse-ring" cx="70" cy="228" r="18"/>
           <text class="node-kicker" x="66" y="228">AI</text>
