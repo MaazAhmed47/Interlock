@@ -448,31 +448,24 @@ nav {
   animation: lineFlow 1.8s linear infinite;
   vector-effect: non-scaling-stroke;
 }
-.flow-path.primary { stroke: rgba(0,229,200,.56); }
+.flow-path.primary { stroke: rgba(245,240,232,.4); }
 .flow-path.allow { stroke: rgba(200,240,0,.50); }
 .flow-path.quarantine { stroke: rgba(255,107,53,.66); }
 .flow-path.audit { stroke: rgba(124,58,237,.66); }
 @keyframes lineFlow { to { stroke-dashoffset: -32; } }
 .packet {
-  filter: drop-shadow(0 0 8px rgba(0,229,200,.70));
+  fill: #f5f0e8;
+  filter: drop-shadow(0 0 8px rgba(245,240,232,.5));
 }
 .packet.allow { fill: var(--lime); filter: drop-shadow(0 0 8px rgba(200,240,0,.65)); }
 .packet.quarantine { fill: var(--orange); filter: drop-shadow(0 0 9px rgba(255,107,53,.76)); }
 .packet.audit { fill: var(--purple); filter: drop-shadow(0 0 9px rgba(124,58,237,.76)); }
 .pulse-ring {
-  fill: none;
-  stroke: rgba(0,229,200,.50);
-  stroke-width: 1.4;
-  animation: ringPulse 2.8s ease-out infinite;
-  transform-box: fill-box;
-  transform-origin: center;
+  fill: rgba(0,229,200,.35);
+  stroke: none;
 }
-.pulse-ring.warn { stroke: rgba(255,107,53,.58); animation-delay: 1.2s; }
-.pulse-ring.audit { stroke: rgba(124,58,237,.62); animation-delay: 2s; }
-@keyframes ringPulse {
-  0% { opacity: .9; transform: scale(.84); }
-  70%, 100% { opacity: 0; transform: scale(1.55); }
-}
+.pulse-ring.warn { fill: rgba(255,107,53,.45); }
+.pulse-ring.audit { fill: rgba(124,58,237,.45); }
 .gateway-shell {
   fill: rgba(6,6,8,.78);
   stroke: rgba(0,229,200,.5);
@@ -660,7 +653,6 @@ nav {
 @media (prefers-reduced-motion: reduce) {
   .stage-card,
   .flow-path,
-  .pulse-ring,
   .packet,
   .chip-dot,
   .flow-chip.active,
@@ -1556,7 +1548,7 @@ svg text {
 .agent-node .node-kicker { fill: rgba(245,240,232,.5) !important; }
 .agent-node .node-small { fill: rgba(245,240,232,.4) !important; }
 .audit-node .node-title { fill: #7c3aed !important; }
-.audit-node .node-kicker { fill: rgba(124,58,237,.7) !important; }
+.audit-node .node-kicker { fill: rgba(245,240,232,.5) !important; }
 .flow-path {
   opacity: .95;
 }
@@ -1837,14 +1829,14 @@ svg text {
           <text x="588" y="287">Scan</text>
         </g>
         <g class="stage-card stage-5">
-          <rect x="464" y="318" width="142" height="42"/>
-          <circle class="stage-dot" cx="488" cy="339" r="5"/>
-          <text x="504" y="344">Audit</text>
+          <rect x="464" y="318" width="142" height="52"/>
+          <circle class="stage-dot" cx="488" cy="344" r="5"/>
+          <text x="504" y="349">Audit</text>
         </g>
 
         <!-- Packets — each animateMotion path matches its visible connector exactly -->
         <!-- Primary: AI Agent right edge → Gateway left edge (stops at entry) -->
-        <circle class="packet" r="6" fill="#00e5c8">
+        <circle class="packet" r="6">
           <animateMotion dur="5.8s" repeatCount="indefinite" path="M214 252 C270 252 310 252 350 252"/>
         </circle>
         <!-- Allow: Gateway right edge → MCP Servers left edge -->
