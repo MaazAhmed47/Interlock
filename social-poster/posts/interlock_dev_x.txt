@@ -1,0 +1,7 @@
+AI agents calling MCP servers turn every tool call into a trust decision.
+
+I built Interlock: a runtime gateway that baselines tools, detects drift, enforces RBAC, scans responses, and audits decisions.
+
+Open source: https://github.com/MaazAhmed47/Interlock
+
+#MCP #AISecurity
