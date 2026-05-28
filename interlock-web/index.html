@@ -342,7 +342,7 @@ nav {
 .active-flow-canvas {
   position: relative;
   z-index: 1;
-  min-height: 590px;
+  min-height: 708px;
   border: 1px solid rgba(245,240,232,.08);
   background: rgba(6,6,8,.72);
   overflow: hidden;
@@ -350,7 +350,7 @@ nav {
 .active-flow-canvas svg {
   width: 100%;
   height: 100%;
-  min-height: 590px;
+  min-height: 708px;
   display: block;
 }
 .flow-node rect,
@@ -368,16 +368,16 @@ nav {
   filter: drop-shadow(0 0 14px rgba(0,229,200,.22));
 }
 .agent-node .node-box {
-  stroke: rgba(46,168,255,.75) !important;
-  filter: drop-shadow(0 0 14px rgba(46,168,255,.18)) !important;
+  stroke: rgba(0,229,200,.5) !important;
+  filter: drop-shadow(0 0 16px rgba(0,229,200,.3)) !important;
 }
 .mcp-node .node-box {
-  stroke: rgba(200,240,0,.75) !important;
-  filter: drop-shadow(0 0 14px rgba(200,240,0,.18)) !important;
+  stroke: rgba(0,229,200,.4) !important;
+  filter: drop-shadow(0 0 14px rgba(0,229,200,.25)) !important;
 }
 .node-box.warn {
-  stroke: rgba(255,107,53,.72);
-  filter: drop-shadow(0 0 16px rgba(255,107,53,.22));
+  stroke: rgba(232,24,44,.5);
+  filter: drop-shadow(0 0 16px rgba(232,24,44,.3));
 }
 .node-title {
   fill: var(--white);
@@ -402,8 +402,9 @@ nav {
 }
 .stage-card rect {
   fill: rgba(245,240,232,.055);
-  stroke: rgba(245,240,232,.16);
+  stroke: rgba(0,229,200,.35);
   stroke-width: 1.2;
+  filter: drop-shadow(0 0 10px rgba(0,229,200,.2));
 }
 .stage-card text {
   fill: rgba(245,240,232,.86);
@@ -427,8 +428,8 @@ nav {
   12%, 28% { opacity: 1; filter: drop-shadow(0 0 12px rgba(0,229,200,.28)); }
 }
 .stage-card { transform-box: fill-box; transform-origin: center; }
-.stage-card:nth-of-type(odd) rect { stroke: rgba(0,229,200,.22); }
-.stage-card:nth-of-type(even) rect { stroke: rgba(124,58,237,.25); }
+.stage-card:nth-of-type(odd) rect { stroke: rgba(0,229,200,.35); }
+.stage-card:nth-of-type(even) rect { stroke: rgba(0,229,200,.35); }
 .flow-path {
   fill: none;
   stroke: rgba(245,240,232,.20);
@@ -464,9 +465,9 @@ nav {
 }
 .gateway-shell {
   fill: rgba(6,6,8,.78);
-  stroke: rgba(0,229,200,.55);
+  stroke: rgba(0,229,200,.5);
   stroke-width: 1.4;
-  filter: drop-shadow(0 0 26px rgba(0,229,200,.16));
+  filter: drop-shadow(0 0 24px rgba(0,229,200,.25));
 }
 .gateway-label {
   fill: var(--white);
@@ -1744,7 +1745,7 @@ svg text {
         <!-- AI Agent — widened box so "tool call requested" has clear right padding -->
         <g class="flow-node agent-node">
           <rect class="node-glow" x="32" y="190" width="190" height="124"
-                fill="none" stroke="rgba(46,168,255,.80)" stroke-width="3"
+                fill="none" stroke="rgba(0,229,200,.80)" stroke-width="3"
                 opacity="0.45" filter="url(#blurCyan)"/>
           <rect class="node-box hot" x="40" y="198" width="174" height="108"/>
           <circle class="pulse-ring" cx="70" cy="228" r="18"/>
@@ -1756,8 +1757,8 @@ svg text {
         <!-- MCP Servers — unchanged geometry -->
         <g class="flow-node mcp-node">
           <rect class="node-glow" x="922" y="116" width="176" height="132"
-                fill="none" stroke="rgba(200,240,0,.75)" stroke-width="3"
-                opacity="0.38" filter="url(#blurLime)"/>
+                fill="none" stroke="rgba(0,229,200,.75)" stroke-width="3"
+                opacity="0.45" filter="url(#blurCyan)"/>
           <rect class="node-box hot" x="930" y="124" width="160" height="116"/>
           <text class="node-kicker" x="960" y="158">UPSTREAM</text>
           <text class="node-title"  x="960" y="188">MCP Servers</text>
@@ -1767,7 +1768,7 @@ svg text {
         <!-- Quarantine — unchanged geometry -->
         <g class="flow-node quarantine-node">
           <rect class="node-glow" x="922" y="340" width="176" height="132"
-                fill="none" stroke="rgba(255,107,53,.80)" stroke-width="3"
+                fill="none" stroke="rgba(232,24,44,.80)" stroke-width="3"
                 opacity="0.45" filter="url(#blurOrange)"/>
           <rect class="node-box warn" x="930" y="348" width="160" height="116"/>
           <circle class="pulse-ring warn" cx="960" cy="378" r="18"/>
