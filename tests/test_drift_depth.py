@@ -1,4 +1,6 @@
+import os
 import sys
+import tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -103,3 +105,55 @@ def test_multiple_removals_and_additions():
     added = [f for f in findings if f["type"] == "tool_added"]
     assert {f["tool_name"] for f in removed} == {"b", "c"}
     assert {f["tool_name"] for f in added} == {"d", "e"}
+
+
+# ── DB wiring: get_known_tool_names ────────────────────────────────────────────
+
+import core.db as _db_module
+
+
+def test_get_known_tool_names_returns_empty_for_unknown_server():
+    tmp = tempfile.mktemp(suffix="_drift_depth_wire_test.db")
+    try:
+        old_path = _db_module.DB_PATH
+        _db_module.DB_PATH = tmp
+        _db_module.init_db()
+        names = _db_module.get_known_tool_names("nonexistent-server")
+        assert names == set()
+    finally:
+        _db_module.DB_PATH = old_path
+        for p in (tmp, tmp + "-wal", tmp + "-shm"):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+
+def test_get_known_tool_names_returns_tracked_tools():
+    tmp = tempfile.mktemp(suffix="_drift_depth_wire_test2.db")
+    try:
+        old_path = _db_module.DB_PATH
+        _db_module.DB_PATH = tmp
+        _db_module.init_db()
+        _db_module.register_mcp_server("test-wire-server", {
+            "url": "http://localhost:9999/mcp",
+        })
+        _db_module.upsert_mcp_tool_metadata("test-wire-server", {
+            "name": "read_file",
+            "description": "reads a file",
+            "inputSchema": {},
+        }, {})
+        _db_module.upsert_mcp_tool_metadata("test-wire-server", {
+            "name": "write_file",
+            "description": "writes a file",
+            "inputSchema": {},
+        }, {})
+        names = _db_module.get_known_tool_names("test-wire-server")
+        assert names == {"read_file", "write_file"}
+    finally:
+        _db_module.DB_PATH = old_path
+        for p in (tmp, tmp + "-wal", tmp + "-shm"):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass

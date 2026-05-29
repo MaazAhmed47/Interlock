@@ -1775,6 +1775,16 @@ def list_mcp_tool_metadata(server_id: Optional[str] = None) -> List[Dict[str, An
     return [_mcp_tool_metadata_row_to_dict(r) for r in rows]
 
 
+def get_known_tool_names(server_id: str) -> set:
+    """Return the set of tool names currently tracked for a server."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT tool_name FROM mcp_tool_metadata WHERE server_id = ?",
+            (server_id,),
+        ).fetchall()
+    return {row_value(r, "tool_name", 0) for r in rows if row_value(r, "tool_name", 0)}
+
+
 def list_drifted_mcp_tools(server_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """List MCP tools that need operator review because they changed or are quarantined."""
     with get_conn() as conn:

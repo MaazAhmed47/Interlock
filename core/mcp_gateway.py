@@ -9,6 +9,7 @@ from core.tool_inspector import inspect_tool_call
 from core.tool_metadata import normalize_tool_metadata
 from core import db
 from core.response_scanner import scan_injection, scan_pii_and_volume
+from core.mcp_drift import classify_server_drift
 
 # ── MCP Server Registry ───────────────────────────────────────────────────────
 # Used only as seed data for db.seed_mcp_servers() — never read directly at runtime.
@@ -201,6 +202,40 @@ async def discover_mcp_tools(
             if not registry_server_id:
                 registered = db.lookup_mcp_server_by_url(server_url)
                 registry_server_id = registered.get("server_id") if registered else None
+
+            # ── Server-level drift check (tool additions / removals) ──────────
+            # Must run BEFORE upsert so previous_names still reflects prior state.
+            if registry_server_id:
+                current_names = {t.get("name", "") for t in tools if t.get("name")}
+                previous_names = db.get_known_tool_names(registry_server_id)
+                if previous_names:
+                    server_findings = classify_server_drift(
+                        registry_server_id, previous_names, current_names
+                    )
+                    for finding in server_findings:
+                        db.log_mcp_audit_event(
+                            {
+                                "server_id": registry_server_id,
+                                "tool_name": finding["tool_name"],
+                                "action": (
+                                    "quarantine"
+                                    if finding["severity"] == "critical"
+                                    else "deny"
+                                ),
+                                "role": "system",
+                                "reason": finding["reason"],
+                                "matched_rule": finding["type"],
+                                "drift_status": finding["type"],
+                                "drift_severity": finding["severity"],
+                                "drift_action": (
+                                    "quarantine"
+                                    if finding["severity"] == "critical"
+                                    else "deny"
+                                ),
+                                "drift_types": [finding["type"]],
+                                "drift_reasons": [finding["reason"]],
+                            }
+                        )
 
             for tool in tools:
                 validation = validate_mcp_tool_definition(tool)
