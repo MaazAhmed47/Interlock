@@ -40,6 +40,8 @@ from models.schemas import (  # noqa: F401
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 logger = logging.getLogger("interlock.proxy")
 
+_START_TIME = time.time()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -195,6 +197,7 @@ def _finalize_scan_result(
     start: float,
     default_layer: str,
     default_confidence: Optional[float] = None,
+    endpoint: str = "/scan",
 ) -> ScanResult:
     if not result.layer_caught:
         result.layer_caught = default_layer
@@ -204,6 +207,10 @@ def _finalize_scan_result(
         )
     result.scan_time_ms = round((time.time() - start) * 1000, 2)
     result.risk_score = calculate_risk_score(result)
+    try:
+        db.record_latency_sample(endpoint, result.scan_time_ms, result.is_threat)
+    except Exception:
+        logger.debug("Failed to record latency sample", exc_info=True)
     return result
 
 

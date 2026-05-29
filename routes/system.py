@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, WebSocket, WebSocketDisconnect
 
 import proxy
-from core import rate_limit
+from core import db, rate_limit
 from models.schemas import SIEMTestRequest, ScanResult, ThreatLevel
 
 router = APIRouter()
@@ -137,3 +137,13 @@ async def websocket_feed(websocket: WebSocket):
     finally:
         if websocket in proxy._active_ws:
             proxy._active_ws.remove(websocket)
+
+
+@router.get("/metrics/performance")
+def performance_metrics(x_api_key: Optional[str] = Header(None)):
+    proxy.verify_key(x_api_key)
+    import time as _time
+
+    metrics = db.get_performance_metrics()
+    metrics["uptime_seconds"] = int(_time.time() - proxy._START_TIME)
+    return metrics

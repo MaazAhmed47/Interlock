@@ -362,6 +362,16 @@ CREATE TABLE IF NOT EXISTS shadow_scan_targets (
     enabled    INTEGER DEFAULT 1,
     added_at   TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS latency_samples (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT    NOT NULL,
+    endpoint    TEXT    NOT NULL DEFAULT '/scan',
+    latency_ms  REAL    NOT NULL,
+    is_threat   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_latency_samples_ts ON latency_samples(ts);
 """
 
 
@@ -1227,6 +1237,90 @@ def prune_retention(policy: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
         "admin_audit_deleted": deleted_admin_audit,
         "usage_log_deleted": deleted_usage,
         "policy": policy,
+    }
+
+
+# ── Performance metrics ───────────────────────────────────────────────────────
+
+MAX_LATENCY_SAMPLES = 10_000
+
+
+def record_latency_sample(
+    endpoint: str,
+    latency_ms: float,
+    is_threat: bool = False,
+) -> None:
+    ts = datetime.now(timezone.utc).isoformat()
+    with _db_lock, get_conn() as conn:
+        conn.execute(
+            "INSERT INTO latency_samples (ts, endpoint, latency_ms, is_threat) VALUES (?, ?, ?, ?)",
+            (ts, endpoint, float(latency_ms), int(is_threat)),
+        )
+        conn.execute(
+            """
+            DELETE FROM latency_samples
+             WHERE id NOT IN (
+               SELECT id FROM latency_samples ORDER BY id DESC LIMIT ?
+             )
+            """,
+            (MAX_LATENCY_SAMPLES,),
+        )
+
+
+def get_performance_metrics() -> Dict[str, Any]:
+    cutoff_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
+    with get_conn() as conn:
+        sample_rows = conn.execute(
+            "SELECT latency_ms FROM latency_samples ORDER BY latency_ms ASC"
+        ).fetchall()
+
+        scan_row = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "SUM(CASE WHEN is_threat = 1 THEN 1 ELSE 0 END) AS blocked "
+            "FROM scan_history WHERE ts >= ?",
+            (cutoff_24h,),
+        ).fetchone()
+
+        drift_row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM mcp_audit_log "
+            "WHERE drift_severity != 'none' AND ts >= ?",
+            (cutoff_24h,),
+        ).fetchone()
+
+        q_row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM mcp_audit_log WHERE action = 'quarantine'"
+        ).fetchone()
+
+        a_row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM mcp_audit_log WHERE action = 'approve'"
+        ).fetchone()
+
+    latencies = [float(row_value(r, "latency_ms", 0)) for r in sample_rows]
+
+    def _pct(data: list, p: int) -> float:
+        if not data:
+            return 0.0
+        idx = max(0, min(int(len(data) * p / 100), len(data) - 1))
+        return round(data[idx], 2)
+
+    avg = round(sum(latencies) / len(latencies), 2) if latencies else 0.0
+    total = int(row_value(scan_row, "total", 0) or 0)
+    blocked = int(row_value(scan_row, "blocked", 1) or 0)
+    drift_cnt = int(row_value(drift_row, "cnt", 0) or 0)
+    q_total = int(row_value(q_row, "cnt", 0) or 0)
+    approved = int(row_value(a_row, "cnt", 0) or 0)
+    fp_rate = round(approved / q_total, 3) if q_total > 0 else 0.0
+
+    return {
+        "avg_scan_latency_ms": avg,
+        "p95_scan_latency_ms": _pct(latencies, 95),
+        "p99_scan_latency_ms": _pct(latencies, 99),
+        "total_scans_24h": total,
+        "blocked_24h": blocked,
+        "false_positive_rate": fp_rate,
+        "drift_detections_24h": drift_cnt,
+        "uptime_seconds": 0,  # filled in by the route layer
     }
 
 
