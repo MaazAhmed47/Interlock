@@ -140,8 +140,12 @@ async def websocket_feed(websocket: WebSocket):
 
 
 @router.get("/metrics/performance")
-def performance_metrics(x_api_key: Optional[str] = Header(None)):
-    proxy.verify_key(x_api_key)
+def performance_metrics(
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    from core.admin import _require_admin
+    _require_admin(x_admin_token, "metrics:read", authorization=authorization)
     import time as _time
 
     metrics = db.get_performance_metrics()

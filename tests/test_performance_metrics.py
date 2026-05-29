@@ -2,6 +2,8 @@ import sys, os, tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core import admin
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -48,7 +50,7 @@ def test_get_performance_metrics_returns_correct_keys():
     metrics = db.get_performance_metrics()
     expected_keys = {
         "avg_scan_latency_ms", "p95_scan_latency_ms", "p99_scan_latency_ms",
-        "total_scans_24h", "blocked_24h", "false_positive_rate",
+        "total_scans_24h", "blocked_24h", "mcp_tool_approval_rate",
         "drift_detections_24h", "uptime_seconds",
     }
     assert expected_keys.issubset(metrics.keys())
@@ -59,27 +61,39 @@ def test_get_performance_metrics_avg_latency_nonzero():
     assert metrics["avg_scan_latency_ms"] > 0
 
 
-def test_metrics_endpoint_requires_api_key():
-    os.environ["ADMIN_TOKEN"] = "test-admin-tok"
+def test_metrics_endpoint_requires_admin_token():
     import proxy
-    client = TestClient(proxy.app)
-    resp = client.get("/metrics/performance")
-    assert resp.status_code in (401, 403)
+    old_token = admin.ADMIN_TOKEN
+    admin.ADMIN_TOKEN = "test-admin-tok"
+    try:
+        client = TestClient(proxy.app)
+        # No admin token at all → 401
+        resp = client.get("/metrics/performance")
+        assert resp.status_code in (401, 403)
+        # Invalid admin token → 401
+        resp2 = client.get("/metrics/performance", headers={"x-admin-token": "wrong"})
+        assert resp2.status_code in (401, 403)
+    finally:
+        admin.ADMIN_TOKEN = old_token
 
 
-def test_metrics_endpoint_returns_data_with_valid_key():
-    os.environ["ADMIN_TOKEN"] = "test-admin-tok"
+def test_metrics_endpoint_returns_data_with_admin_token():
     import proxy
     from core import db as _db
     _db.DB_PATH = _tmp_db
-    key_info = _db.generate_key("free", label="metrics-test")
-    client = TestClient(proxy.app)
-    resp = client.get(
-        "/metrics/performance",
-        headers={"x-api-key": key_info["raw_key"]},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "avg_scan_latency_ms" in data
-    assert "uptime_seconds" in data
-    assert data["uptime_seconds"] >= 0
+    old_token = admin.ADMIN_TOKEN
+    admin.ADMIN_TOKEN = "test-admin-tok"
+    try:
+        client = TestClient(proxy.app)
+        resp = client.get(
+            "/metrics/performance",
+            headers={"x-admin-token": "test-admin-tok"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "avg_scan_latency_ms" in data
+        assert "uptime_seconds" in data
+        assert "mcp_tool_approval_rate" in data  # renamed from false_positive_rate
+        assert data["uptime_seconds"] >= 0
+    finally:
+        admin.ADMIN_TOKEN = old_token

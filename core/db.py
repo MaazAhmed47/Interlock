@@ -648,6 +648,7 @@ ADMIN_ROLE_DEFAULTS = {
         "shadow:read",
         "shadow:write",
         "admin_audit:read",
+        "metrics:read",
     ],
     "security_reviewer": [
         "keys:read",
@@ -657,6 +658,7 @@ ADMIN_ROLE_DEFAULTS = {
         "shadow:read",
         "shadow:write",
         "admin_audit:read",
+        "metrics:read",
     ],
     "auditor": [
         "keys:read",
@@ -1272,7 +1274,8 @@ def get_performance_metrics() -> Dict[str, Any]:
 
     with get_conn() as conn:
         sample_rows = conn.execute(
-            "SELECT latency_ms FROM latency_samples ORDER BY latency_ms ASC"
+            "SELECT latency_ms FROM latency_samples WHERE ts >= ? ORDER BY latency_ms ASC",
+            (cutoff_24h,),
         ).fetchall()
 
         scan_row = conn.execute(
@@ -1305,12 +1308,14 @@ def get_performance_metrics() -> Dict[str, Any]:
         return round(data[idx], 2)
 
     avg = round(sum(latencies) / len(latencies), 2) if latencies else 0.0
-    total = int(row_value(scan_row, "total", 0) or 0)
-    blocked = int(row_value(scan_row, "blocked", 1) or 0)
+    total_val = row_value(scan_row, "total", 0) if scan_row else None
+    blocked_val = row_value(scan_row, "blocked", 1) if scan_row else None
+    total = int(total_val or 0)
+    blocked = int(blocked_val or 0)
     drift_cnt = int(row_value(drift_row, "cnt", 0) or 0)
     q_total = int(row_value(q_row, "cnt", 0) or 0)
     approved = int(row_value(a_row, "cnt", 0) or 0)
-    fp_rate = round(approved / q_total, 3) if q_total > 0 else 0.0
+    approval_rate = round(approved / q_total, 3) if q_total > 0 else 0.0
 
     return {
         "avg_scan_latency_ms": avg,
@@ -1318,7 +1323,7 @@ def get_performance_metrics() -> Dict[str, Any]:
         "p99_scan_latency_ms": _pct(latencies, 99),
         "total_scans_24h": total,
         "blocked_24h": blocked,
-        "false_positive_rate": fp_rate,
+        "mcp_tool_approval_rate": approval_rate,
         "drift_detections_24h": drift_cnt,
         "uptime_seconds": 0,  # filled in by the route layer
     }
