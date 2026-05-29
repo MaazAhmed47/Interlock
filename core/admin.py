@@ -392,6 +392,15 @@ def list_admin_audit(
     return {"events": db.list_admin_audit_logs(limit=limit)}
 
 
+@router.get("/audit/verify")
+def verify_audit_integrity(
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    _require_admin(x_admin_token, "admin_audit:read", authorization=authorization)
+    return db.verify_audit_chain()
+
+
 @router.delete("/tokens/{token_prefix}")
 def revoke_admin_token(
     token_prefix: str,

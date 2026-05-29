@@ -288,7 +288,9 @@ CREATE TABLE IF NOT EXISTS mcp_audit_log (
     drift_severity      TEXT    NOT NULL DEFAULT 'none',
     drift_action        TEXT    NOT NULL DEFAULT 'allow',
     drift_types         TEXT    NOT NULL DEFAULT '[]',
-    drift_reasons       TEXT    NOT NULL DEFAULT '[]'
+    drift_reasons       TEXT    NOT NULL DEFAULT '[]',
+    prev_hash           TEXT    NOT NULL DEFAULT '',
+    integrity_hash      TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_ts ON mcp_audit_log(ts);
@@ -331,7 +333,9 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
     target_id          TEXT    NOT NULL DEFAULT '',
     result             TEXT    NOT NULL DEFAULT 'success',
     reason             TEXT    NOT NULL DEFAULT '',
-    details            TEXT    NOT NULL DEFAULT '{}'
+    details            TEXT    NOT NULL DEFAULT '{}',
+    prev_hash          TEXT    NOT NULL DEFAULT '',
+    integrity_hash     TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_admin_audit_ts ON admin_audit_log(ts);
@@ -430,6 +434,14 @@ def init_db() -> None:
         )
         _ensure_column(conn, "admin_audit_log", "reason", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "admin_audit_log", "details", "TEXT NOT NULL DEFAULT '{}'")
+        _ensure_column(conn, "mcp_audit_log", "prev_hash", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(
+            conn, "mcp_audit_log", "integrity_hash", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(conn, "admin_audit_log", "prev_hash", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(
+            conn, "admin_audit_log", "integrity_hash", "TEXT NOT NULL DEFAULT ''"
+        )
         _run_schema_statements(conn, indexes=True)
     logger.info(
         "%s DB initialized", "Postgres" if USE_POSTGRES else f"SQLite at {DB_PATH}"
@@ -487,6 +499,18 @@ def _hash_json(value: Any) -> str:
 
 def _hash_text(value: Any) -> str:
     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
+
+
+def _compute_audit_hash(
+    prev_hash: str,
+    ts: str,
+    action: str,
+    tool_or_target: str,
+    role: str,
+    reason: str,
+) -> str:
+    data = f"{prev_hash}|{ts}|{action}|{tool_or_target}|{role}|{reason}"
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
 def _is_postgres_conn(conn) -> bool:
@@ -907,12 +931,25 @@ def log_admin_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
     now = event.get("ts") or datetime.now(timezone.utc).isoformat()
     details = _json_dumps_object(event.get("details") or {})
     with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            "SELECT integrity_hash FROM admin_audit_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        prev_hash = (dict(row).get("integrity_hash") if row else None) or "GENESIS"
+        integrity_hash = _compute_audit_hash(
+            prev_hash,
+            now,
+            event.get("action") or "",
+            event.get("target_id") or "",
+            event.get("actor_role") or "",
+            event.get("reason") or "",
+        )
         cursor = conn.execute(
             """
             INSERT INTO admin_audit_log
               (ts, actor_auth_type, actor_role, actor_label, actor_email, actor_subject,
-               actor_token_prefix, action, target_type, target_id, result, reason, details)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               actor_token_prefix, action, target_type, target_id, result, reason, details,
+               prev_hash, integrity_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 now,
@@ -928,6 +965,8 @@ def log_admin_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
                 event.get("result") or "success",
                 event.get("reason") or "",
                 details,
+                prev_hash,
+                integrity_hash,
             ),
         )
     stored = dict(event)
@@ -954,6 +993,57 @@ def list_admin_audit_logs(limit: int = 100) -> List[Dict[str, Any]]:
             item["details"] = {}
         out.append(item)
     return out
+
+
+def verify_audit_chain() -> Dict[str, Any]:
+    result: Dict[str, Any] = {"valid": True}
+
+    checks = [
+        ("mcp_audit_log", "mcp", "action", "tool_name", "role"),
+        ("admin_audit_log", "admin", "action", "target_id", "actor_role"),
+    ]
+
+    for table, key, action_col, target_col, role_col in checks:
+        with get_conn() as conn:
+            rows = conn.execute(
+                f"SELECT id, ts, {action_col}, {target_col}, {role_col}, "
+                f"reason, prev_hash, integrity_hash FROM {table} ORDER BY id ASC"
+            ).fetchall()
+
+        if not rows:
+            result[key] = {"total": 0, "first_ts": None, "last_ts": None}
+            continue
+
+        dicts = [dict(r) for r in rows]
+        first_ts = dicts[0]["ts"]
+        last_ts = dicts[-1]["ts"]
+        prev_hash = "GENESIS"
+
+        for record in dicts:
+            stored_hash = record.get("integrity_hash") or ""
+            if not stored_hash:
+                result["valid"] = False
+                result["broken_at"] = {"table": table, "record_id": record["id"]}
+                result["reason"] = "pre-integrity records found"
+                return result
+            expected = _compute_audit_hash(
+                prev_hash,
+                record.get("ts") or "",
+                record.get(action_col) or "",
+                record.get(target_col) or "",
+                record.get(role_col) or "",
+                record.get("reason") or "",
+            )
+            if expected != stored_hash:
+                result["valid"] = False
+                result["broken_at"] = {"table": table, "record_id": record["id"]}
+                result["reason"] = "hash mismatch"
+                return result
+            prev_hash = stored_hash
+
+        result[key] = {"total": len(dicts), "first_ts": first_ts, "last_ts": last_ts}
+
+    return result
 
 
 # ── Usage logging + monthly quota ────────────────────────────────────────────
@@ -1792,14 +1882,27 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
     event = event or {}
     ts = event.get("ts") or datetime.now(timezone.utc).isoformat()
     with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            "SELECT integrity_hash FROM mcp_audit_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        prev_hash = (dict(row).get("integrity_hash") if row else None) or "GENESIS"
+        integrity_hash = _compute_audit_hash(
+            prev_hash,
+            ts,
+            event.get("action", ""),
+            event.get("tool_name", ""),
+            event.get("role", "") or "",
+            event.get("reason", ""),
+        )
         cursor = conn.execute(
             """
             INSERT INTO mcp_audit_log
               (ts, server_id, tool_name, role, action, matched_rule, reason,
                effects, side_effect, data_classes, externality, verification_level,
                confidence, warnings, argument_keys, blocked_by, drift_status,
-               drift_severity, drift_action, drift_types, drift_reasons)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               drift_severity, drift_action, drift_types, drift_reasons,
+               prev_hash, integrity_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ts,
@@ -1823,6 +1926,8 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
                 event.get("drift_action", "allow") or "allow",
                 json.dumps(event.get("drift_types", []) or []),
                 json.dumps(event.get("drift_reasons", []) or []),
+                prev_hash,
+                integrity_hash,
             ),
         )
         event_id = cursor.lastrowid
