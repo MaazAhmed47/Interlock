@@ -11,7 +11,7 @@
 
 # Interlock
 
-[![Interlock Demo](https://img.youtube.com/vi/kc5wAbgoEkw/maxresdefault.jpg)](https://www.youtube.com/watch?v=kc5wAbgoEkw)
+[![Interlock Demo](./interlock_thumbnail.jpg)](https://www.youtube.com/watch?v=kc5wAbgoEkw)
 
 ### Runtime security gateway for AI agents.
 
