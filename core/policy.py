@@ -1,5 +1,5 @@
 from models.schemas import ScanResult, ThreatLevel
-from typing import Optional
+from typing import Any, Dict, Optional
 from core import db
 
 
@@ -43,7 +43,7 @@ def policy_scan(
 
 
 # ── Role-Based Access Control ─────────────────────────────────────────────────
-ROLE_POLICIES = {
+ROLE_POLICIES: Dict[str, Any] = {
     "support_agent": {
         "allowed_tools": [
             "read_crm",
@@ -213,7 +213,7 @@ def rbac_scan(
 
     # Check prompt length
     max_len = policy.get("max_prompt_length", 4000)
-    if len(prompt) > max_len:  # type: ignore[operator]
+    if len(prompt) > max_len:
         return ScanResult(
             is_threat=True,
             threat_level=ThreatLevel.LOW,
@@ -228,7 +228,7 @@ def rbac_scan(
     # Check blocked tools
     if tool_name:
         tool_lower = tool_name.lower().replace("-", "_").replace(" ", "_")
-        for blocked in policy.get("blocked_tools", []):  # type: ignore[attr-defined]
+        for blocked in policy.get("blocked_tools", []):
             if blocked.lower() in tool_lower:
                 return ScanResult(
                     is_threat=True,
@@ -242,9 +242,9 @@ def rbac_scan(
                 )
 
         # Check if tool is in allowed list (if allowed list is specified)
-        allowed = policy.get("allowed_tools", [])  # type: ignore[attr-defined]
+        allowed = policy.get("allowed_tools", [])
         if allowed and role != "admin_agent":
-            tool_allowed = any(a.lower() in tool_lower for a in allowed)  # type: ignore[attr-defined]
+            tool_allowed = any(a.lower() in tool_lower for a in allowed)
             if not tool_allowed:
                 return ScanResult(
                     is_threat=True,
@@ -258,7 +258,7 @@ def rbac_scan(
                 )
 
     # Check blocked keywords
-    for keyword in policy.get("blocked_keywords", []):  # type: ignore[attr-defined]
+    for keyword in policy.get("blocked_keywords", []):
         if keyword.lower() in prompt_lower:
             return ScanResult(
                 is_threat=True,
