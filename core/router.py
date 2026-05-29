@@ -1,5 +1,6 @@
 import os
 import httpx
+from fastapi import HTTPException
 from typing import Any, Dict, Optional
 
 # ── Provider configurations ──────────────────────────────────────────────────
@@ -199,26 +200,15 @@ async def forward_to_provider(
         api_key = os.getenv(config["key_env"])
 
     if not api_key and config["key_env"]:
-        return {
-            "id": f"fw-{provider}-no-key",
-            "object": "chat.completion",
-            "model": openai_body.get("model"),
-            "choices": [
-                {
-                    "message": {
-                        "role": "assistant",
-                        "content": f"[Interlock] Prompt scanned ✓ safe. Add {config['key_env']} to .env to forward to {provider}.",
-                    },
-                    "finish_reason": "stop",
-                    "index": 0,
-                }
-            ],
-            "firewall": {
-                "status": "clean",
-                "provider": provider,
-                "note": "no_upstream_key",
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": (
+                    f"No {provider.capitalize()} API key configured. "
+                    f"Set {config['key_env']} or use explicit provider config in Settings."
+                )
             },
-        }
+        )
 
     # Build request
     headers = {"Content-Type": "application/json"}

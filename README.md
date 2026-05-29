@@ -1,3 +1,12 @@
+## Verified Status
+| Check | Status |
+|-------|--------|
+| Backend tests | ✅ 148 passing |
+| Code quality | ✅ ruff · black · mypy clean |
+| Docker build | ✅ passing |
+| Live demo | ✅ getinterlock.dev |
+| Last verified | May 2026 |
+
 <div align="center">
 
 # Interlock

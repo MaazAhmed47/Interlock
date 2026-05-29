@@ -27,10 +27,6 @@ async def chat_completions(
 
     provider = detect_provider(chat.model)
 
-    if provider == "openai" and not chat.model.lower().startswith("gpt-4"):
-        provider = "groq"
-        chat.model = "llama-3.3-70b-versatile"
-
     user_prompts = [m.content for m in chat.messages if m.role == "user"]
     for prompt in user_prompts:
         result = proxy.run_scan(prompt, raw_key, key_record=key_info)
