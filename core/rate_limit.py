@@ -9,15 +9,17 @@ import logging
 import os
 import time
 from collections import defaultdict
-from typing import Optional
+from typing import DefaultDict, List, Optional
 
 logger = logging.getLogger("interlock.rate_limit")
 
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
-RATE_LIMIT_NAMESPACE = os.getenv("RATE_LIMIT_NAMESPACE", "interlock").strip() or "interlock"
+RATE_LIMIT_NAMESPACE = (
+    os.getenv("RATE_LIMIT_NAMESPACE", "interlock").strip() or "interlock"
+)
 RATE_LIMIT_REDIS_TIMEOUT = float(os.getenv("RATE_LIMIT_REDIS_TIMEOUT", "1.5"))
 
-_memory_windows = defaultdict(list)
+_memory_windows: DefaultDict[str, List[float]] = defaultdict(list)
 _redis_client = None
 _redis_available: Optional[bool] = None
 _warned_redis_failure = False
@@ -121,7 +123,12 @@ def check_rate(raw_key: str, rate_per_min: int) -> dict:
     active backend so production can alert on this condition.
     """
     if rate_per_min <= 0:
-        return {"backend": backend_name(), "limit": rate_per_min, "remaining": None, "window_seconds": 60}
+        return {
+            "backend": backend_name(),
+            "limit": rate_per_min,
+            "remaining": None,
+            "window_seconds": 60,
+        }
 
     if REDIS_URL:
         try:
@@ -131,7 +138,9 @@ def check_rate(raw_key: str, rate_per_min: int) -> dict:
         except RateLimitUnavailable:
             global _warned_redis_failure
             if not _warned_redis_failure:
-                logger.exception("Redis rate limiter unavailable; falling back to in-memory limiter")
+                logger.exception(
+                    "Redis rate limiter unavailable; falling back to in-memory limiter"
+                )
                 _warned_redis_failure = True
             return _memory_check(raw_key, rate_per_min)
 

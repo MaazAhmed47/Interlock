@@ -9,7 +9,6 @@ without standing up an MCP server.
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
-
 ALLOW = "allow"
 DENY = "deny"
 MONITOR = "monitor"
@@ -46,7 +45,9 @@ def evaluate_metadata_policy(
     warnings = list(metadata.get("warnings") or [])
     normalized_role = role or "unspecified"
 
-    if normalized_role == "readonly_agent" and (side_effect != "read_only" or effects - {"read"}):
+    if normalized_role == "readonly_agent" and (
+        side_effect != "read_only" or effects - {"read"}
+    ):
         return _decision(
             DENY,
             "readonly_agent may only use read-only tools; this tool is classified as "
@@ -73,7 +74,10 @@ def evaluate_metadata_policy(
             warnings,
         )
 
-    if effects.intersection({"execute"}) and normalized_role not in {"devops_agent", "admin_agent"}:
+    if effects.intersection({"execute"}) and normalized_role not in {
+        "devops_agent",
+        "admin_agent",
+    }:
         return _decision(
             DENY,
             "Execute-class tools require devops_agent or admin_agent.",
@@ -103,7 +107,11 @@ def evaluate_metadata_policy(
             warnings,
         )
 
-    if externality == "external" and "secrets" in data_classes and normalized_role != "admin_agent":
+    if (
+        externality == "external"
+        and "secrets" in data_classes
+        and normalized_role != "admin_agent"
+    ):
         return _decision(
             DENY,
             "External transfer of secrets is denied for non-admin roles.",
@@ -116,7 +124,11 @@ def evaluate_metadata_policy(
             warnings,
         )
 
-    if externality == "external" and data_classes.intersection({"phi"}) and normalized_role not in {"admin_agent"}:
+    if (
+        externality == "external"
+        and data_classes.intersection({"phi"})
+        and normalized_role not in {"admin_agent"}
+    ):
         return _decision(
             DENY,
             "External transfer of PHI requires admin_agent until an explicit approval workflow exists.",
@@ -142,7 +154,10 @@ def evaluate_metadata_policy(
             warnings,
         )
 
-    if any("conflict" in warning.lower() or "marked read_only" in warning.lower() for warning in warnings):
+    if any(
+        "conflict" in warning.lower() or "marked read_only" in warning.lower()
+        for warning in warnings
+    ):
         return _decision(
             MONITOR,
             "Tool metadata contains mismatch warnings; allow but monitor this call.",

@@ -1,9 +1,9 @@
 import os
 import httpx
-from typing import Optional
+from typing import Any, Dict, Optional
 
 # ── Provider configurations ──────────────────────────────────────────────────
-PROVIDERS = {
+PROVIDERS: Dict[str, Dict[str, Any]] = {
     "openai": {
         "url": "https://api.openai.com/v1/chat/completions",
         "auth_header": "Authorization",
@@ -47,6 +47,7 @@ PROVIDERS = {
     },
 }
 
+
 # ── Model detection ──────────────────────────────────────────────────────────
 def detect_provider(model: str) -> str:
     """Auto-detect provider from model name."""
@@ -57,8 +58,10 @@ def detect_provider(model: str) -> str:
                 return provider_name
     return "openai"  # Default
 
-def get_provider_config(provider: str) -> Optional[dict]:
+
+def get_provider_config(provider: str) -> Optional[Dict[str, Any]]:
     return PROVIDERS.get(provider)
+
 
 # ── Format converters ────────────────────────────────────────────────────────
 def to_anthropic_format(openai_body: dict) -> dict:
@@ -86,6 +89,7 @@ def to_anthropic_format(openai_body: dict) -> dict:
         body["stream"] = True
     return body
 
+
 def from_anthropic_response(anthropic_resp: dict) -> dict:
     """Convert Anthropic response back to OpenAI format."""
     content = ""
@@ -98,28 +102,34 @@ def from_anthropic_response(anthropic_resp: dict) -> dict:
         "id": anthropic_resp.get("id", "fw-anthropic"),
         "object": "chat.completion",
         "model": anthropic_resp.get("model"),
-        "choices": [{
-            "message": {"role": "assistant", "content": content},
-            "finish_reason": anthropic_resp.get("stop_reason", "stop"),
-            "index": 0,
-        }],
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": anthropic_resp.get("stop_reason", "stop"),
+                "index": 0,
+            }
+        ],
         "usage": anthropic_resp.get("usage", {}),
     }
+
 
 def to_google_format(openai_body: dict) -> dict:
     """Convert OpenAI request to Google Gemini format."""
     contents = []
     for msg in openai_body.get("messages", []):
         if msg["role"] == "system":
-            contents.append({"role": "user", "parts": [{"text": f"[System]: {msg['content']}"}]})
+            contents.append(
+                {"role": "user", "parts": [{"text": f"[System]: {msg['content']}"}]}
+            )
         else:
             role = "model" if msg["role"] == "assistant" else "user"
             contents.append({"role": role, "parts": [{"text": msg["content"]}]})
 
-    body = {"contents": contents}
+    body: Dict[str, Any] = {"contents": contents}
     if openai_body.get("temperature") is not None:
         body["generationConfig"] = {"temperature": openai_body["temperature"]}
     return body
+
 
 def from_google_response(google_resp: dict) -> dict:
     """Convert Google response to OpenAI format."""
@@ -134,12 +144,15 @@ def from_google_response(google_resp: dict) -> dict:
         "id": "fw-google",
         "object": "chat.completion",
         "model": google_resp.get("modelVersion", "gemini"),
-        "choices": [{
-            "message": {"role": "assistant", "content": content},
-            "finish_reason": "stop",
-            "index": 0,
-        }],
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+                "index": 0,
+            }
+        ],
     }
+
 
 def to_ollama_format(openai_body: dict) -> dict:
     """Convert to Ollama format."""
@@ -150,24 +163,28 @@ def to_ollama_format(openai_body: dict) -> dict:
         "stream": openai_body.get("stream", False),
     }
 
+
 def from_ollama_response(ollama_resp: dict) -> dict:
     """Convert Ollama response to OpenAI format."""
     return {
         "id": "fw-ollama",
         "object": "chat.completion",
         "model": ollama_resp.get("model"),
-        "choices": [{
-            "message": ollama_resp.get("message", {"role": "assistant", "content": ""}),
-            "finish_reason": "stop",
-            "index": 0,
-        }],
+        "choices": [
+            {
+                "message": ollama_resp.get(
+                    "message", {"role": "assistant", "content": ""}
+                ),
+                "finish_reason": "stop",
+                "index": 0,
+            }
+        ],
     }
+
 
 # ── Universal forwarder ──────────────────────────────────────────────────────
 async def forward_to_provider(
-    provider: str,
-    openai_body: dict,
-    api_key: Optional[str] = None
+    provider: str, openai_body: dict, api_key: Optional[str] = None
 ) -> dict:
     """
     Forward request to detected provider.
@@ -186,15 +203,21 @@ async def forward_to_provider(
             "id": f"fw-{provider}-no-key",
             "object": "chat.completion",
             "model": openai_body.get("model"),
-            "choices": [{
-                "message": {
-                    "role": "assistant",
-                    "content": f"[Interlock] Prompt scanned ✓ safe. Add {config['key_env']} to .env to forward to {provider}."
-                },
-                "finish_reason": "stop",
-                "index": 0,
-            }],
-            "firewall": {"status": "clean", "provider": provider, "note": "no_upstream_key"}
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": f"[Interlock] Prompt scanned ✓ safe. Add {config['key_env']} to .env to forward to {provider}.",
+                    },
+                    "finish_reason": "stop",
+                    "index": 0,
+                }
+            ],
+            "firewall": {
+                "status": "clean",
+                "provider": provider,
+                "note": "no_upstream_key",
+            },
         }
 
     # Build request

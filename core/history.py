@@ -115,7 +115,7 @@ def get_stats(api_key: str) -> dict:
 
     threats = [h for h in history if h["is_threat"]]
     critical = [h for h in threats if h["threat_level"] == "CRITICAL"]
-    by_level = {}
+    by_level: dict[str, int] = {}
     risk_scores = []
     for item in history:
         level = item.get("threat_level") or "UNKNOWN"
@@ -129,6 +129,8 @@ def get_stats(api_key: str) -> dict:
         "safe": len(history) - len(threats),
         "critical": len(critical),
         "block_rate": round(len(threats) / len(history) * 100, 1),
-        "avg_risk_score": round(sum(risk_scores) / len(risk_scores), 1) if risk_scores else 0,
+        "avg_risk_score": (
+            round(sum(risk_scores) / len(risk_scores), 1) if risk_scores else 0
+        ),
         "by_level": by_level,
     }

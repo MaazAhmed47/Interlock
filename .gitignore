@@ -78,3 +78,6 @@ nextcloud-scan-report.md
 
 # Frontend is being rebuilt separately; do not commit partial generated drafts.
 interlock-web/
+
+.vercel
+.env*

@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, WebSocket, WebSocketDisconnect
 
 import proxy
-from core import db, rate_limit
+from core import rate_limit
 from models.schemas import SIEMTestRequest, ScanResult, ThreatLevel
 
 router = APIRouter()
@@ -84,12 +84,41 @@ async def list_siem_providers(x_api_key: Optional[str] = Header(None)):
     return {
         "providers": list(SIEM_PROVIDERS.keys()),
         "config_examples": {
-            "datadog": {"provider": "datadog", "api_key": "your-dd-key", "region": "us", "min_severity": "MEDIUM"},
-            "splunk_hec": {"provider": "splunk_hec", "url": "https://splunk.company.com:8088", "token": "hec-token", "min_severity": "HIGH"},
-            "elastic": {"provider": "elastic", "url": "https://elastic.company.com:9200", "api_key": "elastic-key", "index": "interlock", "min_severity": "MEDIUM"},
-            "slack": {"provider": "slack", "webhook_url": "https://hooks.slack.com/services/xxx", "min_severity": "HIGH"},
-            "pagerduty": {"provider": "pagerduty", "integration_key": "pd-integration-key", "min_severity": "CRITICAL"},
-            "webhook": {"provider": "webhook", "url": "https://your-endpoint.com/alerts", "headers": {}, "min_severity": "LOW"},
+            "datadog": {
+                "provider": "datadog",
+                "api_key": "your-dd-key",
+                "region": "us",
+                "min_severity": "MEDIUM",
+            },
+            "splunk_hec": {
+                "provider": "splunk_hec",
+                "url": "https://splunk.company.com:8088",
+                "token": "hec-token",
+                "min_severity": "HIGH",
+            },
+            "elastic": {
+                "provider": "elastic",
+                "url": "https://elastic.company.com:9200",
+                "api_key": "elastic-key",
+                "index": "interlock",
+                "min_severity": "MEDIUM",
+            },
+            "slack": {
+                "provider": "slack",
+                "webhook_url": "https://hooks.slack.com/services/xxx",
+                "min_severity": "HIGH",
+            },
+            "pagerduty": {
+                "provider": "pagerduty",
+                "integration_key": "pd-integration-key",
+                "min_severity": "CRITICAL",
+            },
+            "webhook": {
+                "provider": "webhook",
+                "url": "https://your-endpoint.com/alerts",
+                "headers": {},
+                "min_severity": "LOW",
+            },
         },
     }
 

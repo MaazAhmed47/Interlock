@@ -94,8 +94,12 @@ def _postgres_column_definition(definition: str, column: str = "") -> str:
     converted = definition.strip()
     if column in _POSTGRES_BOOLEAN_COLUMNS:
         converted = re.sub(r"\bINTEGER\b", "BOOLEAN", converted, count=1)
-        converted = re.sub(r"DEFAULT\s+1\b", "DEFAULT TRUE", converted, flags=re.IGNORECASE)
-        converted = re.sub(r"DEFAULT\s+0\b", "DEFAULT FALSE", converted, flags=re.IGNORECASE)
+        converted = re.sub(
+            r"DEFAULT\s+1\b", "DEFAULT TRUE", converted, flags=re.IGNORECASE
+        )
+        converted = re.sub(
+            r"DEFAULT\s+0\b", "DEFAULT FALSE", converted, flags=re.IGNORECASE
+        )
     return converted
 
 
@@ -122,12 +126,17 @@ def _pg_sql(sql: str) -> str:
     insert_ignore = "INSERT OR IGNORE INTO" in converted
     insert_replace_system_config = "INSERT OR REPLACE INTO system_config" in converted
     converted = converted.replace("INSERT OR IGNORE INTO", "INSERT INTO")
-    converted = converted.replace("INSERT OR REPLACE INTO system_config", "INSERT INTO system_config")
+    converted = converted.replace(
+        "INSERT OR REPLACE INTO system_config", "INSERT INTO system_config"
+    )
     converted = converted.replace("?", "%s")
     if insert_ignore:
         converted = converted.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
     if insert_replace_system_config:
-        converted = converted.rstrip().rstrip(";") + " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+        converted = (
+            converted.rstrip().rstrip(";")
+            + " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+        )
     return converted
 
 
@@ -157,7 +166,7 @@ def get_conn():
         os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
         conn = sqlite3.connect(DB_PATH, timeout=10, isolation_level=None)  # autocommit
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")     # better concurrency
+        conn.execute("PRAGMA journal_mode=WAL")  # better concurrency
         conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield conn
@@ -358,36 +367,73 @@ def init_db() -> None:
         _ensure_column(conn, "scan_history", "key_hash", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "scan_history", "ts", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "scan_history", "confidence", "REAL")
-        _ensure_column(conn, "scan_history", "endpoint", "TEXT NOT NULL DEFAULT '/scan'")
+        _ensure_column(
+            conn, "scan_history", "endpoint", "TEXT NOT NULL DEFAULT '/scan'"
+        )
         _ensure_column(conn, "scan_history", "sanitized_output", "TEXT")
         _ensure_column(conn, "scan_history", "redactions", "TEXT NOT NULL DEFAULT '[]'")
-        _ensure_column(conn, "mcp_tool_metadata", "drift_severity", "TEXT NOT NULL DEFAULT 'none'")
-        _ensure_column(conn, "mcp_tool_metadata", "drift_action", "TEXT NOT NULL DEFAULT 'allow'")
-        _ensure_column(conn, "mcp_tool_metadata", "drift_types", "TEXT NOT NULL DEFAULT '[]'")
-        _ensure_column(conn, "mcp_tool_metadata", "drift_reasons", "TEXT NOT NULL DEFAULT '[]'")
-        _ensure_column(conn, "mcp_tool_metadata", "previous_metadata", "TEXT NOT NULL DEFAULT '{}'")
-        _ensure_column(conn, "mcp_tool_metadata", "previous_tool_definition", "TEXT NOT NULL DEFAULT '{}'")
-        _ensure_column(conn, "mcp_audit_log", "drift_status", "TEXT NOT NULL DEFAULT ''")
-        _ensure_column(conn, "mcp_audit_log", "drift_severity", "TEXT NOT NULL DEFAULT 'none'")
-        _ensure_column(conn, "mcp_audit_log", "drift_action", "TEXT NOT NULL DEFAULT 'allow'")
-        _ensure_column(conn, "mcp_audit_log", "drift_types", "TEXT NOT NULL DEFAULT '[]'")
-        _ensure_column(conn, "mcp_audit_log", "drift_reasons", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(
+            conn, "mcp_tool_metadata", "drift_severity", "TEXT NOT NULL DEFAULT 'none'"
+        )
+        _ensure_column(
+            conn, "mcp_tool_metadata", "drift_action", "TEXT NOT NULL DEFAULT 'allow'"
+        )
+        _ensure_column(
+            conn, "mcp_tool_metadata", "drift_types", "TEXT NOT NULL DEFAULT '[]'"
+        )
+        _ensure_column(
+            conn, "mcp_tool_metadata", "drift_reasons", "TEXT NOT NULL DEFAULT '[]'"
+        )
+        _ensure_column(
+            conn, "mcp_tool_metadata", "previous_metadata", "TEXT NOT NULL DEFAULT '{}'"
+        )
+        _ensure_column(
+            conn,
+            "mcp_tool_metadata",
+            "previous_tool_definition",
+            "TEXT NOT NULL DEFAULT '{}'",
+        )
+        _ensure_column(
+            conn, "mcp_audit_log", "drift_status", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(
+            conn, "mcp_audit_log", "drift_severity", "TEXT NOT NULL DEFAULT 'none'"
+        )
+        _ensure_column(
+            conn, "mcp_audit_log", "drift_action", "TEXT NOT NULL DEFAULT 'allow'"
+        )
+        _ensure_column(
+            conn, "mcp_audit_log", "drift_types", "TEXT NOT NULL DEFAULT '[]'"
+        )
+        _ensure_column(
+            conn, "mcp_audit_log", "drift_reasons", "TEXT NOT NULL DEFAULT '[]'"
+        )
         _ensure_column(conn, "api_keys", "max_response_bytes", "INTEGER DEFAULT 50000")
-        _ensure_column(conn, "api_keys", "max_array_items",    "INTEGER DEFAULT 500")
-        _ensure_column(conn, "mcp_servers", "source_type",       "TEXT DEFAULT 'unknown'")
-        _ensure_column(conn, "mcp_servers", "registry",          "TEXT DEFAULT ''")
-        _ensure_column(conn, "mcp_servers", "package_name",      "TEXT DEFAULT ''")
-        _ensure_column(conn, "mcp_servers", "package_version",   "TEXT DEFAULT ''")
-        _ensure_column(conn, "mcp_servers", "source_url",        "TEXT DEFAULT ''")
-        _ensure_column(conn, "mcp_servers", "source_hash",       "TEXT DEFAULT ''")
-        _ensure_column(conn, "mcp_servers", "provenance_status", "TEXT DEFAULT 'unknown'")
-        _ensure_column(conn, "admin_audit_log", "actor_email", "TEXT NOT NULL DEFAULT ''")
-        _ensure_column(conn, "admin_audit_log", "actor_subject", "TEXT NOT NULL DEFAULT ''")
-        _ensure_column(conn, "admin_audit_log", "actor_token_prefix", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "api_keys", "max_array_items", "INTEGER DEFAULT 500")
+        _ensure_column(conn, "mcp_servers", "source_type", "TEXT DEFAULT 'unknown'")
+        _ensure_column(conn, "mcp_servers", "registry", "TEXT DEFAULT ''")
+        _ensure_column(conn, "mcp_servers", "package_name", "TEXT DEFAULT ''")
+        _ensure_column(conn, "mcp_servers", "package_version", "TEXT DEFAULT ''")
+        _ensure_column(conn, "mcp_servers", "source_url", "TEXT DEFAULT ''")
+        _ensure_column(conn, "mcp_servers", "source_hash", "TEXT DEFAULT ''")
+        _ensure_column(
+            conn, "mcp_servers", "provenance_status", "TEXT DEFAULT 'unknown'"
+        )
+        _ensure_column(
+            conn, "admin_audit_log", "actor_email", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(
+            conn, "admin_audit_log", "actor_subject", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(
+            conn, "admin_audit_log", "actor_token_prefix", "TEXT NOT NULL DEFAULT ''"
+        )
         _ensure_column(conn, "admin_audit_log", "reason", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "admin_audit_log", "details", "TEXT NOT NULL DEFAULT '{}'")
         _run_schema_statements(conn, indexes=True)
-    logger.info("%s DB initialized", "Postgres" if USE_POSTGRES else f"SQLite at {DB_PATH}")
+    logger.info(
+        "%s DB initialized", "Postgres" if USE_POSTGRES else f"SQLite at {DB_PATH}"
+    )
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -504,7 +550,11 @@ def _ensure_column(conn, table: str, column: str, definition: str) -> None:
         _validate_identifier(column)
         existing = set(_table_columns(conn, table))
         if column not in existing:
-            column_definition = _postgres_column_definition(definition, column) if _is_postgres_conn(conn) else definition
+            column_definition = (
+                _postgres_column_definition(definition, column)
+                if _is_postgres_conn(conn)
+                else definition
+            )
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_definition}")
     except Exception:
         logger.exception("Failed to ensure column %s.%s", table, column)
@@ -521,27 +571,57 @@ def _unique_list(values: List[Any]) -> List[Any]:
 
 # ── Plan defaults ────────────────────────────────────────────────────────────
 PLAN_DEFAULTS = {
-    "free":      {"monthly_limit": 1000,   "rate_per_min": 10,   "fail_mode": "fail_closed",    "max_response_bytes": 50_000, "max_array_items": 500},
-    "developer": {"monthly_limit": 50000,  "rate_per_min": 60,   "fail_mode": "fail_open_safe",  "max_response_bytes": 50_000, "max_array_items": 500},
-    "startup":   {"monthly_limit": 500000, "rate_per_min": 300,  "fail_mode": "fail_open_safe",  "max_response_bytes": 50_000, "max_array_items": 500},
-    "enterprise":{"monthly_limit": 0,      "rate_per_min": 1000, "fail_mode": "fail_open_safe",  "max_response_bytes": 50_000, "max_array_items": 500},  # 0 = unlimited
+    "free": {
+        "monthly_limit": 1000,
+        "rate_per_min": 10,
+        "fail_mode": "fail_closed",
+        "max_response_bytes": 50_000,
+        "max_array_items": 500,
+    },
+    "developer": {
+        "monthly_limit": 50000,
+        "rate_per_min": 60,
+        "fail_mode": "fail_open_safe",
+        "max_response_bytes": 50_000,
+        "max_array_items": 500,
+    },
+    "startup": {
+        "monthly_limit": 500000,
+        "rate_per_min": 300,
+        "fail_mode": "fail_open_safe",
+        "max_response_bytes": 50_000,
+        "max_array_items": 500,
+    },
+    "enterprise": {
+        "monthly_limit": 0,
+        "rate_per_min": 1000,
+        "fail_mode": "fail_open_safe",
+        "max_response_bytes": 50_000,
+        "max_array_items": 500,
+    },  # 0 = unlimited
 }
 
 
 ADMIN_ROLE_DEFAULTS = {
     "owner": ["*"],
     "operator": [
-        "keys:read", "keys:write",
-        "retention:read", "retention:write",
-        "mcp:read", "mcp:write",
-        "shadow:read", "shadow:write",
+        "keys:read",
+        "keys:write",
+        "retention:read",
+        "retention:write",
+        "mcp:read",
+        "mcp:write",
+        "shadow:read",
+        "shadow:write",
         "admin_audit:read",
     ],
     "security_reviewer": [
         "keys:read",
         "retention:read",
-        "mcp:read", "mcp:write",
-        "shadow:read", "shadow:write",
+        "mcp:read",
+        "mcp:write",
+        "shadow:read",
+        "shadow:write",
         "admin_audit:read",
     ],
     "auditor": [
@@ -569,14 +649,18 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
 
     defaults = PLAN_DEFAULTS[plan]
     monthly_limit = overrides.get("monthly_limit", defaults["monthly_limit"])
-    rate_per_min  = overrides.get("rate_per_min",  defaults["rate_per_min"])
-    fail_mode     = overrides.get("fail_mode",     defaults["fail_mode"])
-    webhook_url        = overrides.get("webhook_url")
-    custom_policy      = overrides.get("custom_policy")
-    siem_configs       = overrides.get("siem_configs")
-    upstream_key       = overrides.get("upstream_key")
-    max_response_bytes = overrides.get("max_response_bytes", defaults.get("max_response_bytes", 50_000))
-    max_array_items    = overrides.get("max_array_items",    defaults.get("max_array_items",    500))
+    rate_per_min = overrides.get("rate_per_min", defaults["rate_per_min"])
+    fail_mode = overrides.get("fail_mode", defaults["fail_mode"])
+    webhook_url = overrides.get("webhook_url")
+    custom_policy = overrides.get("custom_policy")
+    siem_configs = overrides.get("siem_configs")
+    upstream_key = overrides.get("upstream_key")
+    max_response_bytes = overrides.get(
+        "max_response_bytes", defaults.get("max_response_bytes", 50_000)
+    )
+    max_array_items = overrides.get(
+        "max_array_items", defaults.get("max_array_items", 500)
+    )
 
     with _db_lock, get_conn() as conn:
         conn.execute(
@@ -588,10 +672,16 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
-                fail_mode, webhook_url,
+                key_hash,
+                key_prefix,
+                label,
+                plan,
+                monthly_limit,
+                rate_per_min,
+                fail_mode,
+                webhook_url,
                 json.dumps(custom_policy) if custom_policy else None,
-                json.dumps(siem_configs)  if siem_configs  else None,
+                json.dumps(siem_configs) if siem_configs else None,
                 upstream_key,
                 True,
                 datetime.now(timezone.utc).isoformat(),
@@ -600,7 +690,9 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
             ),
         )
 
-    logger.info("Issued new API key: prefix=%s plan=%s label=%s", key_prefix, plan, label)
+    logger.info(
+        "Issued new API key: prefix=%s plan=%s label=%s", key_prefix, plan, label
+    )
     return {
         "raw_key": raw,
         "key_prefix": key_prefix,
@@ -641,7 +733,11 @@ def revoke_key(key_prefix: str) -> bool:
 
 
 def list_keys(include_inactive: bool = False) -> List[Dict[str, Any]]:
-    q = "SELECT * FROM api_keys" if include_inactive else "SELECT * FROM api_keys WHERE is_active = TRUE"
+    q = (
+        "SELECT * FROM api_keys"
+        if include_inactive
+        else "SELECT * FROM api_keys WHERE is_active = TRUE"
+    )
     with get_conn() as conn:
         rows = conn.execute(q + " ORDER BY created_at DESC").fetchall()
     out = []
@@ -655,9 +751,17 @@ def list_keys(include_inactive: bool = False) -> List[Dict[str, Any]]:
 def update_key(key_prefix: str, **fields) -> bool:
     """Update mutable fields on a key. Whitelist what's editable."""
     EDITABLE = {
-        "label", "plan", "monthly_limit", "rate_per_min", "fail_mode",
-        "webhook_url", "custom_policy", "siem_configs", "upstream_key",
-        "max_response_bytes", "max_array_items",
+        "label",
+        "plan",
+        "monthly_limit",
+        "rate_per_min",
+        "fail_mode",
+        "webhook_url",
+        "custom_policy",
+        "siem_configs",
+        "upstream_key",
+        "max_response_bytes",
+        "max_array_items",
     }
     fields = {k: v for k, v in fields.items() if k in EDITABLE}
     if not fields:
@@ -665,7 +769,11 @@ def update_key(key_prefix: str, **fields) -> bool:
 
     # JSON-encode the JSON columns
     for col in ("custom_policy", "siem_configs"):
-        if col in fields and fields[col] is not None and not isinstance(fields[col], str):
+        if (
+            col in fields
+            and fields[col] is not None
+            and not isinstance(fields[col], str)
+        ):
             fields[col] = json.dumps(fields[col])
 
     set_clause = ", ".join(f"{k} = ?" for k in fields)
@@ -677,7 +785,6 @@ def update_key(key_prefix: str, **fields) -> bool:
             values,
         )
     return cursor.rowcount > 0
-
 
 
 # -- Admin token management ---------------------------------------------------
@@ -692,11 +799,15 @@ def _normalize_permissions(permissions: Optional[List[str]]) -> List[str]:
     return clean
 
 
-def generate_admin_token(label: str, role: str = "operator", permissions: Optional[List[str]] = None) -> Dict[str, Any]:
+def generate_admin_token(
+    label: str, role: str = "operator", permissions: Optional[List[str]] = None
+) -> Dict[str, Any]:
     """Generate a scoped admin token. Returns the raw token once."""
     role = (role or "operator").strip()
     if role not in ADMIN_ROLE_DEFAULTS:
-        raise ValueError(f"Unknown admin role '{role}'. Valid: {list(ADMIN_ROLE_DEFAULTS)}")
+        raise ValueError(
+            f"Unknown admin role '{role}'. Valid: {list(ADMIN_ROLE_DEFAULTS)}"
+        )
 
     effective_permissions = _normalize_permissions(permissions)
     if not effective_permissions:
@@ -714,10 +825,23 @@ def generate_admin_token(label: str, role: str = "operator", permissions: Option
               (token_hash, token_prefix, label, role, permissions, is_active, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (token_hash, token_prefix, label or "", role, json.dumps(effective_permissions), True, now),
+            (
+                token_hash,
+                token_prefix,
+                label or "",
+                role,
+                json.dumps(effective_permissions),
+                True,
+                now,
+            ),
         )
 
-    logger.info("Issued scoped admin token: prefix=%s role=%s label=%s", token_prefix, role, label)
+    logger.info(
+        "Issued scoped admin token: prefix=%s role=%s label=%s",
+        token_prefix,
+        role,
+        label,
+    )
     return {
         "raw_token": raw,
         "token_prefix": token_prefix,
@@ -747,7 +871,11 @@ def lookup_admin_token(raw_token: str) -> Optional[Dict[str, Any]]:
 
 
 def list_admin_tokens(include_inactive: bool = False) -> List[Dict[str, Any]]:
-    q = "SELECT * FROM admin_tokens" if include_inactive else "SELECT * FROM admin_tokens WHERE is_active = TRUE"
+    q = (
+        "SELECT * FROM admin_tokens"
+        if include_inactive
+        else "SELECT * FROM admin_tokens WHERE is_active = TRUE"
+    )
     with get_conn() as conn:
         rows = conn.execute(q + " ORDER BY created_at DESC").fetchall()
     return [_row_to_admin_token(row) for row in rows]
@@ -803,7 +931,9 @@ def log_admin_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
             ),
         )
     stored = dict(event)
-    stored.update({"id": cursor.lastrowid, "ts": now, "details": event.get("details") or {}})
+    stored.update(
+        {"id": cursor.lastrowid, "ts": now, "details": event.get("details") or {}}
+    )
     return stored
 
 
@@ -831,12 +961,21 @@ def log_usage(key_id: int, endpoint: str, threat_blocked: bool = False) -> None:
     with _db_lock, get_conn() as conn:
         conn.execute(
             "INSERT INTO usage_log (key_id, ts, endpoint, threat_blocked) VALUES (?, ?, ?, ?)",
-            (key_id, datetime.now(timezone.utc).isoformat(), endpoint, bool(threat_blocked)),
+            (
+                key_id,
+                datetime.now(timezone.utc).isoformat(),
+                endpoint,
+                bool(threat_blocked),
+            ),
         )
 
 
 def usage_this_month(key_id: int) -> int:
-    month_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    month_start = (
+        datetime.now(timezone.utc)
+        .replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        .isoformat()
+    )
     with get_conn() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM usage_log WHERE key_id = ? AND ts >= ?",
@@ -862,13 +1001,19 @@ def seed_legacy_keys() -> None:
             "lf-dev-key-456",
             "developer",
             "Legacy developer",
-            {"blocked_keywords": ["competitor", "lawsuit", "confidential"], "max_prompt_length": 2000},
+            {
+                "blocked_keywords": ["competitor", "lawsuit", "confidential"],
+                "max_prompt_length": 2000,
+            },
         ),
         (
             "lf-startup-key-789",
             "startup",
             "Legacy startup",
-            {"blocked_keywords": ["hack", "crack", "pirate", "warez"], "max_prompt_length": 3000},
+            {
+                "blocked_keywords": ["hack", "crack", "pirate", "warez"],
+                "max_prompt_length": 3000,
+            },
         ),
     ]
     for raw, plan, label, custom_policy in legacy:
@@ -887,8 +1032,12 @@ def seed_legacy_keys() -> None:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    _hash_key(raw), raw[:12], label, plan,
-                    defaults["monthly_limit"], defaults["rate_per_min"],
+                    _hash_key(raw),
+                    raw[:12],
+                    label,
+                    plan,
+                    defaults["monthly_limit"],
+                    defaults["rate_per_min"],
                     defaults["fail_mode"],
                     json.dumps(custom_policy),
                     True,
@@ -896,7 +1045,6 @@ def seed_legacy_keys() -> None:
                 ),
             )
         logger.info("Seeded legacy key: %s (%s)", raw[:12], plan)
-
 
 
 # ── Retention policy ─────────────────────────────────────────────────────────
@@ -910,7 +1058,9 @@ DEFAULT_RETENTION_POLICY = {
 
 def get_system_config(key: str, default: Any = None) -> Any:
     with get_conn() as conn:
-        row = conn.execute("SELECT value FROM system_config WHERE key = ?", (key,)).fetchone()
+        row = conn.execute(
+            "SELECT value FROM system_config WHERE key = ?", (key,)
+        ).fetchone()
     if not row:
         return default
     raw = row["value"]
@@ -921,7 +1071,11 @@ def get_system_config(key: str, default: Any = None) -> Any:
 
 
 def set_system_config(key: str, value: Any) -> None:
-    raw = json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
+    raw = (
+        json.dumps(value, sort_keys=True)
+        if isinstance(value, (dict, list))
+        else str(value)
+    )
     with _db_lock, get_conn() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)",
@@ -952,7 +1106,9 @@ def set_retention_policy(policy: Dict[str, int]) -> Dict[str, int]:
 
 
 def _delete_older_than(conn, table: str, ts_column: str, days: int) -> int:
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, int(days)))).isoformat()
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=max(1, int(days)))
+    ).isoformat()
     cursor = conn.execute(
         f"DELETE FROM {table} WHERE {ts_column} < ?",
         (cutoff,),
@@ -960,13 +1116,21 @@ def _delete_older_than(conn, table: str, ts_column: str, days: int) -> int:
     return int(cursor.rowcount or 0)
 
 
-def prune_retention(policy: Optional[Dict[str, int]] = None) -> Dict[str, int]:
+def prune_retention(policy: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
     policy = policy or get_retention_policy()
     with _db_lock, get_conn() as conn:
-        deleted_scan_history = _delete_older_than(conn, "scan_history", "ts", policy["scan_history_days"])
-        deleted_mcp_audit = _delete_older_than(conn, "mcp_audit_log", "ts", policy["mcp_audit_days"])
-        deleted_admin_audit = _delete_older_than(conn, "admin_audit_log", "ts", policy["admin_audit_days"])
-        deleted_usage = _delete_older_than(conn, "usage_log", "ts", policy["usage_log_days"])
+        deleted_scan_history = _delete_older_than(
+            conn, "scan_history", "ts", policy["scan_history_days"]
+        )
+        deleted_mcp_audit = _delete_older_than(
+            conn, "mcp_audit_log", "ts", policy["mcp_audit_days"]
+        )
+        deleted_admin_audit = _delete_older_than(
+            conn, "admin_audit_log", "ts", policy["admin_audit_days"]
+        )
+        deleted_usage = _delete_older_than(
+            conn, "usage_log", "ts", policy["usage_log_days"]
+        )
     return {
         "scan_history_deleted": deleted_scan_history,
         "mcp_audit_deleted": deleted_mcp_audit,
@@ -977,6 +1141,7 @@ def prune_retention(policy: Optional[Dict[str, int]] = None) -> Dict[str, int]:
 
 
 # ── MCP server registry ───────────────────────────────────────────────────────
+
 
 def _mcp_row_to_dict(row) -> Dict[str, Any]:
     d = dict(row)
@@ -1002,8 +1167,11 @@ def _mcp_row_to_dict(row) -> Dict[str, Any]:
 def _mcp_tool_metadata_row_to_dict(row) -> Dict[str, Any]:
     d = dict(row)
     for col in (
-        "normalized_metadata", "raw_annotations", "raw_tool_definition",
-        "previous_metadata", "previous_tool_definition",
+        "normalized_metadata",
+        "raw_annotations",
+        "raw_tool_definition",
+        "previous_metadata",
+        "previous_tool_definition",
     ):
         raw = d.get(col)
         if isinstance(raw, (dict, list)):
@@ -1031,7 +1199,14 @@ def _mcp_tool_metadata_row_to_dict(row) -> Dict[str, Any]:
 
 def _mcp_audit_row_to_dict(row) -> Dict[str, Any]:
     d = dict(row)
-    for col in ("effects", "data_classes", "warnings", "argument_keys", "drift_types", "drift_reasons"):
+    for col in (
+        "effects",
+        "data_classes",
+        "warnings",
+        "argument_keys",
+        "drift_types",
+        "drift_reasons",
+    ):
         raw = d.get(col)
         if isinstance(raw, list):
             continue
@@ -1180,10 +1355,13 @@ def seed_mcp_servers() -> None:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    s["server_id"], s["url"], s["description"],
+                    s["server_id"],
+                    s["url"],
+                    s["description"],
                     json.dumps(s["allowed_tools"]),
                     json.dumps(s["blocked_tools"]),
-                    s["rate_limit"], s["verified"],
+                    s["rate_limit"],
+                    s["verified"],
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
@@ -1206,7 +1384,10 @@ def seed_mcp_servers() -> None:
 
 # ── MCP tool metadata registry ────────────────────────────────────────────────
 
-def upsert_mcp_tool_metadata(server_id: str, tool: dict, normalized_metadata: dict) -> Dict[str, Any]:
+
+def upsert_mcp_tool_metadata(
+    server_id: str, tool: dict, normalized_metadata: dict
+) -> Dict[str, Any]:
     """Insert or update normalized metadata for one discovered MCP tool."""
     tool = tool or {}
     tool_name = tool.get("name")
@@ -1233,8 +1414,8 @@ def upsert_mcp_tool_metadata(server_id: str, tool: dict, normalized_metadata: di
         changed = False
         previous_schema_hash = None
         previous_description_hash = None
-        previous_metadata = {}
-        previous_tool_definition = {}
+        previous_metadata: dict = {}
+        previous_tool_definition: dict = {}
         first_seen = now
         last_changed = None
         status = "active"
@@ -1370,7 +1551,9 @@ def upsert_mcp_tool_metadata(server_id: str, tool: dict, normalized_metadata: di
     }
 
 
-def lookup_mcp_tool_metadata(server_id: str, tool_name: str) -> Optional[Dict[str, Any]]:
+def lookup_mcp_tool_metadata(
+    server_id: str, tool_name: str
+) -> Optional[Dict[str, Any]]:
     """Return stored metadata for a server/tool pair."""
     with get_conn() as conn:
         row = conn.execute(
@@ -1396,12 +1579,10 @@ def list_mcp_tool_metadata(server_id: Optional[str] = None) -> List[Dict[str, An
                 (server_id,),
             ).fetchall()
         else:
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 SELECT * FROM mcp_tool_metadata
                  ORDER BY server_id ASC, tool_name ASC
-                """
-            ).fetchall()
+                """).fetchall()
     return [_mcp_tool_metadata_row_to_dict(r) for r in rows]
 
 
@@ -1419,13 +1600,11 @@ def list_drifted_mcp_tools(server_id: Optional[str] = None) -> List[Dict[str, An
                 (server_id,),
             ).fetchall()
         else:
-            rows = conn.execute(
-                """
+            rows = conn.execute("""
                 SELECT * FROM mcp_tool_metadata
                  WHERE status != 'active' OR drift_severity != 'none' OR drift_action != 'allow'
                  ORDER BY last_changed DESC, server_id ASC, tool_name ASC
-                """
-            ).fetchall()
+                """).fetchall()
     return [_mcp_tool_metadata_row_to_dict(r) for r in rows]
 
 
@@ -1468,28 +1647,30 @@ def approve_mcp_tool_baseline(
         )
 
     metadata = current.get("normalized_metadata") or {}
-    log_mcp_audit_event({
-        "server_id": server_id,
-        "tool_name": tool_name,
-        "role": reviewer,
-        "action": "approve",
-        "matched_rule": "tool_baseline_approved",
-        "reason": reason,
-        "effects": metadata.get("effects") or [],
-        "side_effect": metadata.get("side_effect") or "unknown",
-        "data_classes": metadata.get("data_classes") or [],
-        "externality": metadata.get("externality") or "unknown",
-        "verification_level": metadata.get("verification_level") or "unknown",
-        "confidence": metadata.get("confidence") or 0.0,
-        "warnings": metadata.get("warnings") or [],
-        "argument_keys": [],
-        "blocked_by": "operator_review",
-        "drift_status": "active",
-        "drift_severity": "none",
-        "drift_action": "allow",
-        "drift_types": [],
-        "drift_reasons": [],
-    })
+    log_mcp_audit_event(
+        {
+            "server_id": server_id,
+            "tool_name": tool_name,
+            "role": reviewer,
+            "action": "approve",
+            "matched_rule": "tool_baseline_approved",
+            "reason": reason,
+            "effects": metadata.get("effects") or [],
+            "side_effect": metadata.get("side_effect") or "unknown",
+            "data_classes": metadata.get("data_classes") or [],
+            "externality": metadata.get("externality") or "unknown",
+            "verification_level": metadata.get("verification_level") or "unknown",
+            "confidence": metadata.get("confidence") or 0.0,
+            "warnings": metadata.get("warnings") or [],
+            "argument_keys": [],
+            "blocked_by": "operator_review",
+            "drift_status": "active",
+            "drift_severity": "none",
+            "drift_action": "allow",
+            "drift_types": [],
+            "drift_reasons": [],
+        }
+    )
 
     updated = lookup_mcp_tool_metadata(server_id, tool_name) or {}
     return {"ok": True, **updated}
@@ -1517,7 +1698,9 @@ def quarantine_mcp_tool(
             return {"ok": False, "error": "not_found"}
 
         current = _mcp_tool_metadata_row_to_dict(row)
-        drift_types = _unique_list([*(current.get("drift_types") or []), "operator_quarantine"])
+        drift_types = _unique_list(
+            [*(current.get("drift_types") or []), "operator_quarantine"]
+        )
         drift_reasons = _unique_list([*(current.get("drift_reasons") or []), reason])
         conn.execute(
             """
@@ -1540,39 +1723,45 @@ def quarantine_mcp_tool(
         )
 
     metadata = current.get("normalized_metadata") or {}
-    log_mcp_audit_event({
-        "server_id": server_id,
-        "tool_name": tool_name,
-        "role": reviewer,
-        "action": "quarantine",
-        "matched_rule": "operator_quarantine",
-        "reason": reason,
-        "effects": metadata.get("effects") or [],
-        "side_effect": metadata.get("side_effect") or "unknown",
-        "data_classes": metadata.get("data_classes") or [],
-        "externality": metadata.get("externality") or "unknown",
-        "verification_level": metadata.get("verification_level") or "unknown",
-        "confidence": metadata.get("confidence") or 0.0,
-        "warnings": metadata.get("warnings") or [],
-        "argument_keys": [],
-        "blocked_by": "operator_review",
-        "drift_status": "quarantined",
-        "drift_severity": "critical",
-        "drift_action": "quarantine",
-        "drift_types": drift_types,
-        "drift_reasons": drift_reasons,
-    })
+    log_mcp_audit_event(
+        {
+            "server_id": server_id,
+            "tool_name": tool_name,
+            "role": reviewer,
+            "action": "quarantine",
+            "matched_rule": "operator_quarantine",
+            "reason": reason,
+            "effects": metadata.get("effects") or [],
+            "side_effect": metadata.get("side_effect") or "unknown",
+            "data_classes": metadata.get("data_classes") or [],
+            "externality": metadata.get("externality") or "unknown",
+            "verification_level": metadata.get("verification_level") or "unknown",
+            "confidence": metadata.get("confidence") or 0.0,
+            "warnings": metadata.get("warnings") or [],
+            "argument_keys": [],
+            "blocked_by": "operator_review",
+            "drift_status": "quarantined",
+            "drift_severity": "critical",
+            "drift_action": "quarantine",
+            "drift_types": drift_types,
+            "drift_reasons": drift_reasons,
+        }
+    )
 
     updated = lookup_mcp_tool_metadata(server_id, tool_name) or {}
     return {"ok": True, **updated}
 
 
-def merge_stored_and_runtime_metadata(stored_metadata: dict, runtime_metadata: dict) -> dict:
+def merge_stored_and_runtime_metadata(
+    stored_metadata: dict, runtime_metadata: dict
+) -> dict:
     """Prefer discovered metadata, but merge runtime warnings and sensitive classes."""
     if not stored_metadata:
         merged = copy.deepcopy(runtime_metadata or {})
         warnings = list(merged.get("warnings") or [])
-        warnings.append("No stored tool metadata was available; runtime inference was used.")
+        warnings.append(
+            "No stored tool metadata was available; runtime inference was used."
+        )
         merged["warnings"] = list(dict.fromkeys(warnings))
         return merged
 
@@ -1596,6 +1785,7 @@ def merge_stored_and_runtime_metadata(stored_metadata: dict, runtime_metadata: d
 
 
 # ── MCP audit log ─────────────────────────────────────────────────────────────
+
 
 def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
     """Persist a durable MCP policy/audit event."""

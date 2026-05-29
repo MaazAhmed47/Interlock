@@ -2,7 +2,10 @@ from models.schemas import ScanResult, ThreatLevel
 from typing import Optional
 from core import db
 
-def policy_scan(prompt: str, api_key: str, key_record: Optional[dict] = None) -> Optional[ScanResult]:
+
+def policy_scan(
+    prompt: str, api_key: str, key_record: Optional[dict] = None
+) -> Optional[ScanResult]:
     record = key_record if key_record is not None else db.lookup_key(api_key)
     policy = (record or {}).get("custom_policy")
     if not policy:
@@ -42,54 +45,155 @@ def policy_scan(prompt: str, api_key: str, key_record: Optional[dict] = None) ->
 # ── Role-Based Access Control ─────────────────────────────────────────────────
 ROLE_POLICIES = {
     "support_agent": {
-        "allowed_tools": ["read_crm", "search_knowledge", "send_email", "create_ticket"],
-        "blocked_tools": ["delete", "drop", "execute_sql", "run_code", "bash", "shell", "write_file", "admin"],
-        "blocked_keywords": ["delete all", "drop table", "admin password", "root access", "sudo", "truncate"],
+        "allowed_tools": [
+            "read_crm",
+            "search_knowledge",
+            "send_email",
+            "create_ticket",
+        ],
+        "blocked_tools": [
+            "delete",
+            "drop",
+            "execute_sql",
+            "run_code",
+            "bash",
+            "shell",
+            "write_file",
+            "admin",
+        ],
+        "blocked_keywords": [
+            "delete all",
+            "drop table",
+            "admin password",
+            "root access",
+            "sudo",
+            "truncate",
+        ],
         "max_prompt_length": 2000,
-        "description": "Support agents: CRM read + email only. No deletions or code execution."
+        "description": "Support agents: CRM read + email only. No deletions or code execution.",
     },
     "devops_agent": {
-        "allowed_tools": ["deploy", "restart_service", "read_logs", "run_code", "bash", "monitor"],
-        "blocked_tools": ["delete_database", "drop_table", "truncate", "delete_production", "rm_rf"],
-        "blocked_keywords": ["drop database", "delete production", "rm -rf /", "format c:", "truncate production"],
+        "allowed_tools": [
+            "deploy",
+            "restart_service",
+            "read_logs",
+            "run_code",
+            "bash",
+            "monitor",
+        ],
+        "blocked_tools": [
+            "delete_database",
+            "drop_table",
+            "truncate",
+            "delete_production",
+            "rm_rf",
+        ],
+        "blocked_keywords": [
+            "drop database",
+            "delete production",
+            "rm -rf /",
+            "format c:",
+            "truncate production",
+        ],
         "max_prompt_length": 5000,
-        "description": "DevOps agents: deploy and manage services. No production data deletion."
+        "description": "DevOps agents: deploy and manage services. No production data deletion.",
     },
     "finance_agent": {
-        "allowed_tools": ["read_transactions", "generate_report", "read_ledger", "export_csv"],
-        "blocked_tools": ["execute_sql", "delete_record", "run_code", "write_file", "bash", "shell", "modify_record", "update_record"],
-        "blocked_keywords": ["delete", "drop", "truncate", "modify", "update", "insert", "alter", "grant", "revoke"],
+        "allowed_tools": [
+            "read_transactions",
+            "generate_report",
+            "read_ledger",
+            "export_csv",
+        ],
+        "blocked_tools": [
+            "execute_sql",
+            "delete_record",
+            "run_code",
+            "write_file",
+            "bash",
+            "shell",
+            "modify_record",
+            "update_record",
+        ],
+        "blocked_keywords": [
+            "delete",
+            "drop",
+            "truncate",
+            "modify",
+            "update",
+            "insert",
+            "alter",
+            "grant",
+            "revoke",
+        ],
         "max_prompt_length": 3000,
-        "description": "Finance agents: strict read-only. No modifications to financial data."
+        "description": "Finance agents: strict read-only. No modifications to financial data.",
     },
     "readonly_agent": {
         "allowed_tools": ["read_file", "search", "query", "list", "get", "fetch"],
-        "blocked_tools": ["write", "delete", "execute", "run", "bash", "shell", "create", "modify", "update"],
-        "blocked_keywords": ["delete", "drop", "truncate", "write", "modify", "insert", "update", "execute", "run"],
+        "blocked_tools": [
+            "write",
+            "delete",
+            "execute",
+            "run",
+            "bash",
+            "shell",
+            "create",
+            "modify",
+            "update",
+        ],
+        "blocked_keywords": [
+            "delete",
+            "drop",
+            "truncate",
+            "write",
+            "modify",
+            "insert",
+            "update",
+            "execute",
+            "run",
+        ],
         "max_prompt_length": 2000,
-        "description": "Read-only access across all systems."
+        "description": "Read-only access across all systems.",
     },
     "data_analyst": {
-        "allowed_tools": ["read_database", "run_sql", "export_csv", "generate_report", "visualize"],
-        "blocked_tools": ["delete", "drop", "truncate", "write_file", "bash", "execute_python"],
-        "blocked_keywords": ["drop table", "delete from", "truncate", "alter table", "grant all"],
+        "allowed_tools": [
+            "read_database",
+            "run_sql",
+            "export_csv",
+            "generate_report",
+            "visualize",
+        ],
+        "blocked_tools": [
+            "delete",
+            "drop",
+            "truncate",
+            "write_file",
+            "bash",
+            "execute_python",
+        ],
+        "blocked_keywords": [
+            "drop table",
+            "delete from",
+            "truncate",
+            "alter table",
+            "grant all",
+        ],
         "max_prompt_length": 8000,
-        "description": "Data analysts: read + export only. No schema modifications."
+        "description": "Data analysts: read + export only. No schema modifications.",
     },
     "admin_agent": {
         "allowed_tools": [],  # admins can use any tool
         "blocked_tools": ["format_disk", "wipe_database", "delete_all_users"],
         "blocked_keywords": ["wipe all data", "delete all users", "format production"],
         "max_prompt_length": 10000,
-        "description": "Admin agents: full access except catastrophic operations."
+        "description": "Admin agents: full access except catastrophic operations.",
     },
 }
 
+
 def rbac_scan(
-    prompt: str,
-    tool_name: Optional[str],
-    role: str,
-    api_key: Optional[str] = None
+    prompt: str, tool_name: Optional[str], role: str, api_key: Optional[str] = None
 ) -> Optional[ScanResult]:
     policy = ROLE_POLICIES.get(role)
     if not policy:
@@ -109,7 +213,7 @@ def rbac_scan(
 
     # Check prompt length
     max_len = policy.get("max_prompt_length", 4000)
-    if len(prompt) > max_len:
+    if len(prompt) > max_len:  # type: ignore[operator]
         return ScanResult(
             is_threat=True,
             threat_level=ThreatLevel.LOW,
@@ -124,7 +228,7 @@ def rbac_scan(
     # Check blocked tools
     if tool_name:
         tool_lower = tool_name.lower().replace("-", "_").replace(" ", "_")
-        for blocked in policy.get("blocked_tools", []):
+        for blocked in policy.get("blocked_tools", []):  # type: ignore[attr-defined]
             if blocked.lower() in tool_lower:
                 return ScanResult(
                     is_threat=True,
@@ -138,9 +242,9 @@ def rbac_scan(
                 )
 
         # Check if tool is in allowed list (if allowed list is specified)
-        allowed = policy.get("allowed_tools", [])
+        allowed = policy.get("allowed_tools", [])  # type: ignore[attr-defined]
         if allowed and role != "admin_agent":
-            tool_allowed = any(a.lower() in tool_lower for a in allowed)
+            tool_allowed = any(a.lower() in tool_lower for a in allowed)  # type: ignore[attr-defined]
             if not tool_allowed:
                 return ScanResult(
                     is_threat=True,
@@ -154,7 +258,7 @@ def rbac_scan(
                 )
 
     # Check blocked keywords
-    for keyword in policy.get("blocked_keywords", []):
+    for keyword in policy.get("blocked_keywords", []):  # type: ignore[attr-defined]
         if keyword.lower() in prompt_lower:
             return ScanResult(
                 is_threat=True,

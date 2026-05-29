@@ -16,6 +16,7 @@ def _resolve_webhook_url(api_key: str) -> Optional[str]:
     """Look up webhook_url from the DB record for this API key."""
     try:
         from core import db
+
         record = db.lookup_key(api_key)
         return (record or {}).get("webhook_url") or None
     except Exception as e:
@@ -27,19 +28,49 @@ def _build_payload(result: ScanResult) -> dict:
     """Slack-compatible payload (also works for generic webhooks)."""
     return {
         "text": "🚨 *Interlock Alert*",
-        "attachments": [{
-            "color": "#ff4757",
-            "fields": [
-                {"title": "Threat Level", "value": result.threat_level.value,             "short": True},
-                {"title": "Type",         "value": result.threat_type or "Unknown",       "short": True},
-                {"title": "Confidence",   "value": str(result.confidence),                "short": True},
-                {"title": "Layer",        "value": result.layer_caught or "Unknown",      "short": True},
-                {"title": "Risk Score",   "value": str(result.risk_score or "N/A"),       "short": True},
-                {"title": "Scan Time",    "value": f"{result.scan_time_ms or 0} ms",      "short": True},
-                {"title": "Reason",       "value": result.reason,                          "short": False},
-                {"title": "Prompt",       "value": (result.original_prompt or "")[:200],  "short": False},
-            ]
-        }]
+        "attachments": [
+            {
+                "color": "#ff4757",
+                "fields": [
+                    {
+                        "title": "Threat Level",
+                        "value": result.threat_level.value,
+                        "short": True,
+                    },
+                    {
+                        "title": "Type",
+                        "value": result.threat_type or "Unknown",
+                        "short": True,
+                    },
+                    {
+                        "title": "Confidence",
+                        "value": str(result.confidence),
+                        "short": True,
+                    },
+                    {
+                        "title": "Layer",
+                        "value": result.layer_caught or "Unknown",
+                        "short": True,
+                    },
+                    {
+                        "title": "Risk Score",
+                        "value": str(result.risk_score or "N/A"),
+                        "short": True,
+                    },
+                    {
+                        "title": "Scan Time",
+                        "value": f"{result.scan_time_ms or 0} ms",
+                        "short": True,
+                    },
+                    {"title": "Reason", "value": result.reason, "short": False},
+                    {
+                        "title": "Prompt",
+                        "value": (result.original_prompt or "")[:200],
+                        "short": False,
+                    },
+                ],
+            }
+        ],
     }
 
 

@@ -6,7 +6,7 @@ from typing import Optional
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocketDisconnect  # noqa: F401
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -21,7 +21,7 @@ from core.policy import policy_scan
 from core.shadow_mode import calculate_risk_score
 from core.siem import trigger_siem_dispatch
 from core.webhook import trigger_webhook
-from models.schemas import (
+from models.schemas import (  # noqa: F401
     ChatMessage,
     ChatRequest,
     MCPDiscoverRequest,
@@ -40,6 +40,7 @@ from models.schemas import (
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 logger = logging.getLogger("interlock.proxy")
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
@@ -47,6 +48,7 @@ async def lifespan(app: FastAPI):
     db.seed_mcp_servers()
     if os.getenv("SHADOW_SCAN_ENABLED", "false").lower() == "true":
         from core.shadow_scanner import run_shadow_scan as _run_shadow_scan
+
         _scan_interval = int(os.getenv("SHADOW_SCAN_INTERVAL", "3600"))
 
         async def _shadow_scan_loop():
@@ -87,7 +89,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=()"
+        )
         return response
 
 
@@ -190,7 +194,9 @@ def _finalize_scan_result(
     if not result.layer_caught:
         result.layer_caught = default_layer
     if result.confidence is None:
-        result.confidence = default_confidence or CONFIDENCE_MAP.get(result.threat_level.value, 0.8)
+        result.confidence = default_confidence or CONFIDENCE_MAP.get(
+            result.threat_level.value, 0.8
+        )
     result.scan_time_ms = round((time.time() - start) * 1000, 2)
     result.risk_score = calculate_risk_score(result)
     return result
@@ -221,10 +227,14 @@ def _run_deterministic_scan_layers(
     return None
 
 
-def run_fast_scan(prompt: str, api_key: str, key_record: Optional[dict] = None) -> ScanResult:
+def run_fast_scan(
+    prompt: str, api_key: str, key_record: Optional[dict] = None
+) -> ScanResult:
     """Run only deterministic runtime checks so demos never wait on an external judge."""
     start = time.time()
-    result = _run_deterministic_scan_layers(prompt, api_key, start, key_record=key_record)
+    result = _run_deterministic_scan_layers(
+        prompt, api_key, start, key_record=key_record
+    )
     if result:
         return result
 
@@ -241,10 +251,14 @@ def run_fast_scan(prompt: str, api_key: str, key_record: Optional[dict] = None) 
     return _finalize_scan_result(result, start, "Runtime Policy Engine")
 
 
-def run_scan(prompt: str, api_key: str, key_record: Optional[dict] = None) -> ScanResult:
+def run_scan(
+    prompt: str, api_key: str, key_record: Optional[dict] = None
+) -> ScanResult:
     start = time.time()
 
-    result = _run_deterministic_scan_layers(prompt, api_key, start, key_record=key_record)
+    result = _run_deterministic_scan_layers(
+        prompt, api_key, start, key_record=key_record
+    )
     if result:
         return result
 
@@ -255,11 +269,15 @@ def run_scan(prompt: str, api_key: str, key_record: Optional[dict] = None) -> Sc
     learn_from_result(prompt, result)
     return result
 
+
 def trigger_all_alerts(result, api_key, key_record=None):
     """Trigger webhook + SIEM in parallel. SIEM configs come from the key record."""
     trigger_webhook(api_key, result)
     siem_configs = (key_record or {}).get("siem_configs") or []
-    if siem_configs and any(c.get("webhook_url") or c.get("api_key") or c.get("integration_key") for c in siem_configs):
+    if siem_configs and any(
+        c.get("webhook_url") or c.get("api_key") or c.get("integration_key")
+        for c in siem_configs
+    ):
         trigger_siem_dispatch(result, api_key, siem_configs)
 
 
@@ -287,44 +305,50 @@ def custom_openapi():
     return schema
 
 
-from routes import admin_routes, chat as chat_routes, mcp as mcp_routes, scan as scan_routes, system as system_routes
+from routes import (  # noqa: E402
+    admin_routes,
+    chat as chat_routes,
+    mcp as mcp_routes,
+    scan as scan_routes,
+    system as system_routes,
+)
 
-app.include_router(admin_routes.router)
-app.include_router(system_routes.router)
-app.include_router(chat_routes.router)
-app.include_router(scan_routes.router)
-app.include_router(mcp_routes.router)
-app.openapi = custom_openapi
+app.include_router(admin_routes.router)  # type: ignore[attr-defined,has-type]
+app.include_router(system_routes.router)  # type: ignore[attr-defined,has-type]
+app.include_router(chat_routes.router)  # type: ignore[attr-defined,has-type]
+app.include_router(scan_routes.router)  # type: ignore[attr-defined,has-type]
+app.include_router(mcp_routes.router)  # type: ignore[attr-defined,has-type]
+app.openapi = custom_openapi  # type: ignore[method-assign]
 
 # Backward-compatible aliases for tests and direct function callers.
-root = system_routes.root
-health = system_routes.health
-get_roles = system_routes.get_roles
-usage = system_routes.usage
-test_siem = system_routes.test_siem
-list_siem_providers = system_routes.list_siem_providers
-websocket_feed = system_routes.websocket_feed
+root = system_routes.root  # type: ignore[has-type]
+health = system_routes.health  # type: ignore[has-type]
+get_roles = system_routes.get_roles  # type: ignore[has-type]
+usage = system_routes.usage  # type: ignore[has-type]
+test_siem = system_routes.test_siem  # type: ignore[has-type]
+list_siem_providers = system_routes.list_siem_providers  # type: ignore[has-type]
+websocket_feed = system_routes.websocket_feed  # type: ignore[has-type]
 
-chat_completions = chat_routes.chat_completions
-list_providers = chat_routes.list_providers
+chat_completions = chat_routes.chat_completions  # type: ignore[has-type]
+list_providers = chat_routes.list_providers  # type: ignore[has-type]
 
-scan = scan_routes.scan
-scan_output = scan_routes.scan_output
-scan_history = scan_routes.scan_history
-scan_stats = scan_routes.scan_stats
-shadow_scan = scan_routes.shadow_scan
-shadow_logs = scan_routes.shadow_logs
-shadow_stats = scan_routes.shadow_stats
-inspect_tool = scan_routes.inspect_tool
+scan = scan_routes.scan  # type: ignore[has-type]
+scan_output = scan_routes.scan_output  # type: ignore[has-type]
+scan_history = scan_routes.scan_history  # type: ignore[has-type]
+scan_stats = scan_routes.scan_stats  # type: ignore[has-type]
+shadow_scan = scan_routes.shadow_scan  # type: ignore[has-type]
+shadow_logs = scan_routes.shadow_logs  # type: ignore[has-type]
+shadow_stats = scan_routes.shadow_stats  # type: ignore[has-type]
+inspect_tool = scan_routes.inspect_tool  # type: ignore[has-type]
 
-mcp_list_servers = mcp_routes.mcp_list_servers
-mcp_register = mcp_routes.mcp_register
-mcp_discover = mcp_routes.mcp_discover
-mcp_tools = mcp_routes.mcp_tools
-mcp_drifted_tools = mcp_routes.mcp_drifted_tools
-mcp_approve_tool_baseline = mcp_routes.mcp_approve_tool_baseline
-mcp_quarantine_tool = mcp_routes.mcp_quarantine_tool
-mcp_audit = mcp_routes.mcp_audit
-mcp_validate = mcp_routes.mcp_validate
-mcp_call = mcp_routes.mcp_call
-mcp_unregister = mcp_routes.mcp_unregister
+mcp_list_servers = mcp_routes.mcp_list_servers  # type: ignore[has-type]
+mcp_register = mcp_routes.mcp_register  # type: ignore[has-type]
+mcp_discover = mcp_routes.mcp_discover  # type: ignore[has-type]
+mcp_tools = mcp_routes.mcp_tools  # type: ignore[has-type]
+mcp_drifted_tools = mcp_routes.mcp_drifted_tools  # type: ignore[has-type]
+mcp_approve_tool_baseline = mcp_routes.mcp_approve_tool_baseline  # type: ignore[has-type]
+mcp_quarantine_tool = mcp_routes.mcp_quarantine_tool  # type: ignore[has-type]
+mcp_audit = mcp_routes.mcp_audit  # type: ignore[has-type]
+mcp_validate = mcp_routes.mcp_validate  # type: ignore[has-type]
+mcp_call = mcp_routes.mcp_call  # type: ignore[has-type]
+mcp_unregister = mcp_routes.mcp_unregister  # type: ignore[has-type]

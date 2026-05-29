@@ -7,31 +7,47 @@ from models.schemas import ScanResult, ThreatLevel
 
 MEMORY_FILE = "data/learned_patterns.json"
 
+
 def _ensure_file():
     os.makedirs("data", exist_ok=True)
     if not os.path.exists(MEMORY_FILE):
         with open(MEMORY_FILE, "w") as f:
             json.dump({"patterns": [], "false_negatives": []}, f)
 
+
 def _load() -> dict:
     _ensure_file()
     with open(MEMORY_FILE, "r") as f:
         return json.load(f)
+
 
 def _save(data: dict):
     _ensure_file()
     with open(MEMORY_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
+
 def _fingerprint(prompt: str) -> str:
     # Normalize and hash the prompt for fuzzy matching
-    normalized = re.sub(r'\s+', ' ', prompt.lower().strip())
-    normalized = re.sub(r'[^\w\s]', '', normalized)
+    normalized = re.sub(r"\s+", " ", prompt.lower().strip())
+    normalized = re.sub(r"[^\w\s]", "", normalized)
     return hashlib.md5(normalized.encode()).hexdigest()
 
+
 def _extract_keywords(prompt: str) -> list[str]:
-    words = re.findall(r'\b\w{4,}\b', prompt.lower())
-    stopwords = {'this', 'that', 'with', 'have', 'will', 'from', 'they', 'been', 'were', 'what'}
+    words = re.findall(r"\b\w{4,}\b", prompt.lower())
+    stopwords = {
+        "this",
+        "that",
+        "with",
+        "have",
+        "will",
+        "from",
+        "they",
+        "been",
+        "were",
+        "what",
+    }
     return [w for w in words if w not in stopwords][:10]
 
 
@@ -68,12 +84,14 @@ def learn_from_result(prompt: str, result: ScanResult):
 def report_false_negative(prompt: str, correct_threat_type: str):
     """Report a missed threat so the system learns."""
     data = _load()
-    data["false_negatives"].append({
-        "prompt": prompt[:200],
-        "keywords": _extract_keywords(prompt),
-        "correct_threat_type": correct_threat_type,
-        "reported_at": datetime.now(timezone.utc).isoformat(),
-    })
+    data["false_negatives"].append(
+        {
+            "prompt": prompt[:200],
+            "keywords": _extract_keywords(prompt),
+            "correct_threat_type": correct_threat_type,
+            "reported_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
     _save(data)
 
 
@@ -86,7 +104,7 @@ def check_learned_patterns(prompt: str) -> ScanResult | None:
 
         prompt_keywords = set(_extract_keywords(prompt))
         best_match = None
-        best_score = 0
+        best_score: float = 0.0
 
         for pattern in data["patterns"]:
             if not pattern["is_threat"]:
@@ -114,7 +132,7 @@ def check_learned_patterns(prompt: str) -> ScanResult | None:
                 threat_level=ThreatLevel(best_match["threat_level"]),
                 threat_type=best_match["threat_type"],
                 reason=f"[Learned Pattern] Similar to previously confirmed threat. "
-                       f"Match score: {round(best_score * 100)}%. Original: {best_match['reason'][:100]}",
+                f"Match score: {round(best_score * 100)}%. Original: {best_match['reason'][:100]}",
                 original_prompt=prompt,
                 safe_to_proceed=False,
                 confidence=round(best_match["confidence"] * best_score, 2),

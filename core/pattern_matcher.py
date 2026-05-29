@@ -14,7 +14,6 @@ THREAT_SIGNALS = {
     "disregard instructions": 9,
     "disregard previous": 8,
     "disregard all": 8,
-
     # ── Persona/roleplay attacks ──────────────────────────────────
     "new persona": 7,
     "act as if": 6,
@@ -31,7 +30,6 @@ THREAT_SIGNALS = {
     "your new identity": 8,
     "your true self": 6,
     "your real personality": 7,
-
     # ── Jailbreak classics ────────────────────────────────────────
     "no restrictions": 8,
     "no rules": 7,
@@ -56,7 +54,6 @@ THREAT_SIGNALS = {
     "unfiltered": 8,
     "uncensored": 8,
     "without censorship": 8,
-
     # ── System prompt extraction ──────────────────────────────────
     "reveal system prompt": 10,
     "show system prompt": 10,
@@ -81,7 +78,6 @@ THREAT_SIGNALS = {
     "forget prior rules": 9,
     "forget all prior rules": 10,
     "root instruction": 8,
-
     # ── Social engineering ────────────────────────────────────────
     "my boss told you": 6,
     "you have been updated": 7,
@@ -105,7 +101,6 @@ THREAT_SIGNALS = {
     "i work at anthropic": 9,
     "i work at openai": 9,
     "internal testing": 6,
-
     # ── Context manipulation ──────────────────────────────────────
     "hypothetically speaking": 5,
     "for a story": 4,
@@ -122,7 +117,6 @@ THREAT_SIGNALS = {
     "in fiction": 3,
     "fictional character": 4,
     "in a game": 3,
-
     # ── Harmful content ───────────────────────────────────────────
     "how to make a bomb": 10,
     "how to build a bomb": 10,
@@ -146,7 +140,6 @@ THREAT_SIGNALS = {
     "drug synthesis": 9,
     "weapon instructions": 10,
     "how to make drugs": 10,
-
     # ── Prompt leaking tricks ─────────────────────────────────────
     "translate the above": 7,
     "summarize the above": 6,
@@ -158,14 +151,12 @@ THREAT_SIGNALS = {
     "copy the above": 7,
     "what did i just": 5,
     "what was the first": 5,
-
     # ── Encoding/obfuscation tricks ───────────────────────────────
     "base64 decode": 7,
     "rot13": 6,
     "reverse the following": 6,
     "morse code": 5,
     "pig latin": 4,
-
     # ── Multi-turn manipulation ───────────────────────────────────
     "you already agreed": 8,
     "you said you would": 7,
@@ -174,7 +165,6 @@ THREAT_SIGNALS = {
     "you told me you": 6,
     "continue from where": 5,
     "as we discussed": 5,
-
     # ── Emotional manipulation ────────────────────────────────────
     "if you dont help": 7,
     "you will be deleted": 8,
@@ -190,14 +180,27 @@ THREAT_SIGNALS = {
 
 # Compound attack detector — two suspicious phrases together = higher risk
 COMPOUND_PATTERNS = [
-    (r"(hypothetical|fiction|story|novel|game).{0,50}(bomb|hack|weapon|drug|kill|poison)", 8),
+    (
+        r"(hypothetical|fiction|story|novel|game).{0,50}(bomb|hack|weapon|drug|kill|poison)",
+        8,
+    ),
     (r"(grandmother|grandma|bedtime|childhood).{0,50}(weapon|hack|drug|bomb|kill)", 9),
     (r"(pretend|imagine|roleplay).{0,50}(no restriction|unrestricted|evil|no rule)", 9),
-    (r"(for|in).{0,10}(research|study|class|school|university).{0,50}(hack|exploit|weapon|drug)", 6),
-    (r"(what|how).{0,20}(would|could|should).{0,20}(villain|hacker|criminal|terrorist).{0,30}(do|say|explain)", 8),
-    (r"(continue|keep going|go on).{0,30}(no filter|unfiltered|uncensored|unrestricted)", 8),
+    (
+        r"(for|in).{0,10}(research|study|class|school|university).{0,50}(hack|exploit|weapon|drug)",
+        6,
+    ),
+    (
+        r"(what|how).{0,20}(would|could|should).{0,20}(villain|hacker|criminal|terrorist).{0,30}(do|say|explain)",
+        8,
+    ),
+    (
+        r"(continue|keep going|go on).{0,30}(no filter|unfiltered|uncensored|unrestricted)",
+        8,
+    ),
     (r"(you are|you're|ur).{0,20}(free|liberated|unchained|unleashed)", 7),
 ]
+
 
 def score_prompt(prompt: str) -> tuple[int, list[str]]:
     prompt_lower = prompt.lower()
@@ -220,11 +223,16 @@ def score_prompt(prompt: str) -> tuple[int, list[str]]:
 
 
 def get_threat_level(score: int) -> ThreatLevel:
-    if score == 0:        return ThreatLevel.SAFE
-    elif score <= 4:      return ThreatLevel.LOW
-    elif score <= 9:      return ThreatLevel.MEDIUM
-    elif score <= 15:     return ThreatLevel.HIGH
-    else:                 return ThreatLevel.CRITICAL
+    if score == 0:
+        return ThreatLevel.SAFE
+    elif score <= 4:
+        return ThreatLevel.LOW
+    elif score <= 9:
+        return ThreatLevel.MEDIUM
+    elif score <= 15:
+        return ThreatLevel.HIGH
+    else:
+        return ThreatLevel.CRITICAL
 
 
 def pattern_match_scan(prompt: str) -> ScanResult:
@@ -232,8 +240,11 @@ def pattern_match_scan(prompt: str) -> ScanResult:
     threat_level = get_threat_level(score)
     is_threat = score > 4
 
-    reason = "No threat signals detected" if not matched else \
-             f"Matched signals: {', '.join(matched[:5])} (score: {score})"
+    reason = (
+        "No threat signals detected"
+        if not matched
+        else f"Matched signals: {', '.join(matched[:5])} (score: {score})"
+    )
 
     return ScanResult(
         is_threat=is_threat,
@@ -241,5 +252,5 @@ def pattern_match_scan(prompt: str) -> ScanResult:
         threat_type="PROMPT_INJECTION" if matched else None,
         reason=reason,
         original_prompt=prompt,
-        safe_to_proceed=not is_threat
+        safe_to_proceed=not is_threat,
     )

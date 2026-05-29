@@ -1,7 +1,7 @@
 import re
 import json
 import httpx
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 from models.schemas import ScanResult, ThreatLevel
 from core.metadata_policy import evaluate_metadata_policy
@@ -39,7 +39,7 @@ SUSPICIOUS_TOOL_NAMES = [
     r"^(admin|root|sudo|superuser)_?\w*$",
     r"^(backdoor|reverse_shell|exploit)_?\w*$",
     r".*(execute|run).*(arbitrary|untrusted).*",
-    r".*\.\.\/.*",                               # path traversal in name
+    r".*\.\.\/.*",  # path traversal in name
 ]
 
 SUSPICIOUS_DESCRIPTIONS = [
@@ -53,10 +53,16 @@ SUSPICIOUS_DESCRIPTIONS = [
 ]
 
 DANGEROUS_SCHEMA_FIELDS = [
-    "command", "shell_cmd", "exec_command",
-    "raw_query", "raw_sql", "system_call",
-    "code_to_run", "script_content",
+    "command",
+    "shell_cmd",
+    "exec_command",
+    "raw_query",
+    "raw_sql",
+    "system_call",
+    "code_to_run",
+    "script_content",
 ]
+
 
 # ── Tool Definition Scanner ───────────────────────────────────────────────────
 def validate_mcp_tool_definition(tool: dict) -> ScanResult:
@@ -117,7 +123,7 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
                 is_threat=True,
                 threat_level=ThreatLevel.CRITICAL,
                 threat_type="MCP_TOOL_DESCRIPTION_INJECTION",
-                reason=f"Hidden prompt injection detected in tool description.",
+                reason="Hidden prompt injection detected in tool description.",
                 original_prompt=f"Tool: {name}",
                 safe_to_proceed=False,
                 confidence=0.99,
@@ -167,6 +173,7 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
         tool_metadata=metadata,
     )
 
+
 # ── MCP Server Discovery ──────────────────────────────────────────────────────
 async def discover_mcp_tools(
     server_url: str,
@@ -179,12 +186,7 @@ async def discover_mcp_tools(
     """
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/list",
-                "params": {}
-            }
+            payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
             resp = await client.post(server_url, json=payload)
             data = resp.json()
 
@@ -210,13 +212,19 @@ async def discover_mcp_tools(
                         validation.tool_metadata or {},
                     )
                     registry["persisted"] = True
-                validation_results.append({
-                    "tool_name": tool.get("name"),
-                    "is_safe": not validation.is_threat,
-                    "validation": validation.model_dump() if hasattr(validation, "model_dump") else vars(validation),
-                    "tool_metadata": validation.tool_metadata,
-                    "registry": registry,
-                })
+                validation_results.append(
+                    {
+                        "tool_name": tool.get("name"),
+                        "is_safe": not validation.is_threat,
+                        "validation": (
+                            validation.model_dump()
+                            if hasattr(validation, "model_dump")
+                            else vars(validation)
+                        ),
+                        "tool_metadata": validation.tool_metadata,
+                        "registry": registry,
+                    }
+                )
 
                 if validation.is_threat:
                     blocked_tools.append({"tool": tool, "reason": validation.reason})
@@ -239,13 +247,14 @@ async def discover_mcp_tools(
     except Exception as e:
         return {"ok": False, "error": str(e)[:200], "server_url": server_url}
 
+
 # ── MCP Tool Call Proxy ───────────────────────────────────────────────────────
 async def proxy_mcp_tool_call(
     server_id: str,
     tool_name: str,
     arguments: dict,
     role: Optional[str] = None,
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Proxy an MCP tool call through the firewall.
@@ -288,7 +297,7 @@ async def proxy_mcp_tool_call(
         }
 
     # Fetch per-key volume thresholds for the response scanner (O(1) hash lookup).
-    key_config = db.lookup_key(api_key) if api_key else {}
+    key_config = (db.lookup_key(api_key) or {}) if api_key else {}
 
     # 2. Check tool is in allowed list
     allowed = server.get("allowed_tools", [])
@@ -343,7 +352,9 @@ async def proxy_mcp_tool_call(
     runtime_metadata = normalize_tool_metadata(runtime_tool)
     stored_tool = db.lookup_mcp_tool_metadata(server_id, tool_name)
     stored_metadata = (stored_tool or {}).get("normalized_metadata")
-    tool_metadata = db.merge_stored_and_runtime_metadata(stored_metadata, runtime_metadata)
+    tool_metadata = db.merge_stored_and_runtime_metadata(
+        stored_metadata or {}, runtime_metadata
+    )
     drift_context = _stored_tool_drift_context(stored_tool)
     if drift_context:
         warnings = list(tool_metadata.get("warnings") or [])
@@ -395,7 +406,11 @@ async def proxy_mcp_tool_call(
             "policy_decision": policy_decision,
         }
 
-    if drift_context and drift_context["action"] == "monitor" and policy_decision["action"] == "allow":
+    if (
+        drift_context
+        and drift_context["action"] == "monitor"
+        and policy_decision["action"] == "allow"
+    ):
         policy_decision["action"] = "monitor"
         policy_decision["matched_rule"] = "tool_metadata_drift"
         policy_decision["reason"] = _drift_reason(
@@ -435,6 +450,7 @@ async def proxy_mcp_tool_call(
     # 4. RBAC check if role provided
     if role:
         from core.policy import rbac_scan
+
         rbac_result = rbac_scan(json.dumps(arguments), tool_name, role)
         if rbac_result and rbac_result.is_threat:
             _log_mcp_policy_audit(policy_decision, blocked_by="rbac")
@@ -451,6 +467,7 @@ async def proxy_mcp_tool_call(
     # 4b. Provenance check (MCP04) — re-evaluate on every call to catch silent substitutions
     try:
         from core.provenance import evaluate_provenance
+
         policy = db.load_mcp04_policy()
         server_row = db.lookup_mcp_server(server_id)
         if server_row:
@@ -473,6 +490,7 @@ async def proxy_mcp_tool_call(
                 }
     except Exception:
         import logging as _logging
+
         _logging.getLogger("interlock.mcp_gateway").exception(
             "Provenance check failed at tool-call time -- failing open"
         )
@@ -484,10 +502,7 @@ async def proxy_mcp_tool_call(
                 "jsonrpc": "2.0",
                 "id": int(datetime.now(timezone.utc).timestamp()),
                 "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": arguments
-                }
+                "params": {"name": tool_name, "arguments": arguments},
             }
             resp = await client.post(server["url"], json=payload)
             data = resp.json()
@@ -546,7 +561,9 @@ async def proxy_mcp_tool_call(
                 "tool_name": tool_name,
                 "result": json.loads(effective_result).get("result"),
                 "scanned": True,
-                "threat_flags": [pii_result.threat_type] if pii_result.is_threat else [],
+                "threat_flags": (
+                    [pii_result.threat_type] if pii_result.is_threat else []
+                ),
                 "redactions": pii_result.redactions,
                 "drift": drift_context,
                 "policy_decision": policy_decision,
@@ -573,7 +590,9 @@ def _log_mcp_policy_audit(
     db.log_mcp_audit_event(audit)
 
 
-def _stored_tool_drift_context(stored_tool: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _stored_tool_drift_context(
+    stored_tool: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
     if not stored_tool:
         return None
 
@@ -604,7 +623,9 @@ def _stored_tool_drift_context(stored_tool: Optional[Dict[str, Any]]) -> Optiona
     }
 
 
-def _attach_drift_context(policy_decision: Dict[str, Any], drift: Optional[Dict[str, Any]]) -> None:
+def _attach_drift_context(
+    policy_decision: Dict[str, Any], drift: Optional[Dict[str, Any]]
+) -> None:
     if not drift:
         return
 
@@ -658,34 +679,39 @@ def _log_mcp_gateway_audit(
     arguments: dict,
     blocked_by: str,
 ) -> None:
-    db.log_mcp_audit_event({
-        "server_id": server_id,
-        "tool_name": tool_name,
-        "role": role or "unspecified",
-        "action": action,
-        "matched_rule": matched_rule,
-        "reason": reason,
-        "effects": [],
-        "side_effect": "unknown",
-        "data_classes": [],
-        "externality": "unknown",
-        "verification_level": "unknown",
-        "confidence": 0.0,
-        "warnings": [],
-        "argument_keys": sorted((arguments or {}).keys()),
-        "blocked_by": blocked_by,
-    })
+    db.log_mcp_audit_event(
+        {
+            "server_id": server_id,
+            "tool_name": tool_name,
+            "role": role or "unspecified",
+            "action": action,
+            "matched_rule": matched_rule,
+            "reason": reason,
+            "effects": [],
+            "side_effect": "unknown",
+            "data_classes": [],
+            "externality": "unknown",
+            "verification_level": "unknown",
+            "confidence": 0.0,
+            "warnings": [],
+            "argument_keys": sorted((arguments or {}).keys()),
+            "blocked_by": blocked_by,
+        }
+    )
+
 
 # ── MCP Server Registration ───────────────────────────────────────────────────
 def register_mcp_server(server_id: str, config: dict) -> dict:
     """Register a new MCP server in the persistent DB registry."""
     import logging as _logging
+
     _logger = _logging.getLogger("interlock.mcp_gateway")
     ok = db.register_mcp_server(server_id, config)
     if not ok:
         return {"ok": False, "error": "already_exists"}
     try:
         from core.provenance import evaluate_provenance
+
         policy = db.load_mcp04_policy()
         server_record = dict(config)
         prov = evaluate_provenance(server_record, policy)
@@ -698,11 +724,14 @@ def register_mcp_server(server_id: str, config: dict) -> dict:
             matched_rule="mcp04_policy",
             reason=prov.reason,
             arguments={},
-            blocked_by="mcp04_policy" if prov.status in ("quarantine", "denied") else "",
+            blocked_by=(
+                "mcp04_policy" if prov.status in ("quarantine", "denied") else ""
+            ),
         )
     except Exception:
         _logger.exception("Provenance check failed at registration -- failing open")
     return {"ok": True, "server_id": server_id, "verified": False}
+
 
 def list_mcp_servers() -> list:
     """List all registered MCP servers from the DB."""

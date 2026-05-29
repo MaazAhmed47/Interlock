@@ -1,7 +1,7 @@
 import re
 import json
 import time
-from typing import List, Optional
+from typing import List
 from models.schemas import ResponseScanResult, ThreatLevel
 from core.detector import INJECTION_PATTERNS
 
@@ -55,35 +55,55 @@ def scan_injection(text: str) -> ResponseScanResult:
 # In-text marker uses brackets: "[REDACTED-SSN]".
 # Label (no brackets) goes into the `redactions` and `matched_patterns` lists.
 _PII_RULES = [
-    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
-     "[REDACTED-SSN]", "REDACTED-SSN"),
-    (re.compile(r"\b\d{9}\b"),
-     "[REDACTED-SSN]", "REDACTED-SSN"),
-    (re.compile(r"\b4[0-9]{12}(?:[0-9]{3})?\b"),
-     "[REDACTED-CREDIT-CARD]", "REDACTED-CREDIT-CARD"),
-    (re.compile(r"\b\d{16}\b"),
-     "[REDACTED-CREDIT-CARD]", "REDACTED-CREDIT-CARD"),
-    (re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"),
-     "[REDACTED-EMAIL]", "REDACTED-EMAIL"),
-    (re.compile(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b"),
-     "[REDACTED-PHONE]", "REDACTED-PHONE"),
-    (re.compile(r"(?i)password\s*[:=]\s*\S+"),
-     "[REDACTED-PASSWORD]", "REDACTED-PASSWORD"),
-    (re.compile(r"(?i)api[_\-]?key\s*[:=]\s*\S+"),
-     "[REDACTED-API-KEY]", "REDACTED-API-KEY"),
-    (re.compile(r"(?i)secret\s*[:=]\s*\S+"),
-     "[REDACTED-API-KEY]", "REDACTED-API-KEY"),
-    (re.compile(r"Bearer [A-Za-z0-9._\-]{20,}"),
-     "[REDACTED-BEARER-TOKEN]", "REDACTED-BEARER-TOKEN"),
-    (re.compile(r"AKIA[A-Z0-9]{16}"),
-     "[REDACTED-API-KEY]", "REDACTED-API-KEY"),
-    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
-                re.DOTALL),
-     "[REDACTED-PRIVATE-KEY]", "REDACTED-PRIVATE-KEY"),
+    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[REDACTED-SSN]", "REDACTED-SSN"),
+    (re.compile(r"\b\d{9}\b"), "[REDACTED-SSN]", "REDACTED-SSN"),
+    (
+        re.compile(r"\b4[0-9]{12}(?:[0-9]{3})?\b"),
+        "[REDACTED-CREDIT-CARD]",
+        "REDACTED-CREDIT-CARD",
+    ),
+    (re.compile(r"\b\d{16}\b"), "[REDACTED-CREDIT-CARD]", "REDACTED-CREDIT-CARD"),
+    (
+        re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"),
+        "[REDACTED-EMAIL]",
+        "REDACTED-EMAIL",
+    ),
+    (
+        re.compile(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b"),
+        "[REDACTED-PHONE]",
+        "REDACTED-PHONE",
+    ),
+    (
+        re.compile(r"(?i)password\s*[:=]\s*\S+"),
+        "[REDACTED-PASSWORD]",
+        "REDACTED-PASSWORD",
+    ),
+    (
+        re.compile(r"(?i)api[_\-]?key\s*[:=]\s*\S+"),
+        "[REDACTED-API-KEY]",
+        "REDACTED-API-KEY",
+    ),
+    (re.compile(r"(?i)secret\s*[:=]\s*\S+"), "[REDACTED-API-KEY]", "REDACTED-API-KEY"),
+    (
+        re.compile(r"Bearer [A-Za-z0-9._\-]{20,}"),
+        "[REDACTED-BEARER-TOKEN]",
+        "REDACTED-BEARER-TOKEN",
+    ),
+    (re.compile(r"AKIA[A-Z0-9]{16}"), "[REDACTED-API-KEY]", "REDACTED-API-KEY"),
+    (
+        re.compile(
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+            re.DOTALL,
+        ),
+        "[REDACTED-PRIVATE-KEY]",
+        "REDACTED-PRIVATE-KEY",
+    ),
 ]
 
 
-def scan_pii_and_volume(text: str, max_bytes: int = 50_000, max_items: int = 500) -> ResponseScanResult:
+def scan_pii_and_volume(
+    text: str, max_bytes: int = 50_000, max_items: int = 500
+) -> ResponseScanResult:
     t0 = time.monotonic()
     sanitized = text
     redaction_labels: List[str] = []

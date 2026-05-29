@@ -76,7 +76,13 @@ def _load_oidc_group_role_map() -> Dict[str, str]:
 
 
 def _oidc_configured() -> bool:
-    return bool(OIDC_ADMIN_ENABLED and OIDC_ISSUER and OIDC_AUDIENCE and OIDC_JWKS_URL and OIDC_ALLOWED_ALGS)
+    return bool(
+        OIDC_ADMIN_ENABLED
+        and OIDC_ISSUER
+        and OIDC_AUDIENCE
+        and OIDC_JWKS_URL
+        and OIDC_ALLOWED_ALGS
+    )
 
 
 def _extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
@@ -99,7 +105,9 @@ def _claim_values(value: Any) -> List[str]:
 
 
 def _csv_values(value: str) -> Set[str]:
-    return {item.strip().lower() for item in str(value or "").split(",") if item.strip()}
+    return {
+        item.strip().lower() for item in str(value or "").split(",") if item.strip()
+    }
 
 
 def _enforce_oidc_principal_allowlist(claims: Dict[str, Any]) -> None:
@@ -114,7 +122,9 @@ def _enforce_oidc_principal_allowlist(claims: Dict[str, Any]) -> None:
         return
     if domain and domain in allowed_domains:
         return
-    raise HTTPException(status_code=403, detail="OIDC user is not allowed to administer Interlock.")
+    raise HTTPException(
+        status_code=403, detail="OIDC user is not allowed to administer Interlock."
+    )
 
 
 def _get_oidc_signing_key(token: str):
@@ -139,7 +149,9 @@ def _role_from_oidc_claims(claims: Dict[str, Any]) -> str:
     if OIDC_DEFAULT_ROLE in db.ADMIN_ROLE_DEFAULTS:
         return OIDC_DEFAULT_ROLE
 
-    raise HTTPException(status_code=403, detail="OIDC user is not mapped to an Interlock admin role.")
+    raise HTTPException(
+        status_code=403, detail="OIDC user is not mapped to an Interlock admin role."
+    )
 
 
 def _require_oidc_admin(authorization: Optional[str]) -> AdminContext:
@@ -150,9 +162,13 @@ def _require_oidc_admin(authorization: Optional[str]) -> AdminContext:
     if not _oidc_configured():
         now = time.time()
         if now - _OIDC_LAST_CONFIG_ERROR_AT > 60:
-            logger.warning("OIDC admin auth attempted but OIDC_ADMIN_ENABLED/OIDC_ISSUER/OIDC_AUDIENCE/OIDC_JWKS_URL are not fully configured")
+            logger.warning(
+                "OIDC admin auth attempted but OIDC_ADMIN_ENABLED/OIDC_ISSUER/OIDC_AUDIENCE/OIDC_JWKS_URL are not fully configured"
+            )
             _OIDC_LAST_CONFIG_ERROR_AT = now
-        raise HTTPException(status_code=503, detail="OIDC admin auth is not configured.")
+        raise HTTPException(
+            status_code=503, detail="OIDC admin auth is not configured."
+        )
 
     try:
         header = jwt.get_unverified_header(token)
@@ -161,7 +177,9 @@ def _require_oidc_admin(authorization: Optional[str]) -> AdminContext:
 
     alg = str(header.get("alg") or "")
     if alg not in OIDC_ALLOWED_ALGS or alg.lower() == "none":
-        raise HTTPException(status_code=401, detail="OIDC token algorithm is not allowed.")
+        raise HTTPException(
+            status_code=401, detail="OIDC token algorithm is not allowed."
+        )
 
     try:
         signing_key = _get_oidc_signing_key(token)
@@ -236,7 +254,10 @@ def _require_admin(
         raise HTTPException(status_code=401, detail="Invalid admin token.")
 
     if not _has_permission(context, permission):
-        raise HTTPException(status_code=403, detail=f"Admin token lacks required permission: {permission}")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Admin token lacks required permission: {permission}",
+        )
     return context
 
 
@@ -262,14 +283,16 @@ def _audit_admin_action(
 ) -> None:
     try:
         event = _admin_actor_event_fields(context)
-        event.update({
-            "action": action,
-            "target_type": target_type,
-            "target_id": str(target_id or ""),
-            "result": result,
-            "reason": reason,
-            "details": details or {},
-        })
+        event.update(
+            {
+                "action": action,
+                "target_type": target_type,
+                "target_id": str(target_id or ""),
+                "result": result,
+                "reason": reason,
+                "details": details or {},
+            }
+        )
         db.log_admin_audit_event(event)
     except Exception:
         logger.exception("Failed to write admin audit event: %s", action)
@@ -280,7 +303,9 @@ class CreateKeyRequest(BaseModel):
     plan: str = Field("free", description="free | developer | startup | enterprise")
     label: str = Field("", description="Human-readable label, e.g. customer name")
     webhook_url: Optional[str] = None
-    fail_mode: Optional[str] = Field(None, description="fail_closed | fail_open | fail_open_safe")
+    fail_mode: Optional[str] = Field(
+        None, description="fail_closed | fail_open | fail_open_safe"
+    )
     monthly_limit: Optional[int] = None
     rate_per_min: Optional[int] = None
     custom_policy: Optional[Dict[str, Any]] = None
@@ -309,16 +334,28 @@ class RetentionPolicyRequest(BaseModel):
 
 class CreateAdminTokenRequest(BaseModel):
     label: str = Field(..., min_length=1, description="Human-readable owner/purpose")
-    role: str = Field("operator", description="owner | operator | security_reviewer | auditor")
-    permissions: Optional[List[str]] = Field(None, description="Optional explicit permission list")
+    role: str = Field(
+        "operator", description="owner | operator | security_reviewer | auditor"
+    )
+    permissions: Optional[List[str]] = Field(
+        None, description="Optional explicit permission list"
+    )
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 @router.post("/tokens")
-def create_admin_token(req: CreateAdminTokenRequest, x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
-    context = _require_admin(x_admin_token, "admin_tokens:write", authorization=authorization)
+def create_admin_token(
+    req: CreateAdminTokenRequest,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    context = _require_admin(
+        x_admin_token, "admin_tokens:write", authorization=authorization
+    )
     try:
-        result = db.generate_admin_token(label=req.label, role=req.role, permissions=req.permissions)
+        result = db.generate_admin_token(
+            label=req.label, role=req.role, permissions=req.permissions
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     _audit_admin_action(
@@ -326,39 +363,68 @@ def create_admin_token(req: CreateAdminTokenRequest, x_admin_token: Optional[str
         "admin_token.created",
         "admin_token",
         result["token_prefix"],
-        details={"label": req.label, "role": req.role, "permissions": result.get("permissions", [])},
+        details={
+            "label": req.label,
+            "role": req.role,
+            "permissions": result.get("permissions", []),
+        },
     )
     return result
 
 
 @router.get("/tokens")
-def list_admin_tokens(include_inactive: bool = False, x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def list_admin_tokens(
+    include_inactive: bool = False,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     _require_admin(x_admin_token, "admin_tokens:read", authorization=authorization)
     return {"tokens": db.list_admin_tokens(include_inactive=include_inactive)}
 
 
 @router.get("/audit")
-def list_admin_audit(limit: int = 100, x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def list_admin_audit(
+    limit: int = 100,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     _require_admin(x_admin_token, "admin_audit:read", authorization=authorization)
     return {"events": db.list_admin_audit_logs(limit=limit)}
 
 
 @router.delete("/tokens/{token_prefix}")
-def revoke_admin_token(token_prefix: str, x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
-    context = _require_admin(x_admin_token, "admin_tokens:write", authorization=authorization)
+def revoke_admin_token(
+    token_prefix: str,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    context = _require_admin(
+        x_admin_token, "admin_tokens:write", authorization=authorization
+    )
     ok = db.revoke_admin_token(token_prefix)
     if not ok:
-        raise HTTPException(status_code=404, detail=f"Active admin token with prefix '{token_prefix}' not found.")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Active admin token with prefix '{token_prefix}' not found.",
+        )
     _audit_admin_action(context, "admin_token.revoked", "admin_token", token_prefix)
     return {"ok": True, "revoked": token_prefix}
 
 
 @router.post("/keys")
-def create_key(req: CreateKeyRequest, x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def create_key(
+    req: CreateKeyRequest,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     """Create a new API key. Returns the raw key ONCE — caller must store it."""
     context = _require_admin(x_admin_token, "keys:write", authorization=authorization)
     try:
-        overrides = {k: v for k, v in req.model_dump().items() if k not in ("plan", "label") and v is not None}
+        overrides = {
+            k: v
+            for k, v in req.model_dump().items()
+            if k not in ("plan", "label") and v is not None
+        }
         result = db.generate_key(plan=req.plan, label=req.label, **overrides)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -367,7 +433,11 @@ def create_key(req: CreateKeyRequest, x_admin_token: Optional[str] = Header(None
         "api_key.created",
         "api_key",
         result["key_prefix"],
-        details={"label": req.label, "plan": req.plan, "overrides": sorted(overrides.keys())},
+        details={
+            "label": req.label,
+            "plan": req.plan,
+            "overrides": sorted(overrides.keys()),
+        },
     )
     return result
 
@@ -395,7 +465,9 @@ def update_existing_key(
         raise HTTPException(status_code=400, detail="No fields to update.")
     ok = db.update_key(key_prefix, **fields)
     if not ok:
-        raise HTTPException(status_code=404, detail=f"Key with prefix '{key_prefix}' not found.")
+        raise HTTPException(
+            status_code=404, detail=f"Key with prefix '{key_prefix}' not found."
+        )
     _audit_admin_action(
         context,
         "api_key.updated",
@@ -407,17 +479,27 @@ def update_existing_key(
 
 
 @router.delete("/keys/{key_prefix}")
-def revoke_existing_key(key_prefix: str, x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def revoke_existing_key(
+    key_prefix: str,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     context = _require_admin(x_admin_token, "keys:write", authorization=authorization)
     ok = db.revoke_key(key_prefix)
     if not ok:
-        raise HTTPException(status_code=404, detail=f"Active key with prefix '{key_prefix}' not found.")
+        raise HTTPException(
+            status_code=404, detail=f"Active key with prefix '{key_prefix}' not found."
+        )
     _audit_admin_action(context, "api_key.revoked", "api_key", key_prefix)
     return {"ok": True, "revoked": key_prefix}
 
 
 @router.get("/keys/{key_prefix}/usage")
-def get_usage(key_prefix: str, x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def get_usage(
+    key_prefix: str,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     _require_admin(x_admin_token, "keys:read", authorization=authorization)
     keys = db.list_keys(include_inactive=True)
     target = next((k for k in keys if k["key_prefix"] == key_prefix), None)
@@ -436,27 +518,53 @@ def get_usage(key_prefix: str, x_admin_token: Optional[str] = Header(None), auth
 
 # ── Retention policy endpoints ──────────────────────────────────────────────
 @router.get("/retention")
-def get_retention_policy(x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def get_retention_policy(
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     _require_admin(x_admin_token, "retention:read", authorization=authorization)
     return {"policy": db.get_retention_policy()}
 
 
 @router.put("/retention")
-def update_retention_policy(req: RetentionPolicyRequest, x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
-    context = _require_admin(x_admin_token, "retention:write", authorization=authorization)
+def update_retention_policy(
+    req: RetentionPolicyRequest,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    context = _require_admin(
+        x_admin_token, "retention:write", authorization=authorization
+    )
     payload = {k: v for k, v in req.model_dump().items() if v is not None}
     if not payload:
         raise HTTPException(status_code=400, detail="No retention fields to update.")
     policy = db.set_retention_policy(payload)
-    _audit_admin_action(context, "retention.updated", "retention_policy", "default", details={"updated_fields": sorted(payload.keys()), "policy": policy})
+    _audit_admin_action(
+        context,
+        "retention.updated",
+        "retention_policy",
+        "default",
+        details={"updated_fields": sorted(payload.keys()), "policy": policy},
+    )
     return {"policy": policy}
 
 
 @router.post("/retention/prune")
-def prune_retention(x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
-    context = _require_admin(x_admin_token, "retention:write", authorization=authorization)
+def prune_retention(
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    context = _require_admin(
+        x_admin_token, "retention:write", authorization=authorization
+    )
     result = db.prune_retention()
-    _audit_admin_action(context, "retention.pruned", "retention_policy", "default", details={k: v for k, v in result.items() if k != "policy"})
+    _audit_admin_action(
+        context,
+        "retention.pruned",
+        "retention_policy",
+        "default",
+        details={k: v for k, v in result.items() if k != "policy"},
+    )
     return result
 
 
@@ -469,14 +577,20 @@ class ProvenancePolicyRequest(BaseModel):
 
 
 @router.get("/mcp/provenance-policy")
-def get_provenance_policy(x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def get_provenance_policy(
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     _require_admin(x_admin_token, "mcp:read", authorization=authorization)
     return db.load_mcp04_policy()
 
 
 @router.put("/mcp/provenance-policy")
-def set_provenance_policy(req: ProvenancePolicyRequest,
-                          x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def set_provenance_policy(
+    req: ProvenancePolicyRequest,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     context = _require_admin(x_admin_token, "mcp:write", authorization=authorization)
     payload = req.model_dump()
     with db.get_conn() as conn:
@@ -484,20 +598,38 @@ def set_provenance_policy(req: ProvenancePolicyRequest,
             "INSERT OR REPLACE INTO system_config (key, value) VALUES (?, ?)",
             ("mcp04_policy", _json.dumps(payload)),
         )
-    _audit_admin_action(context, "mcp.provenance_policy.updated", "system_config", "mcp04_policy", details={"fields": sorted(payload.keys())})
+    _audit_admin_action(
+        context,
+        "mcp.provenance_policy.updated",
+        "system_config",
+        "mcp04_policy",
+        details={"fields": sorted(payload.keys())},
+    )
     return {"ok": True}
 
 
 @router.patch("/mcp/servers/{server_id}/provenance")
-def override_provenance(server_id: str, status: str,
-                        x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def override_provenance(
+    server_id: str,
+    status: str,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     context = _require_admin(x_admin_token, "mcp:write", authorization=authorization)
     if status not in ("allowed", "denied"):
-        raise HTTPException(status_code=400, detail="status must be 'allowed' or 'denied'")
+        raise HTTPException(
+            status_code=400, detail="status must be 'allowed' or 'denied'"
+        )
     ok = db.update_mcp_server_provenance(server_id, status)
     if not ok:
         raise HTTPException(status_code=404, detail="Server not found")
-    _audit_admin_action(context, "mcp.provenance_overridden", "mcp_server", server_id, details={"provenance_status": status})
+    _audit_admin_action(
+        context,
+        "mcp.provenance_overridden",
+        "mcp_server",
+        server_id,
+        details={"provenance_status": status},
+    )
     return {"ok": True, "server_id": server_id, "provenance_status": status}
 
 
@@ -509,8 +641,11 @@ class ShadowTargetRequest(BaseModel):
 
 
 @router.post("/shadow/targets")
-def add_shadow_target(req: ShadowTargetRequest,
-                      x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def add_shadow_target(
+    req: ShadowTargetRequest,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     context = _require_admin(x_admin_token, "shadow:write", authorization=authorization)
     now = datetime.now(timezone.utc).isoformat()
     with db.get_conn() as conn:
@@ -521,13 +656,22 @@ def add_shadow_target(req: ShadowTargetRequest,
             )
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
-    _audit_admin_action(context, "shadow_target.added", "shadow_target", req.url, details={"probe_path": req.probe_path, "enabled": req.enabled})
+    _audit_admin_action(
+        context,
+        "shadow_target.added",
+        "shadow_target",
+        req.url,
+        details={"probe_path": req.probe_path, "enabled": req.enabled},
+    )
     return {"ok": True, "url": req.url}
 
 
 @router.delete("/shadow/targets/{target_id}")
-def delete_shadow_target(target_id: int,
-                         x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def delete_shadow_target(
+    target_id: int,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     context = _require_admin(x_admin_token, "shadow:write", authorization=authorization)
     with db.get_conn() as conn:
         ok = conn.execute(
@@ -535,12 +679,17 @@ def delete_shadow_target(target_id: int,
         ).rowcount
     if not ok:
         raise HTTPException(status_code=404, detail="Target not found")
-    _audit_admin_action(context, "shadow_target.deleted", "shadow_target", str(target_id))
+    _audit_admin_action(
+        context, "shadow_target.deleted", "shadow_target", str(target_id)
+    )
     return {"ok": True}
 
 
 @router.get("/shadow/targets")
-def list_shadow_targets(x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def list_shadow_targets(
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     _require_admin(x_admin_token, "shadow:read", authorization=authorization)
     with db.get_conn() as conn:
         rows = conn.execute(
@@ -561,8 +710,11 @@ def list_shadow_targets(x_admin_token: Optional[str] = Header(None), authorizati
 
 
 @router.get("/shadow/servers")
-def list_shadow_servers(status: Optional[str] = None,
-                        x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def list_shadow_servers(
+    status: Optional[str] = None,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     _require_admin(x_admin_token, "shadow:read", authorization=authorization)
     with db.get_conn() as conn:
         if status:
@@ -581,12 +733,17 @@ class ShadowServerReviewRequest(BaseModel):
 
 
 @router.patch("/shadow/servers/{server_id}")
-def review_shadow_server(server_id: int, req: ShadowServerReviewRequest,
-                         x_admin_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+def review_shadow_server(
+    server_id: int,
+    req: ShadowServerReviewRequest,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
     context = _require_admin(x_admin_token, "shadow:write", authorization=authorization)
     if req.status not in ("approved", "ignored", "quarantined"):
-        raise HTTPException(status_code=400,
-                            detail="status must be approved, ignored, or quarantined")
+        raise HTTPException(
+            status_code=400, detail="status must be approved, ignored, or quarantined"
+        )
     now = datetime.now(timezone.utc).isoformat()
     with db.get_conn() as conn:
         ok = conn.execute(
@@ -600,10 +757,26 @@ def review_shadow_server(server_id: int, req: ShadowServerReviewRequest,
                 "INSERT INTO mcp_audit_log "
                 "(ts, server_id, tool_name, role, action, matched_rule, reason, confidence, blocked_by) "
                 "VALUES (?,?,?,?,?,?,?,?,?)",
-                (now, server_id, "", context.role, "shadow_reviewed",
-                 "operator_action", req.notes or req.status, 1.0, context.label),
+                (
+                    now,
+                    server_id,
+                    "",
+                    context.role,
+                    "shadow_reviewed",
+                    "operator_action",
+                    req.notes or req.status,
+                    1.0,
+                    context.label,
+                ),
             )
         except Exception:
             logger.exception("Failed to write shadow_reviewed audit log")
-    _audit_admin_action(context, "shadow_server.reviewed", "shadow_server", str(server_id), reason=req.notes or req.status, details={"status": req.status})
+    _audit_admin_action(
+        context,
+        "shadow_server.reviewed",
+        "shadow_server",
+        str(server_id),
+        reason=req.notes or req.status,
+        details={"status": req.status},
+    )
     return {"ok": True, "id": server_id, "status": req.status}

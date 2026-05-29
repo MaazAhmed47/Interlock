@@ -9,17 +9,32 @@ confidence, and warnings whenever metadata is inferred or inconsistent.
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Set
 
-
 VALID_EFFECTS = {
-    "read", "create", "update", "delete", "share", "export", "message", "execute",
+    "read",
+    "create",
+    "update",
+    "delete",
+    "share",
+    "export",
+    "message",
+    "execute",
 }
 VALID_SIDE_EFFECTS = {"read_only", "mutating", "destructive", "unknown"}
 VALID_DATA_CLASSES = {
-    "pii", "phi", "financial", "legal", "secrets", "user_content", "internal",
+    "pii",
+    "phi",
+    "financial",
+    "legal",
+    "secrets",
+    "user_content",
+    "internal",
 }
 VALID_EXTERNALITY = {"internal", "external", "unknown"}
 VALID_IDENTITY_MODES = {
-    "authenticated_user", "service_account", "delegated_agent", "unknown",
+    "authenticated_user",
+    "service_account",
+    "delegated_agent",
+    "unknown",
 }
 
 SOURCE_INTERLOCK = "interlock_meta"
@@ -86,13 +101,21 @@ def normalize_tool_metadata(tool: dict) -> Dict[str, Any]:
         warnings.extend(partial.get("warnings", []))
 
     if strongest_source == SOURCE_HEURISTIC:
-        warnings.append("Metadata missing; inferred from tool name, description, and schema.")
+        warnings.append(
+            "Metadata missing; inferred from tool name, description, and schema."
+        )
     elif strongest_source == SOURCE_UNKNOWN:
         warnings.append("No tool metadata or reliable inference was available.")
     elif _has_signal(heuristic):
-        warnings.append("Some missing metadata fields were inferred from tool name, description, and schema.")
+        warnings.append(
+            "Some missing metadata fields were inferred from tool name, description, and schema."
+        )
 
-    warnings.extend(_detect_conflicts(tool, output, heuristic, annotations, security_meta, interlock_meta))
+    warnings.extend(
+        _detect_conflicts(
+            tool, output, heuristic, annotations, security_meta, interlock_meta
+        )
+    )
     output.warnings = _ordered_unique(warnings)
 
     if not output.effects:
@@ -137,7 +160,9 @@ def _parse_mcp_annotations(annotations: dict) -> Dict[str, Any]:
         "idempotentHint": annotations.get("idempotentHint"),
         "openWorldHint": open_world,
     }
-    partial["warnings"].append("Official MCP annotations are treated as hints, not security contracts.")
+    partial["warnings"].append(
+        "Official MCP annotations are treated as hints, not security contracts."
+    )
     return partial
 
 
@@ -154,7 +179,7 @@ def _parse_meta_block(tool: dict, namespace: str) -> Dict[str, Any]:
     dotted_prefix = f"{namespace}."
     for key, value in meta.items():
         if isinstance(key, str) and key.startswith(dotted_prefix):
-            block[key[len(dotted_prefix):]] = value
+            block[key[len(dotted_prefix) :]] = value
 
     if namespace == "interlock":
         for key, value in meta.items():
@@ -166,12 +191,16 @@ def _parse_meta_block(tool: dict, namespace: str) -> Dict[str, Any]:
 
     partial = {
         "effects": _clean_list(_first_present(block, "effects"), VALID_EFFECTS),
-        "side_effect": _clean_value(_first_present(block, "side_effect", "sideEffect"), VALID_SIDE_EFFECTS),
+        "side_effect": _clean_value(
+            _first_present(block, "side_effect", "sideEffect"), VALID_SIDE_EFFECTS
+        ),
         "data_classes": _clean_list(
             _first_present(block, "data_classes", "dataClasses"),
             VALID_DATA_CLASSES,
         ),
-        "externality": _clean_value(_first_present(block, "externality"), VALID_EXTERNALITY),
+        "externality": _clean_value(
+            _first_present(block, "externality"), VALID_EXTERNALITY
+        ),
         "identity_mode": _clean_value(
             _first_present(block, "identity_mode", "identityMode"),
             VALID_IDENTITY_MODES,
@@ -192,13 +221,17 @@ def _infer_from_tool_shape(tool: dict) -> Dict[str, Any]:
     haystack = " ".join([name, description, " ".join(sorted(field_names))])
 
     effects: List[str] = []
-    if _contains_any(haystack, ["read", "list", "get", "fetch", "search", "query", "lookup"]):
+    if _contains_any(
+        haystack, ["read", "list", "get", "fetch", "search", "query", "lookup"]
+    ):
         effects.append("read")
     if _contains_any(haystack, ["create", "add", "new", "upload", "write_file"]):
         effects.append("create")
     if _contains_any(haystack, ["update", "modify", "patch", "edit", "write"]):
         effects.append("update")
-    if _contains_any(haystack, ["delete", "drop", "wipe", "truncate", "remove", "destroy"]):
+    if _contains_any(
+        haystack, ["delete", "drop", "wipe", "truncate", "remove", "destroy"]
+    ):
         effects.append("delete")
     if _contains_any(haystack, ["share", "invite", "permission", "grant", "recipient"]):
         effects.append("share")
@@ -206,27 +239,66 @@ def _infer_from_tool_shape(tool: dict) -> Dict[str, Any]:
         effects.append("export")
     if _contains_any(haystack, ["send", "email", "message", "notify", "sms"]):
         effects.append("message")
-    if _contains_any(haystack, ["execute", "run", "bash", "shell", "command", "script", "deploy", "restart"]):
+    if _contains_any(
+        haystack,
+        ["execute", "run", "bash", "shell", "command", "script", "deploy", "restart"],
+    ):
         effects.append("execute")
 
     data_classes: List[str] = []
-    if _contains_any(haystack, ["email", "phone", "ssn", "social_security", "address", "dob"]):
+    if _contains_any(
+        haystack, ["email", "phone", "ssn", "social_security", "address", "dob"]
+    ):
         data_classes.append("pii")
-    if _contains_any(haystack, ["patient", "diagnosis", "medical", "clinical", "health", "phi"]):
+    if _contains_any(
+        haystack, ["patient", "diagnosis", "medical", "clinical", "health", "phi"]
+    ):
         data_classes.append("phi")
-    if _contains_any(haystack, ["account", "ledger", "transaction", "invoice", "payment", "bank", "financial"]):
+    if _contains_any(
+        haystack,
+        ["account", "ledger", "transaction", "invoice", "payment", "bank", "financial"],
+    ):
         data_classes.append("financial")
-    if _contains_any(haystack, ["contract", "matter", "claim", "patent", "legal", "privileged"]):
+    if _contains_any(
+        haystack, ["contract", "matter", "claim", "patent", "legal", "privileged"]
+    ):
         data_classes.append("legal")
-    if _contains_any(haystack, ["api_key", "apikey", "token", "secret", "password", "credential", "private_key"]):
+    if _contains_any(
+        haystack,
+        [
+            "api_key",
+            "apikey",
+            "token",
+            "secret",
+            "password",
+            "credential",
+            "private_key",
+        ],
+    ):
         data_classes.append("secrets")
-    if _contains_any(haystack, ["customer", "user", "file", "document", "record", "profile", "content"]):
+    if _contains_any(
+        haystack,
+        ["customer", "user", "file", "document", "record", "profile", "content"],
+    ):
         data_classes.append("user_content")
     if _contains_any(haystack, ["internal", "employee", "workspace", "tenant"]):
         data_classes.append("internal")
 
     externality = "unknown"
-    if _contains_any(haystack, ["external", "public", "internet", "web", "url", "webhook", "recipient", "email", "share"]):
+    if _contains_any(
+        haystack,
+        [
+            "external",
+            "public",
+            "internet",
+            "web",
+            "url",
+            "webhook",
+            "recipient",
+            "email",
+            "share",
+        ],
+    ):
         externality = "external"
     elif _contains_any(haystack, ["internal", "workspace", "local", "tenant"]):
         externality = "internal"
@@ -234,11 +306,17 @@ def _infer_from_tool_shape(tool: dict) -> Dict[str, Any]:
     side_effect = _side_effect_from_effects(effects)
     warnings = []
     if effects or data_classes or externality != "unknown":
-        warnings.append("Metadata fields inferred from tool name, description, and schema.")
+        warnings.append(
+            "Metadata fields inferred from tool name, description, and schema."
+        )
     if side_effect == "destructive":
-        warnings.append("Tool appears destructive based on name, description, or schema.")
+        warnings.append(
+            "Tool appears destructive based on name, description, or schema."
+        )
     if data_classes:
-        warnings.append("Sensitive data classes inferred from argument names or description.")
+        warnings.append(
+            "Sensitive data classes inferred from argument names or description."
+        )
 
     return {
         "effects": _ordered_unique(effects),
@@ -266,12 +344,20 @@ def _detect_conflicts(
 
     for source, partial in sources:
         side_effect = partial.get("side_effect")
-        if side_effect and heuristic.get("side_effect") not in (None, "unknown", side_effect):
+        if side_effect and heuristic.get("side_effect") not in (
+            None,
+            "unknown",
+            side_effect,
+        ):
             warnings.append(
                 f"{source} side_effect '{side_effect}' conflicts with heuristic '{heuristic.get('side_effect')}'."
             )
         externality = partial.get("externality")
-        if externality and heuristic.get("externality") not in (None, "unknown", externality):
+        if externality and heuristic.get("externality") not in (
+            None,
+            "unknown",
+            externality,
+        ):
             warnings.append(
                 f"{source} externality '{externality}' conflicts with heuristic '{heuristic.get('externality')}'."
             )
@@ -279,17 +365,30 @@ def _detect_conflicts(
     if interlock_meta and annotations:
         if interlock_meta.get("side_effect") and annotations.get("side_effect"):
             if interlock_meta["side_effect"] != annotations["side_effect"]:
-                warnings.append("Interlock metadata conflicts with official MCP annotations for side_effect.")
+                warnings.append(
+                    "Interlock metadata conflicts with official MCP annotations for side_effect."
+                )
         if interlock_meta.get("externality") and annotations.get("externality"):
             if interlock_meta["externality"] != annotations["externality"]:
-                warnings.append("Interlock metadata conflicts with official MCP annotations for externality.")
+                warnings.append(
+                    "Interlock metadata conflicts with official MCP annotations for externality."
+                )
 
     schema = tool.get("inputSchema", {}) or tool.get("input_schema", {}) or {}
     field_names = _schema_field_names(schema)
-    if output.externality == "internal" and any("recipient" in f or "email" in f or "url" in f for f in field_names):
-        warnings.append("Tool is marked internal but schema includes external recipient, email, or URL fields.")
-    if output.side_effect == "read_only" and heuristic.get("side_effect") in {"mutating", "destructive"}:
-        warnings.append("Tool is marked read_only but name, description, or schema suggests side effects.")
+    if output.externality == "internal" and any(
+        "recipient" in f or "email" in f or "url" in f for f in field_names
+    ):
+        warnings.append(
+            "Tool is marked internal but schema includes external recipient, email, or URL fields."
+        )
+    if output.side_effect == "read_only" and heuristic.get("side_effect") in {
+        "mutating",
+        "destructive",
+    }:
+        warnings.append(
+            "Tool is marked read_only but name, description, or schema suggests side effects."
+        )
 
     return warnings
 
@@ -300,13 +399,19 @@ def _merge_missing(target: ToolMetadata, partial: Dict[str, Any]) -> None:
     if not target.effects and partial.get("effects"):
         target.effects = _clean_list(partial["effects"], VALID_EFFECTS)
     if target.side_effect == "unknown" and partial.get("side_effect"):
-        target.side_effect = _clean_value(partial["side_effect"], VALID_SIDE_EFFECTS) or "unknown"
+        target.side_effect = (
+            _clean_value(partial["side_effect"], VALID_SIDE_EFFECTS) or "unknown"
+        )
     if not target.data_classes and partial.get("data_classes"):
         target.data_classes = _clean_list(partial["data_classes"], VALID_DATA_CLASSES)
     if target.externality == "unknown" and partial.get("externality"):
-        target.externality = _clean_value(partial["externality"], VALID_EXTERNALITY) or "unknown"
+        target.externality = (
+            _clean_value(partial["externality"], VALID_EXTERNALITY) or "unknown"
+        )
     if target.identity_mode == "unknown" and partial.get("identity_mode"):
-        target.identity_mode = _clean_value(partial["identity_mode"], VALID_IDENTITY_MODES) or "unknown"
+        target.identity_mode = (
+            _clean_value(partial["identity_mode"], VALID_IDENTITY_MODES) or "unknown"
+        )
     if not target.required_scopes and partial.get("required_scopes"):
         target.required_scopes = _clean_string_list(partial["required_scopes"])
 
@@ -316,7 +421,14 @@ def _has_signal(partial: Dict[str, Any]) -> bool:
         return False
     return any(
         partial.get(key) not in (None, [], "", "unknown")
-        for key in ("effects", "side_effect", "data_classes", "externality", "identity_mode", "required_scopes")
+        for key in (
+            "effects",
+            "side_effect",
+            "data_classes",
+            "externality",
+            "identity_mode",
+            "required_scopes",
+        )
     )
 
 
@@ -393,7 +505,9 @@ def _clean_string_list(value: Any) -> List[str]:
         raw = list(value)
     else:
         raw = [value]
-    return _ordered_unique(str(v).strip().lower().replace("-", "_") for v in raw if str(v).strip())
+    return _ordered_unique(
+        str(v).strip().lower().replace("-", "_") for v in raw if str(v).strip()
+    )
 
 
 def _ordered_unique(values: Iterable[str]) -> List[str]:

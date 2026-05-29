@@ -38,34 +38,38 @@ def _tool_inventory_with_server_policy(server_id: Optional[str] = None) -> list[
             key = (sid, name)
             if key in seen:
                 continue
-            tools.append({
-                "server_id": sid,
-                "tool_name": name,
-                "status": "allowed",
-                "description": f"Allowed by server policy: {description}",
-                "normalized_metadata": {
-                    "effects": ["server_policy"],
-                    "side_effect": "unknown",
-                    "data_classes": [],
-                },
-            })
+            tools.append(
+                {
+                    "server_id": sid,
+                    "tool_name": name,
+                    "status": "allowed",
+                    "description": f"Allowed by server policy: {description}",
+                    "normalized_metadata": {
+                        "effects": ["server_policy"],
+                        "side_effect": "unknown",
+                        "data_classes": [],
+                    },
+                }
+            )
             seen.add(key)
 
         for name in server.get("blocked_tools") or []:
             key = (sid, name)
             if key in seen:
                 continue
-            tools.append({
-                "server_id": sid,
-                "tool_name": name,
-                "status": "blocked",
-                "description": f"Blocked by server policy: {description}",
-                "normalized_metadata": {
-                    "effects": ["blocked"],
-                    "side_effect": "blocked",
-                    "data_classes": [],
-                },
-            })
+            tools.append(
+                {
+                    "server_id": sid,
+                    "tool_name": name,
+                    "status": "blocked",
+                    "description": f"Blocked by server policy: {description}",
+                    "normalized_metadata": {
+                        "effects": ["blocked"],
+                        "side_effect": "blocked",
+                        "data_classes": [],
+                    },
+                }
+            )
             seen.add(key)
 
     return tools
@@ -79,14 +83,18 @@ async def mcp_list_servers(x_api_key: Optional[str] = Header(None)):
 
 
 @router.post("/mcp/servers")
-async def mcp_register(request: MCPRegisterRequest, x_api_key: Optional[str] = Header(None)):
+async def mcp_register(
+    request: MCPRegisterRequest, x_api_key: Optional[str] = Header(None)
+):
     """Register a new MCP server (requires manual verification before use)."""
     proxy.verify_key(x_api_key)
     return register_mcp_server(request.server_id, request.dict())
 
 
 @router.post("/mcp/discover")
-async def mcp_discover(request: MCPDiscoverRequest, x_api_key: Optional[str] = Header(None)):
+async def mcp_discover(
+    request: MCPDiscoverRequest, x_api_key: Optional[str] = Header(None)
+):
     """
     Discover tools from an MCP server.
     Every tool is validated for malicious patterns before being returned.
@@ -96,14 +104,18 @@ async def mcp_discover(request: MCPDiscoverRequest, x_api_key: Optional[str] = H
 
 
 @router.get("/mcp/tools")
-async def mcp_tools(server_id: Optional[str] = None, x_api_key: Optional[str] = Header(None)):
+async def mcp_tools(
+    server_id: Optional[str] = None, x_api_key: Optional[str] = Header(None)
+):
     """List persisted MCP tool metadata, optionally for one server."""
     proxy.verify_key(x_api_key)
     return {"tools": _tool_inventory_with_server_policy(server_id)}
 
 
 @router.get("/mcp/tools/drifted")
-async def mcp_drifted_tools(server_id: Optional[str] = None, x_api_key: Optional[str] = Header(None)):
+async def mcp_drifted_tools(
+    server_id: Optional[str] = None, x_api_key: Optional[str] = Header(None)
+):
     """List MCP tools that need operator review because they changed or are quarantined."""
     proxy.verify_key(x_api_key)
     return {"tools": db.list_drifted_mcp_tools(server_id)}
@@ -165,7 +177,9 @@ async def mcp_audit(limit: int = 100, x_api_key: Optional[str] = Header(None)):
 
 
 @router.post("/mcp/validate-tool")
-async def mcp_validate(request: MCPToolValidateRequest, x_api_key: Optional[str] = Header(None)):
+async def mcp_validate(
+    request: MCPToolValidateRequest, x_api_key: Optional[str] = Header(None)
+):
     """Validate a single MCP tool definition for security issues."""
     proxy.verify_key(x_api_key)
     start = time.time()
@@ -176,7 +190,9 @@ async def mcp_validate(request: MCPToolValidateRequest, x_api_key: Optional[str]
 
 
 @router.post("/mcp/call")
-async def mcp_call(request: MCPToolCallRequest, x_api_key: Optional[str] = Header(None)):
+async def mcp_call(
+    request: MCPToolCallRequest, x_api_key: Optional[str] = Header(None)
+):
     """
     Proxy an MCP tool call through the gateway.
     Pipeline: trust check -> tool whitelist -> inspector -> RBAC -> forward -> response scan.

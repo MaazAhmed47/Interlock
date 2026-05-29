@@ -44,50 +44,93 @@ def _calculate_risk_score(probe: ProbeResult) -> int:
     return min(score, 100)
 
 
-async def probe_target(url: str, probe_path: str = "/tools/list",
-                       client: httpx.AsyncClient | None = None) -> ProbeResult:
+async def probe_target(
+    url: str, probe_path: str = "/tools/list", client: httpx.AsyncClient | None = None
+) -> ProbeResult:
     target = f"{url.rstrip('/')}{probe_path}"
     _client = client or httpx.AsyncClient(timeout=_TIMEOUT)
     try:
         resp = await _client.get(target)
         if resp.status_code in (401, 403):
-            return ProbeResult(url=url, responded=True, looks_like_mcp=True,
-                               auth_required=True, tool_listing_available=False,
-                               status_code=resp.status_code)
+            return ProbeResult(
+                url=url,
+                responded=True,
+                looks_like_mcp=True,
+                auth_required=True,
+                tool_listing_available=False,
+                status_code=resp.status_code,
+            )
         if resp.status_code == 200:
             try:
                 data = resp.json()
-                if isinstance(data, dict) and "tools" in data and isinstance(data["tools"], list):
-                    return ProbeResult(url=url, responded=True, looks_like_mcp=True,
-                                       auth_required=False, tool_listing_available=True,
-                                       status_code=200)
+                if (
+                    isinstance(data, dict)
+                    and "tools" in data
+                    and isinstance(data["tools"], list)
+                ):
+                    return ProbeResult(
+                        url=url,
+                        responded=True,
+                        looks_like_mcp=True,
+                        auth_required=False,
+                        tool_listing_available=True,
+                        status_code=200,
+                    )
                 if isinstance(data, dict) and "error" in data:
-                    return ProbeResult(url=url, responded=True, looks_like_mcp=True,
-                                       auth_required=False, tool_listing_available=False,
-                                       status_code=200)
+                    return ProbeResult(
+                        url=url,
+                        responded=True,
+                        looks_like_mcp=True,
+                        auth_required=False,
+                        tool_listing_available=False,
+                        status_code=200,
+                    )
             except Exception:
                 pass
-            return ProbeResult(url=url, responded=True, looks_like_mcp=False,
-                               auth_required=False, tool_listing_available=False,
-                               status_code=200)
-        return ProbeResult(url=url, responded=True, looks_like_mcp=False,
-                           auth_required=False, tool_listing_available=False,
-                           status_code=resp.status_code)
+            return ProbeResult(
+                url=url,
+                responded=True,
+                looks_like_mcp=False,
+                auth_required=False,
+                tool_listing_available=False,
+                status_code=200,
+            )
+        return ProbeResult(
+            url=url,
+            responded=True,
+            looks_like_mcp=False,
+            auth_required=False,
+            tool_listing_available=False,
+            status_code=resp.status_code,
+        )
     except httpx.TimeoutException as e:
-        return ProbeResult(url=url, responded=False, looks_like_mcp=False,
-                           auth_required=False, tool_listing_available=False,
-                           status_code=0, error=str(e))
+        return ProbeResult(
+            url=url,
+            responded=False,
+            looks_like_mcp=False,
+            auth_required=False,
+            tool_listing_available=False,
+            status_code=0,
+            error=str(e),
+        )
     except httpx.ConnectError as e:
-        return ProbeResult(url=url, responded=False, looks_like_mcp=False,
-                           auth_required=False, tool_listing_available=False,
-                           status_code=0, error=str(e))
+        return ProbeResult(
+            url=url,
+            responded=False,
+            looks_like_mcp=False,
+            auth_required=False,
+            tool_listing_available=False,
+            status_code=0,
+            error=str(e),
+        )
     finally:
         if client is None:
             await _client.aclose()
 
 
-async def run_shadow_scan(conn: sqlite3.Connection,
-                          client: httpx.AsyncClient | None = None) -> list[ShadowFinding]:
+async def run_shadow_scan(
+    conn: sqlite3.Connection, client: httpx.AsyncClient | None = None
+) -> list[ShadowFinding]:
     now = datetime.now(timezone.utc).isoformat()
     targets = conn.execute(
         "SELECT url, probe_path FROM shadow_scan_targets WHERE enabled = 1"
@@ -115,28 +158,53 @@ async def run_shadow_scan(conn: sqlite3.Connection,
             conn.execute(
                 "UPDATE shadow_mcp_servers SET last_seen=?, auth_required=?, "
                 "tool_listing_available=?, risk_score=? WHERE url=?",
-                (now, int(probe.auth_required), int(probe.tool_listing_available), score, url),
+                (
+                    now,
+                    int(probe.auth_required),
+                    int(probe.tool_listing_available),
+                    score,
+                    url,
+                ),
             )
         else:
             conn.execute(
                 "INSERT INTO shadow_mcp_servers "
                 "(url, probe_path, status, first_seen, last_seen, auth_required, "
                 "tool_listing_available, risk_score) VALUES (?,?,?,?,?,?,?,?)",
-                (url, probe_path, "unreviewed", now, now,
-                 int(probe.auth_required), int(probe.tool_listing_available), score),
+                (
+                    url,
+                    probe_path,
+                    "unreviewed",
+                    now,
+                    now,
+                    int(probe.auth_required),
+                    int(probe.tool_listing_available),
+                    score,
+                ),
             )
             try:
                 conn.execute(
                     "INSERT INTO mcp_audit_log "
                     "(ts, server_id, tool_name, role, action, matched_rule, reason, confidence, blocked_by) "
                     "VALUES (?,?,?,?,?,?,?,?,?)",
-                    (now, 0, "", "system", "shadow_discovered",
-                     "shadow_scanner", f"Unregistered MCP endpoint responded at {url}",
-                     1.0, "shadow_scanner"),
+                    (
+                        now,
+                        0,
+                        "",
+                        "system",
+                        "shadow_discovered",
+                        "shadow_scanner",
+                        f"Unregistered MCP endpoint responded at {url}",
+                        1.0,
+                        "shadow_scanner",
+                    ),
                 )
             except Exception:
-                logger.exception("Failed to write shadow discovery audit log for %s", url)
+                logger.exception(
+                    "Failed to write shadow discovery audit log for %s", url
+                )
         conn.commit()
-        findings.append(ShadowFinding(url=url, is_registered=False, probe=probe,
-                                      risk_score=score))
+        findings.append(
+            ShadowFinding(url=url, is_registered=False, probe=probe, risk_score=score)
+        )
     return findings

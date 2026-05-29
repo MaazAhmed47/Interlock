@@ -10,10 +10,4 @@ GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY") or "").strip() or None
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 # Threat levels
-THREAT_LEVELS = {
-    "SAFE": 0,
-    "LOW": 1,
-    "MEDIUM": 2,
-    "HIGH": 3,
-    "CRITICAL": 4
-}
+THREAT_LEVELS = {"SAFE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}

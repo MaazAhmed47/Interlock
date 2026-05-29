@@ -76,7 +76,9 @@ async def list_providers(x_api_key: Optional[str] = Header(None)):
             name: {
                 "model_prefixes": cfg["model_prefixes"],
                 "format": cfg["format"],
-                "configured": bool(os.getenv(cfg["key_env"])) if cfg["key_env"] else True,
+                "configured": (
+                    bool(os.getenv(cfg["key_env"])) if cfg["key_env"] else True
+                ),
             }
             for name, cfg in PROVIDERS.items()
         },
