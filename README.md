@@ -673,7 +673,7 @@ Useful fit:
 
 - GitHub: https://github.com/MaazAhmed47/Interlock
 - Product brief: https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664
-- Founder email: maazahmed1856@gmail.com
+- Founder email: maaz@getinterlock.dev
 
 ---
 

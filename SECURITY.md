@@ -10,7 +10,7 @@ Interlock is currently pre-release and design-partner ready. The current codebas
 
 Please do not open a public issue for suspected vulnerabilities.
 
-Email: `maazahmed1856@gmail.com`
+Email: `maaz@getinterlock.dev`
 
 Include:
 
