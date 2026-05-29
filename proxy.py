@@ -46,6 +46,11 @@ async def lifespan(app: FastAPI):
     db.init_db()
     db.seed_legacy_keys()
     db.seed_mcp_servers()
+    if not os.getenv("REDIS_URL"):
+        logger.warning(
+            "WARNING: Using in-memory rate limiting. "
+            "Set REDIS_URL for production multi-instance deployments."
+        )
     if os.getenv("SHADOW_SCAN_ENABLED", "false").lower() == "true":
         from core.shadow_scanner import run_shadow_scan as _run_shadow_scan
 
