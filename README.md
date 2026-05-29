@@ -11,6 +11,8 @@
 
 # Interlock
 
+[![Interlock Demo](https://img.youtube.com/vi/kc5wAbgoEkw/maxresdefault.jpg)](https://www.youtube.com/watch?v=kc5wAbgoEkw)
+
 ### Runtime security gateway for AI agents.
 
 Zero-trust security for AI agents and MCP servers. Interlock sits inline between agents and tools, validates MCP tool definitions, enforces role-aware policy before execution, scans responses before they reach the model, and audits every allow, deny, monitor, and quarantine decision.
