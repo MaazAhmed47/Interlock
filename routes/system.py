@@ -145,6 +145,7 @@ def performance_metrics(
     authorization: Optional[str] = Header(None),
 ):
     from core.admin import _require_admin
+
     _require_admin(x_admin_token, "metrics:read", authorization=authorization)
     import time as _time
 
