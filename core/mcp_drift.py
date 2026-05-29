@@ -5,6 +5,7 @@ The registry stores hashes, but hashes only answer "changed or not". This module
 answers what changed, how risky it is, and what the gateway should do.
 """
 
+import difflib
 from typing import Any, Dict, Iterable, List, Set
 
 SEVERITY_ORDER = {
@@ -91,9 +92,21 @@ def classify_tool_drift(
     prev_description = str(previous_tool.get("description") or "")
     curr_description = str(current_tool.get("description") or "")
     if prev_description != curr_description:
-        findings.append(
-            _finding("description_changed", "minor", "Tool description changed.")
-        )
+        ratio = difflib.SequenceMatcher(
+            None, prev_description, curr_description
+        ).ratio()
+        if (1.0 - ratio) > 0.30:
+            findings.append(
+                _finding(
+                    "description_changed",
+                    "moderate",
+                    f"Tool description changed significantly ({round((1.0 - ratio) * 100)}% different).",
+                )
+            )
+        else:
+            findings.append(
+                _finding("description_changed", "minor", "Tool description changed.")
+            )
 
     prev_fields = _schema_fields(previous_tool)
     curr_fields = _schema_fields(current_tool)
@@ -126,6 +139,22 @@ def classify_tool_drift(
                 "required_field_added",
                 "high",
                 f"Required schema fields added: {added_required}.",
+            )
+        )
+
+    prev_types = _schema_field_types(previous_tool)
+    curr_types = _schema_field_types(current_tool)
+    type_changed = sorted(
+        field
+        for field in (prev_types.keys() & curr_types.keys())
+        if prev_types[field] != curr_types[field]
+    )
+    if type_changed:
+        findings.append(
+            _finding(
+                "param_type_changed",
+                "moderate",
+                f"Parameter type changed for fields: {type_changed}.",
             )
         )
 
@@ -266,6 +295,39 @@ def classify_tool_drift(
     }
 
 
+def classify_server_drift(
+    server_id: str,
+    prev_tool_names: Set[str],
+    curr_tool_names: Set[str],
+) -> List[Dict[str, Any]]:
+    findings: List[Dict[str, Any]] = []
+    for tool in sorted(prev_tool_names - curr_tool_names):
+        findings.append(
+            {
+                "type": "tool_removed",
+                "severity": "critical",
+                "tool_name": tool,
+                "reason": (
+                    f"Tool '{tool}' was removed from server '{server_id}'. "
+                    "Could indicate supply chain compromise."
+                ),
+            }
+        )
+    for tool in sorted(curr_tool_names - prev_tool_names):
+        findings.append(
+            {
+                "type": "tool_added",
+                "severity": "high",
+                "tool_name": tool,
+                "reason": (
+                    f"New tool '{tool}' appeared on server '{server_id}'. "
+                    "Verify against registry."
+                ),
+            }
+        )
+    return findings
+
+
 def _schema(tool: dict) -> dict:
     schema = tool.get("inputSchema", {}) or tool.get("input_schema", {}) or {}
     return schema if isinstance(schema, dict) else {}
@@ -280,6 +342,18 @@ def _schema_required(tool: dict) -> Set[str]:
     if not isinstance(required, list):
         return set()
     return {str(value).lower() for value in required}
+
+
+def _schema_field_types(tool: dict) -> Dict[str, str]:
+    schema = _schema(tool)
+    properties = schema.get("properties") or {}
+    if not isinstance(properties, dict):
+        return {}
+    return {
+        str(name).lower(): str(prop.get("type", ""))
+        for name, prop in properties.items()
+        if isinstance(prop, dict) and prop.get("type")
+    }
 
 
 def _schema_field_names(schema: Any) -> Set[str]:
