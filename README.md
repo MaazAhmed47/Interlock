@@ -2,7 +2,6 @@
 | Check | Status |
 |-------|--------|
 | Backend tests | ✅ 148 passing |
-| Code quality | ✅ ruff · black · mypy clean |
 | Docker build | ✅ passing |
 | Live demo | ✅ getinterlock.dev |
 | Last verified | May 2026 |
@@ -38,6 +37,12 @@ Zero-trust security for AI agents and MCP servers. Interlock sits inline between
 [Book Pilot Call](https://calendly.com/maazahmed1856/interlock-demo-15-min)
 
 </div>
+
+---
+
+## Latest Release
+
+[v0.1.0 — First Pilot-Ready Release](https://github.com/MaazAhmed47/Interlock/releases/tag/v0.1.0)
 
 ---
 
