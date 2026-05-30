@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Interlock",
     description="OpenAI-compatible reverse proxy with AI security scanning",
-    version="1.0.0",
+    version="0.1.0",
     lifespan=lifespan,
 )
 _default_openapi_builder = app.openapi
