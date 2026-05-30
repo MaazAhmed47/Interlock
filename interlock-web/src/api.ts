@@ -53,7 +53,8 @@ async function request<T>(
 ): Promise<T> {
   const baseUrl = getBaseUrl();
   const apiKey = getApiKey();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (requireKey && apiKey) headers['x-api-key'] = apiKey;
   if (requireKey && !apiKey) throw new ApiError(401, 'No API key configured.');
   if (['POST', 'PATCH', 'DELETE'].includes(method.toUpperCase())) {
@@ -104,7 +105,7 @@ async function adminRequest<T>(
     res = await fetch(`${baseUrl}${path}`, {
       method,
       headers: {
-        'Content-Type': 'application/json',
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         Authorization: `Bearer ${accessToken}`,
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
