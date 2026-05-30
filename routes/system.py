@@ -9,7 +9,7 @@ from models.schemas import SIEMTestRequest, ScanResult, ThreatLevel
 router = APIRouter()
 
 
-@router.get("/")
+@router.api_route("/", methods=["GET", "HEAD"])
 def root():
     return {
         "status": "Interlock gateway running",
@@ -22,7 +22,7 @@ def root():
     }
 
 
-@router.get("/health")
+@router.api_route("/health", methods=["GET", "HEAD"])
 def health():
     return {
         "status": "ok",
