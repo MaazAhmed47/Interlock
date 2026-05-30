@@ -25,6 +25,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install code quality tools
+        run: pip install ruff black mypy
+
+      - name: Run ruff
+        run: ruff check core/ routes/ proxy.py
+
+      - name: Run black
+        run: black --check --target-version py312 core/ routes/ proxy.py
+
+      - name: Run mypy
+        run: mypy core/ routes/ --ignore-missing-imports
+
       - name: Compile backend
         run: python -m compileall proxy.py core routes models tests
 

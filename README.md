@@ -2,6 +2,7 @@
 | Check | Status |
 |-------|--------|
 | Backend tests | ✅ 148 passing |
+| Code quality | ✅ ruff · black · mypy (core/routes) |
 | Docker build | ✅ passing |
 | Live demo | ✅ getinterlock.dev |
 | Last verified | May 2026 |
@@ -9,6 +10,10 @@
 <div align="center">
 
 # Interlock
+
+[![CI](https://github.com/MaazAhmed47/Interlock/actions/workflows/tests.yml/badge.svg)](https://github.com/MaazAhmed47/Interlock/actions)
+[![Tests](https://img.shields.io/badge/tests-148%20passing-green)](https://github.com/MaazAhmed47/Interlock/actions)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 [![Interlock Demo](./interlock_thumbnail.jpg)](https://www.youtube.com/watch?v=kc5wAbgoEkw)
 
