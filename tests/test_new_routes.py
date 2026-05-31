@@ -329,3 +329,23 @@ def test_websocket_handler_accepts_and_cleans_up_connection():
 
     assert fake.accepted is True
     assert fake not in proxy._active_ws
+
+
+def test_health_actively_probes_redis(monkeypatch):
+    from core import rate_limit
+
+    monkeypatch.setattr(rate_limit, "_redis_available", None)
+    calls = {"n": 0}
+
+    def _spy():
+        calls["n"] += 1
+        rate_limit._redis_available = True
+        return True
+
+    monkeypatch.setattr(rate_limit, "ping_redis", _spy)
+
+    body = proxy.health()
+
+    assert calls["n"] == 1, "/health must actively probe Redis, not read a stale flag"
+    assert body["status"] == "ok"
+    assert body["rate_limit"]["redis_available"] is True

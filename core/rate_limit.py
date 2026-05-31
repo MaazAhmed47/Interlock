@@ -157,6 +157,41 @@ def backend_name() -> str:
     return "memory"
 
 
+def ping_redis() -> Optional[bool]:
+    """Actively PING Redis and record whether it answered.
+
+    Returns ``True`` if Redis is reachable, ``False`` if Redis is configured
+    but the PING failed, or ``None`` if Redis is not configured (REDIS_URL
+    unset, so ``redis_available`` stays N/A and ``redis_configured`` tells the
+    rest of the story).
+
+    Unlike the lazy ``_get_redis_client()`` -- which only pings once, when it
+    first builds the client -- this issues a fresh PING on every call so
+    ``/health`` reports a real, current verdict instead of the stale ``None``
+    left when no rate-limit check has run yet. Never raises: a failure is
+    logged with the underlying error and reflected in ``_redis_available``, so
+    a health probe can never 500 on a Redis problem.
+    """
+    global _redis_available
+    if not REDIS_URL:
+        return None
+    try:
+        client = _get_redis_client()
+        if client is None:
+            return None
+        client.ping()
+        _redis_available = True
+        return True
+    except Exception:
+        _redis_available = False
+        logger.warning(
+            "Redis health check failed: PING did not succeed; rate limiter "
+            "will fall back to the in-memory window",
+            exc_info=True,
+        )
+        return False
+
+
 def status() -> dict:
     return {
         "backend": backend_name(),

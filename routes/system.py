@@ -24,6 +24,9 @@ def root():
 
 @router.api_route("/health", methods=["GET", "HEAD"])
 def health():
+    # Actively PING Redis so redis_available reflects a live check, not the
+    # stale None left by lazy client init. Never raises; logs on failure.
+    rate_limit.ping_redis()
     return {
         "status": "ok",
         "service": "interlock",
