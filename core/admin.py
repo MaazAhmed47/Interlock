@@ -789,3 +789,144 @@ def review_shadow_server(
         details={"status": req.status},
     )
     return {"ok": True, "id": server_id, "status": req.status}
+
+
+# ── Policy admin routes ───────────────────────────────────────────────────────
+
+_VALID_POLICY_TYPES = {"role", "tool"}
+
+
+class CreatePolicyRequest(BaseModel):
+    policy_type: str = Field(..., description="'role' or 'tool'")
+    name: str = Field(..., min_length=1, description="Role name or tool name")
+    server_id: str = Field("", description="Optional MCP server scope")
+    rules: Dict[str, Any] = Field(..., description="JSON policy document")
+
+
+class UpdatePolicyRequest(BaseModel):
+    rules: Optional[Dict[str, Any]] = Field(
+        None, description="Updated JSON policy document"
+    )
+    is_active: Optional[bool] = None
+
+
+@router.get("/policies")
+def list_policies(
+    policy_type: Optional[str] = None,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    _require_admin(x_admin_token, "mcp:read", authorization=authorization)
+    policies = db.list_policies(policy_type=policy_type)
+    return {"policies": policies, "count": len(policies)}
+
+
+@router.get("/policies/{policy_id}")
+def get_policy(
+    policy_id: int,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    _require_admin(x_admin_token, "mcp:read", authorization=authorization)
+    policy = db.get_policy(policy_id)
+    if not policy:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    return policy
+
+
+@router.post("/policies", status_code=201)
+def create_policy(
+    req: CreatePolicyRequest,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    context = _require_admin(x_admin_token, "mcp:write", authorization=authorization)
+    if req.policy_type not in _VALID_POLICY_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"policy_type must be one of {sorted(_VALID_POLICY_TYPES)}",
+        )
+    rules_json = _json.dumps(req.rules, default=str)
+    saved = db.upsert_policy(
+        policy_type=req.policy_type,
+        name=req.name,
+        rules_json=rules_json,
+        server_id=req.server_id or "",
+        updated_by=context.label or context.auth_type,
+    )
+    _audit_admin_action(
+        context,
+        "policy.created",
+        "policy",
+        f"{req.policy_type}/{req.name}",
+        details={
+            "policy_type": req.policy_type,
+            "name": req.name,
+            "server_id": req.server_id,
+        },
+    )
+    return saved
+
+
+@router.patch("/policies/{policy_id}")
+def update_policy(
+    policy_id: int,
+    req: UpdatePolicyRequest,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    context = _require_admin(x_admin_token, "mcp:write", authorization=authorization)
+    existing = db.get_policy(policy_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+    if req.rules is not None:
+        rules_json = _json.dumps(req.rules, default=str)
+        db.upsert_policy(
+            policy_type=existing["policy_type"],
+            name=existing["name"],
+            rules_json=rules_json,
+            server_id=existing.get("server_id") or "",
+            updated_by=context.label or context.auth_type,
+        )
+
+    if req.is_active is not None and not req.is_active:
+        db.delete_policy(policy_id)
+
+    updated = db.get_policy(policy_id)
+    _audit_admin_action(
+        context,
+        "policy.updated",
+        "policy",
+        str(policy_id),
+        details={
+            "policy_type": existing["policy_type"],
+            "name": existing["name"],
+            "rules_changed": req.rules is not None,
+            "is_active_changed": req.is_active is not None,
+        },
+    )
+    return updated
+
+
+@router.delete("/policies/{policy_id}", status_code=200)
+def delete_policy_endpoint(
+    policy_id: int,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    context = _require_admin(x_admin_token, "mcp:write", authorization=authorization)
+    existing = db.get_policy(policy_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    ok = db.delete_policy(policy_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    _audit_admin_action(
+        context,
+        "policy.deleted",
+        "policy",
+        str(policy_id),
+        details={"policy_type": existing["policy_type"], "name": existing["name"]},
+    )
+    return {"ok": True, "id": policy_id, "deleted": True}

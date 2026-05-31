@@ -372,6 +372,22 @@ CREATE TABLE IF NOT EXISTS latency_samples (
 );
 
 CREATE INDEX IF NOT EXISTS idx_latency_samples_ts ON latency_samples(ts);
+
+CREATE TABLE IF NOT EXISTS policies (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    policy_type TEXT    NOT NULL,
+    name        TEXT    NOT NULL,
+    server_id   TEXT    NOT NULL DEFAULT '',
+    rules_json  TEXT    NOT NULL,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT    NOT NULL,
+    updated_at  TEXT    NOT NULL,
+    updated_by  TEXT    NOT NULL DEFAULT '',
+    UNIQUE(policy_type, name, server_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_policies_type_name ON policies(policy_type, name, server_id);
+CREATE INDEX IF NOT EXISTS idx_policies_active ON policies(is_active);
 """
 
 
@@ -2059,3 +2075,154 @@ def list_mcp_audit_logs(limit: int = 100) -> List[Dict[str, Any]]:
             (limit,),
         ).fetchall()
     return [_mcp_audit_row_to_dict(r) for r in rows]
+
+
+# ── Policy helpers ────────────────────────────────────────────────────────────
+
+
+def _policy_row_to_dict(row, cols: Optional[List[str]] = None) -> Dict[str, Any]:
+    d = row_to_plain_dict(row, cols)
+    d["is_active"] = bool(d.get("is_active", True))
+    if d.get("rules_json"):
+        try:
+            d["rules"] = json.loads(d["rules_json"])
+        except (json.JSONDecodeError, TypeError):
+            d["rules"] = {}
+    else:
+        d["rules"] = {}
+    return d
+
+
+def list_policies(policy_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return all policies, optionally filtered by type."""
+    with get_conn() as conn:
+        if policy_type:
+            rows = conn.execute(
+                "SELECT * FROM policies WHERE policy_type = ? ORDER BY name, server_id",
+                (policy_type,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM policies ORDER BY policy_type, name, server_id"
+            ).fetchall()
+        cols = table_columns("policies", conn=conn)
+    return [_policy_row_to_dict(r, cols) for r in rows]
+
+
+def get_policy(policy_id: int) -> Optional[Dict[str, Any]]:
+    """Return a single policy by id, or None."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM policies WHERE id = ?", (policy_id,)
+        ).fetchone()
+        if not row:
+            return None
+        cols = table_columns("policies", conn=conn)
+    return _policy_row_to_dict(row, cols)
+
+
+def get_policy_by_name(
+    policy_type: str, name: str, server_id: str = ""
+) -> Optional[Dict[str, Any]]:
+    """
+    Lookup active policy by (policy_type, name, server_id).
+    Falls back to (policy_type, name, '') when server_id is specified but not found.
+    """
+    with get_conn() as conn:
+        cols = table_columns("policies", conn=conn)
+        row = conn.execute(
+            """SELECT * FROM policies
+               WHERE policy_type = ? AND name = ? AND server_id = ? AND is_active = 1
+               ORDER BY id DESC LIMIT 1""",
+            (policy_type, name, server_id or ""),
+        ).fetchone()
+        if not row and server_id:
+            row = conn.execute(
+                """SELECT * FROM policies
+                   WHERE policy_type = ? AND name = ? AND server_id = '' AND is_active = 1
+                   ORDER BY id DESC LIMIT 1""",
+                (policy_type, name),
+            ).fetchone()
+        if not row:
+            return None
+    return _policy_row_to_dict(row, cols)
+
+
+def upsert_policy(
+    policy_type: str,
+    name: str,
+    rules_json: str,
+    server_id: str = "",
+    updated_by: str = "",
+) -> Optional[Dict[str, Any]]:
+    """
+    Insert or update a policy row.
+    Returns the saved policy record.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    sid = server_id or ""
+    with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM policies WHERE policy_type = ? AND name = ? AND server_id = ?",
+            (policy_type, name, sid),
+        ).fetchone()
+        if row:
+            policy_id = row_value(row, "id", 0)
+            conn.execute(
+                """UPDATE policies
+                      SET rules_json = ?, updated_at = ?, updated_by = ?, is_active = 1
+                    WHERE id = ?""",
+                (rules_json, now, updated_by, policy_id),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO policies
+                     (policy_type, name, server_id, rules_json, is_active,
+                      created_at, updated_at, updated_by)
+                   VALUES (?, ?, ?, ?, 1, ?, ?, ?)""",
+                (policy_type, name, sid, rules_json, now, now, updated_by),
+            )
+            fetched = conn.execute(
+                "SELECT id FROM policies WHERE policy_type = ? AND name = ? AND server_id = ?",
+                (policy_type, name, sid),
+            ).fetchone()
+            policy_id = row_value(fetched, "id", 0)
+    return get_policy(policy_id)
+
+
+def delete_policy(policy_id: int) -> bool:
+    """Soft-delete a policy (sets is_active=0). Returns True if a row was updated."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_lock, get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE policies SET is_active = 0, updated_at = ? WHERE id = ?",
+            (now, policy_id),
+        )
+    return cursor.rowcount > 0
+
+
+def seed_default_policies(defaults: Dict[str, Any], policy_type: str = "role") -> None:
+    """
+    Seed the policies table from a provided defaults dict.
+    Only inserts rows that do not already exist (checked by policy_type + name + server_id).
+    Never overwrites or modifies existing DB policies.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_lock, get_conn() as conn:
+        for name, rules in defaults.items():
+            existing = conn.execute(
+                "SELECT id FROM policies WHERE policy_type = ? AND name = ? AND server_id = ''",
+                (policy_type, name),
+            ).fetchone()
+            if existing:
+                continue
+            try:
+                conn.execute(
+                    """INSERT OR IGNORE INTO policies
+                         (policy_type, name, server_id, rules_json, is_active,
+                          created_at, updated_at, updated_by)
+                       VALUES (?, ?, '', ?, 1, ?, ?, 'system:seed')""",
+                    (policy_type, name, json.dumps(rules, default=str), now, now),
+                )
+            except Exception:
+                logger.exception("Failed to seed policy %s/%s", policy_type, name)

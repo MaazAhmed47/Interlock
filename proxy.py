@@ -17,7 +17,7 @@ from core.detector import rule_based_scan
 from core.learning import check_learned_patterns, learn_from_result
 from core.llm_judge import llm_judge_scan
 from core.pattern_matcher import pattern_match_scan
-from core.policy import policy_scan
+from core.policy import policy_scan, ROLE_POLICIES
 from core.shadow_mode import calculate_risk_score
 from core.siem import trigger_siem_dispatch
 from core.webhook import trigger_webhook
@@ -48,6 +48,7 @@ async def lifespan(app: FastAPI):
     db.init_db()
     db.seed_legacy_keys()
     db.seed_mcp_servers()
+    db.seed_default_policies(ROLE_POLICIES, policy_type="role")
     if not os.getenv("REDIS_URL"):
         logger.warning(
             "WARNING: Using in-memory rate limiting. "

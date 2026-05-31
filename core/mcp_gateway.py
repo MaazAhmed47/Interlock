@@ -499,7 +499,36 @@ async def proxy_mcp_tool_call(
                 "policy_decision": policy_decision,
             }
 
-    # 4b. Provenance check (MCP04) — re-evaluate on every call to catch silent substitutions
+    # 4b. Deterministic argument constraints from DB tool policy
+    try:
+        tool_policy_row = db.get_policy_by_name("tool", tool_name, server_id)
+        if tool_policy_row:
+            tool_rules = tool_policy_row.get("rules") or {}
+            bound_violation = _check_param_bounds(arguments or {}, tool_rules)
+            if bound_violation:
+                _log_mcp_gateway_audit(
+                    server_id=server_id,
+                    tool_name=tool_name,
+                    role=role,
+                    action="deny",
+                    matched_rule="param_bounds",
+                    reason=bound_violation,
+                    arguments=arguments or {},
+                    blocked_by="param_bounds",
+                )
+                return {
+                    "ok": False,
+                    "error": "param_bounds_violation",
+                    "reason": bound_violation,
+                }
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger("interlock.mcp_gateway").exception(
+            "Param bounds check failed — failing open"
+        )
+
+    # 4c. Provenance check (MCP04) — re-evaluate on every call to catch silent substitutions
     try:
         from core.provenance import evaluate_provenance
 
@@ -702,6 +731,53 @@ def _drift_reason(drift: Dict[str, Any], fallback: str) -> str:
     if not reasons:
         return fallback
     return f"{fallback} " + " ".join(str(reason) for reason in reasons[:3])
+
+
+def _check_param_bounds(
+    arguments: Dict[str, Any],
+    rules: Dict[str, Any],
+) -> Optional[str]:
+    """
+    Evaluate deterministic argument constraints defined in a tool policy.
+
+    Supported constraints per parameter:
+    - ``min`` / ``max``      — numeric lower / upper bound
+    - ``max_length``         — maximum string length
+    - ``allowed_values``     — enum allowlist
+
+    Returns a human-readable denial reason string when a constraint is violated,
+    or ``None`` when all constraints pass.  Silently skips parameters that are
+    absent from ``arguments`` so callers need not pre-populate defaults.
+    """
+    param_bounds: Dict[str, Any] = rules.get("param_bounds") or {}
+    for param, constraints in param_bounds.items():
+        if param not in arguments:
+            continue
+        value = arguments[param]
+
+        if "min" in constraints or "max" in constraints:
+            if isinstance(value, (int, float)):
+                lo = constraints.get("min")
+                hi = constraints.get("max")
+                if lo is not None and value < lo:
+                    return f"Numeric bound violation: {param}={value} is below min={lo}"
+                if hi is not None and value > hi:
+                    return f"Numeric bound violation: {param}={value} exceeds max={hi}"
+
+        if "max_length" in constraints and isinstance(value, str):
+            ml = constraints["max_length"]
+            if len(value) > ml:
+                return (
+                    f"String length violation: {param} length={len(value)}"
+                    f" exceeds max_length={ml}"
+                )
+
+        if "allowed_values" in constraints:
+            av = constraints["allowed_values"]
+            if value not in av:
+                return f"Enum violation: {param}={value} not in allowed_values"
+
+    return None
 
 
 def _log_mcp_gateway_audit(

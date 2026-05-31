@@ -1,6 +1,10 @@
+import logging
+
 from models.schemas import ScanResult, ThreatLevel
 from typing import Any, Dict, Optional
 from core import db
+
+logger = logging.getLogger("interlock.policy")
 
 
 def policy_scan(
@@ -192,10 +196,27 @@ ROLE_POLICIES: Dict[str, Any] = {
 }
 
 
+def _load_role_policy(role: str) -> Optional[Dict[str, Any]]:
+    """
+    Load a role policy. DB-first, falls back to hardcoded ROLE_POLICIES.
+    Returns None if the role is entirely unknown.
+    """
+    try:
+        db_row = db.get_policy_by_name("role", role)
+        if db_row and db_row.get("rules"):
+            return db_row["rules"]
+    except Exception:
+        logger.exception(
+            "DB policy lookup failed for role %r — using hardcoded defaults", role
+        )
+    return ROLE_POLICIES.get(role)
+
+
 def rbac_scan(
     prompt: str, tool_name: Optional[str], role: str, api_key: Optional[str] = None
 ) -> Optional[ScanResult]:
-    policy = ROLE_POLICIES.get(role)
+    # DB-first lookup; hardcoded ROLE_POLICIES is the fallback.
+    policy = _load_role_policy(role)
     if not policy:
         # Unknown role — block by default
         return ScanResult(
