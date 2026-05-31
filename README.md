@@ -64,6 +64,74 @@ This makes Interlock different from local-only sidecars and one-time admission c
 
 ---
 
+## Project Structure
+
+```text
+Interlock/
+├── proxy.py                  # FastAPI app entry point — routes, lifespan, middleware
+├── config.py                 # Environment variable loading and settings
+├── core/                     # Core security and data-layer logic
+│   ├── mcp_gateway.py        # MCP tool-call proxy — trust registry, allowlist, drift, RBAC, response scan, audit
+│   ├── mcp_drift.py          # Drift classifier — compares tool baselines, scores risk, triggers quarantine
+│   ├── detector.py           # Regex/keyword scanner — injection, PII, obfuscation (Layer 1)
+│   ├── pattern_matcher.py    # Weighted signal matching for prompt threats (Layer 2)
+│   ├── llm_judge.py          # LLM-as-judge via Groq (Layer 3) — configurable fail modes + circuit breaker
+│   ├── policy.py             # Per-key custom policy scan and per-agent-role RBAC enforcement
+│   ├── response_scanner.py   # Scans tool/model responses for injection, PII, secrets, and volume anomalies
+│   ├── tool_inspector.py     # Inspects tool-call arguments for SQL injection, command injection, path traversal
+│   ├── tool_metadata.py      # Normalizes MCP tool annotations into Interlock's internal policy vocabulary
+│   ├── metadata_policy.py    # Metadata-aware allow/deny/monitor decisions for MCP tool calls
+│   ├── provenance.py         # Supply-chain provenance checks — registry, package hash, and version policy
+│   ├── db.py                 # SQLite/Postgres data layer — API keys, MCP registry, drift state, audit log
+│   ├── admin.py              # Admin endpoints — key CRUD, scoped token management, retention policy
+│   ├── learning.py           # Fingerprint cache from LLM judge results — sub-ms re-decisions on known threats
+│   ├── history.py            # Per-key scan history log (last 500 entries)
+│   ├── shadow_scanner.py     # Background probing for unmanaged/shadow MCP servers
+│   ├── shadow_mode.py        # Log-only shadow mode and composite risk score (0–100)
+│   ├── rate_limit.py         # Sliding-window rate limiter — in-memory default, Redis-backed for HA
+│   ├── router.py             # Multi-provider forwarding to OpenAI, Anthropic, Gemini, Groq, Ollama
+│   ├── security_utils.py     # Secret and credential detection helpers shared across modules
+│   ├── siem.py               # SIEM dispatch — Datadog, Splunk, Elastic, Slack, PagerDuty, generic webhooks
+│   └── webhook.py            # Async Slack-format alert dispatch per API key
+├── routes/                   # FastAPI route handlers
+│   ├── scan.py               # POST /scan and /scan/output — prompt and output scanning
+│   ├── mcp.py                # MCP gateway routes — /mcp/call, /mcp/validate-tool, /mcp/servers, drift review
+│   ├── chat.py               # OpenAI-compatible /v1/chat/completions proxy
+│   ├── system.py             # Health check, WebSocket, SIEM test, and utility endpoints
+│   └── admin_routes.py       # Admin router (re-exports core/admin.py)
+├── models/
+│   └── schemas.py            # Shared Pydantic schemas — ScanResult, ThreatLevel, ResponseScanResult
+├── interlock-web/            # React dashboard — Vite + TypeScript, drift review and operational views
+├── tests/                    # 185 tests covering drift, MCP gateway, RBAC, provenance, response scan, and more
+├── helm/                     # Kubernetes Helm chart — HPA, PDB, NetworkPolicy, ServiceMonitor
+├── demo/                     # Runnable demos (mcp-drift-quarantine-demo.py requires no LLM keys)
+├── docs/                     # Architecture docs, OWASP MCP coverage, threat model, and evaluation guides
+├── monitoring/               # Prometheus configuration
+├── Dockerfile                # Container build
+├── docker-compose.yml        # Local stack
+└── requirements.txt          # Python dependencies
+```
+
+## How a request flows
+
+The path for an MCP tool call through `core/mcp_gateway.py::proxy_mcp_tool_call`:
+
+1. **Server trust registry** — is the server registered and verified in the Interlock registry?
+2. **Tool allowlist / blocklist** — is this specific tool permitted (or explicitly blocked) for this server?
+3. **Metadata normalization + drift check** — normalize runtime metadata, compare against the stored baseline; quarantine automatically if drift is critical.
+4. **Argument inspection** — scan tool-call arguments for SQL injection, command injection, and path traversal (`core/tool_inspector.py`).
+5. **RBAC** — is this agent's role permitted to call this tool? (`core/policy.py::rbac_scan`)
+6. **Deterministic argument bounds** — do parameter values stay within configured min/max/allowed-values constraints?
+7. **Provenance check** — does the server match the trusted source registry, expected package hash, and version policy? (`core/provenance.py`)
+8. **Forward** — proxy the JSON-RPC call to the upstream MCP server.
+9. **Response injection scan** — detect prompt injection embedded in the tool output before it reaches the model (MCP06).
+10. **PII + volume scan** — redact sensitive values in-place, flag oversized responses (MCP10).
+11. **Audit** — every allow, deny, monitor, and quarantine decision is written to the tamper-evident audit log.
+
+Prompt scanning (`POST /scan`) runs a separate five-layer pipeline in `proxy.py::run_scan`: learned-pattern cache → per-key policy → regex/keyword detector → pattern matcher → LLM judge.
+
+---
+
 ## Deterministic argument bounds
 
 Beyond pattern matching, Interlock enforces business-logic constraints on tool arguments. Define bounds per tool:
