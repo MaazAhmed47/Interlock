@@ -1748,6 +1748,76 @@ svg text {
   .demo-section h2 { letter-spacing: -1px; }
 }
 
+/* ── DRIFT EXPLAINER SECTION ── */
+.drift-explainer {
+  background: var(--black);
+  padding: 80px 60px;
+  border-top: 1px solid rgba(245,240,232,.06);
+}
+.drift-explainer-header {
+  text-align: center;
+  margin-bottom: 48px;
+}
+.drift-explainer-header h2 {
+  font-family: 'Geist', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: clamp(32px, 4vw, 52px);
+  font-weight: 900;
+  letter-spacing: -2px;
+  color: var(--white);
+}
+.drift-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: rgba(245,240,232,.08);
+  border: 1px solid rgba(245,240,232,.08);
+  max-width: 960px;
+  margin: 0 auto;
+}
+.drift-card {
+  background: var(--black);
+  padding: 40px 32px;
+  position: relative;
+  transition: background .3s;
+}
+.drift-card:hover { background: #0a0e14; }
+.drift-card-accent {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--cyan);
+  font-family: 'DM Mono', monospace;
+  margin-bottom: 18px;
+}
+.drift-card h3 {
+  font-family: 'Geist', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -.5px;
+  color: var(--white);
+  margin-bottom: 14px;
+  line-height: 1.3;
+}
+.drift-card p {
+  font-size: 15px;
+  color: rgba(245,240,232,.65);
+  line-height: 1.65;
+}
+.drift-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  opacity: 0;
+  transition: opacity .3s;
+}
+.drift-card:hover::before { opacity: 1; }
+@media (max-width: 860px) {
+  .drift-cards { grid-template-columns: 1fr; }
+  .drift-explainer { padding: 60px 24px; }
+}
 </style>
 </head>
 <body>
@@ -1776,8 +1846,8 @@ svg text {
   <div class="hero-grain"></div>
 
   <div class="hero-content">
-    <h1 class="fade-up">Runtime Security for <em>MCP Agents</em></h1>
-    <p class="hero-sub fade-up delay-1">Baseline MCP tools, enforce role-aware policy, quarantine risky drift, scan responses, and produce audit evidence your security team can inspect.</p>
+    <h1 class="fade-up">Catch the MCP tools that change after you trust them</h1>
+    <p class="hero-sub fade-up delay-1">Most security tools check a tool once. Interlock baselines MCP tools, tracks schema and metadata drift, and blocks risky changes before agents touch real systems.</p>
     <div class="hero-actions fade-up delay-2">
       <a href="https://calendly.com/maazahmed1856/interlock-demo-15-min" target="_blank" class="btn-red-hero">REQUEST ACCESS</a>
       <a href="/dashboard/" class="btn-docs-hero">VIEW DASHBOARD</a>
@@ -1809,6 +1879,30 @@ svg text {
     <p>Interlock is an MCP security control plane for teams using multiple MCP servers and agent tools together. It gives operators one place for tool baselines, drift detection, role-aware policy, response scanning, and structured audit logs across heterogeneous servers. This is not a replacement for server RBAC; it is the centralized policy, audit, and output-scanning layer in front of many MCP servers.</p>
   </div>
 </div>
+
+<!-- STATIC POLICY EXPLAINER -->
+<section class="drift-explainer">
+  <div class="drift-explainer-header">
+    <h2>Static policy isn't enough</h2>
+  </div>
+  <div class="drift-cards">
+    <div class="drift-card">
+      <span class="drift-card-accent">The gap</span>
+      <h3>Policy enforcers check rules you wrote</h3>
+      <p>Static YAML and RBAC catch known-bad patterns at setup. But what happens when the tool itself changes after you approved it?</p>
+    </div>
+    <div class="drift-card">
+      <span class="drift-card-accent">The risk</span>
+      <h3>Trusted tools can mutate</h3>
+      <p>A read-only tool can silently gain export effects, sensitive data access, or external reach — and still look trusted to the agent.</p>
+    </div>
+    <div class="drift-card">
+      <span class="drift-card-accent">The fix</span>
+      <h3>Interlock watches for drift</h3>
+      <p>Interlock stores tool baselines, enforces drift status before execution, and quarantines changed tools until an operator reviews them.</p>
+    </div>
+  </div>
+</section>
 
 <!-- FLOW DIAGRAM -->
 <section class="flow-section" id="architecture">

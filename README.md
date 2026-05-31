@@ -17,7 +17,7 @@
 
 [![Interlock Demo](./interlock_thumbnail.jpg)](https://www.youtube.com/watch?v=kc5wAbgoEkw)
 
-### Runtime security gateway for AI agents.
+### Interlock catches MCP tools that change after approval — drift detection, runtime policy enforcement, response scanning, and tamper-evident audit logs. Open source, self-hosted.
 
 Zero-trust security for AI agents and MCP servers. Interlock sits inline between agents and tools, validates MCP tool definitions, enforces role-aware policy before execution, scans responses before they reach the model, and audits every allow, deny, monitor, and quarantine decision.
 
@@ -42,6 +42,25 @@ Zero-trust security for AI agents and MCP servers. Interlock sits inline between
 [Book Pilot Call](https://calendly.com/maazahmed1856/interlock-demo-15-min)
 
 </div>
+
+---
+
+## How Interlock is different
+
+Most MCP security tools enforce a static policy: you define rules at setup, and they check calls against those rules. That catches known-bad behavior, but it misses the harder problem — what happens when an already-approved tool changes?
+
+Interlock is built around MCP drift detection.
+
+It records MCP tool baselines and detects risky changes such as:
+- A read-only tool gaining export or share behavior
+- New sensitive data classes appearing in a tool schema
+- External reach increasing from internal-only to external
+- Required parameters changing after approval
+- Tools being added, removed, or modified unexpectedly
+
+When drift crosses a risk threshold, Interlock quarantines the tool until an operator reviews the new schema. Every decision is written to a tamper-evident audit log with hash-chain integrity verification via the /audit/verify endpoint.
+
+This makes Interlock different from local-only sidecars and one-time admission checks: it focuses on what changes after trust is granted.
 
 ---
 
