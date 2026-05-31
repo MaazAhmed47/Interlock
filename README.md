@@ -1,7 +1,7 @@
 ## Verified Status
 | Check | Status |
 |-------|--------|
-| Backend tests | ✅ 148 passing |
+| Backend tests | ✅ 185 passing |
 | Code quality | ✅ ruff · black · mypy (core/routes) |
 | Docker build | ✅ passing |
 | Live demo | ✅ getinterlock.dev |
@@ -61,6 +61,24 @@ It records MCP tool baselines and detects risky changes such as:
 When drift crosses a risk threshold, Interlock quarantines the tool until an operator reviews the new schema. Every decision is written to a tamper-evident audit log with hash-chain integrity verification via the /audit/verify endpoint.
 
 This makes Interlock different from local-only sidecars and one-time admission checks: it focuses on what changes after trust is granted.
+
+---
+
+## Deterministic argument bounds
+
+Beyond pattern matching, Interlock enforces business-logic constraints on tool arguments. Define bounds per tool:
+
+```json
+{
+  "tool": "refund_user",
+  "param_bounds": {
+    "amount": { "min": 0, "max": 500 },
+    "currency": { "allowed_values": ["USD", "EUR"] }
+  }
+}
+```
+
+Now an agent calling `refund_user(amount=99999)` is denied before execution — even if the tool exists and the agent has permission. Regex can't catch business-logic violations like this; deterministic bounds can.
 
 ---
 
