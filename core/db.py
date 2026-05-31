@@ -2132,14 +2132,14 @@ def get_policy_by_name(
         cols = table_columns("policies", conn=conn)
         row = conn.execute(
             """SELECT * FROM policies
-               WHERE policy_type = ? AND name = ? AND server_id = ? AND is_active = 1
+               WHERE policy_type = ? AND name = ? AND server_id = ? AND is_active = TRUE
                ORDER BY id DESC LIMIT 1""",
             (policy_type, name, server_id or ""),
         ).fetchone()
         if not row and server_id:
             row = conn.execute(
                 """SELECT * FROM policies
-                   WHERE policy_type = ? AND name = ? AND server_id = '' AND is_active = 1
+                   WHERE policy_type = ? AND name = ? AND server_id = '' AND is_active = TRUE
                    ORDER BY id DESC LIMIT 1""",
                 (policy_type, name),
             ).fetchone()
@@ -2170,7 +2170,7 @@ def upsert_policy(
             policy_id = row_value(row, "id", 0)
             conn.execute(
                 """UPDATE policies
-                      SET rules_json = ?, updated_at = ?, updated_by = ?, is_active = 1
+                      SET rules_json = ?, updated_at = ?, updated_by = ?, is_active = TRUE
                     WHERE id = ?""",
                 (rules_json, now, updated_by, policy_id),
             )
@@ -2179,8 +2179,8 @@ def upsert_policy(
                 """INSERT INTO policies
                      (policy_type, name, server_id, rules_json, is_active,
                       created_at, updated_at, updated_by)
-                   VALUES (?, ?, ?, ?, 1, ?, ?, ?)""",
-                (policy_type, name, sid, rules_json, now, now, updated_by),
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (policy_type, name, sid, rules_json, True, now, now, updated_by),
             )
             fetched = conn.execute(
                 "SELECT id FROM policies WHERE policy_type = ? AND name = ? AND server_id = ?",
@@ -2195,7 +2195,7 @@ def delete_policy(policy_id: int) -> bool:
     now = datetime.now(timezone.utc).isoformat()
     with _db_lock, get_conn() as conn:
         cursor = conn.execute(
-            "UPDATE policies SET is_active = 0, updated_at = ? WHERE id = ?",
+            "UPDATE policies SET is_active = FALSE, updated_at = ? WHERE id = ?",
             (now, policy_id),
         )
     return cursor.rowcount > 0
@@ -2221,8 +2221,8 @@ def seed_default_policies(defaults: Dict[str, Any], policy_type: str = "role") -
                     """INSERT OR IGNORE INTO policies
                          (policy_type, name, server_id, rules_json, is_active,
                           created_at, updated_at, updated_by)
-                       VALUES (?, ?, '', ?, 1, ?, ?, 'system:seed')""",
-                    (policy_type, name, json.dumps(rules, default=str), now, now),
+                       VALUES (?, ?, '', ?, ?, ?, ?, 'system:seed')""",
+                    (policy_type, name, json.dumps(rules, default=str), True, now, now),
                 )
             except Exception:
                 logger.exception("Failed to seed policy %s/%s", policy_type, name)
