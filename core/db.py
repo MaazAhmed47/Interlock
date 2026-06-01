@@ -2077,6 +2077,104 @@ def list_mcp_audit_logs(limit: int = 100) -> List[Dict[str, Any]]:
     return [_mcp_audit_row_to_dict(r) for r in rows]
 
 
+def get_mcp_audit_log(audit_id: int) -> Optional[Dict[str, Any]]:
+    """Return a single MCP audit event by id, or None if not found."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM mcp_audit_log WHERE id = ?",
+            (audit_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return _mcp_audit_row_to_dict(row)
+
+
+def list_mcp_audit_logs_between(
+    from_ts: Optional[str] = None,
+    to_ts: Optional[str] = None,
+    limit: int = 1000,
+) -> List[Dict[str, Any]]:
+    """
+    Return MCP audit events whose ts falls within [from_ts, to_ts], oldest
+    first so a batch export reads in hash-chain order. Either bound may be
+    omitted to leave that side open.
+    """
+    clauses: List[str] = []
+    params: List[Any] = []
+    if from_ts:
+        clauses.append("ts >= ?")
+        params.append(from_ts)
+    if to_ts:
+        clauses.append("ts <= ?")
+        params.append(to_ts)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(limit)
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM mcp_audit_log {where} ORDER BY ts ASC, id ASC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+    return [_mcp_audit_row_to_dict(r) for r in rows]
+
+
+def verify_mcp_audit_record(audit_id: int) -> Dict[str, Any]:
+    """
+    Verify one mcp_audit_log record against the tamper-evident hash chain.
+
+    Two independent checks:
+      1. content integrity — the stored integrity_hash matches a fresh hash of
+         the record's own fields (including its stored prev_hash); and
+      2. linkage — the record's prev_hash equals the previous record's stored
+         integrity_hash (or GENESIS for the first record).
+
+    Together these make a single receipt tamper-evident without re-walking the
+    entire chain from genesis.
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, ts, action, tool_name, role, reason, prev_hash, "
+            "integrity_hash FROM mcp_audit_log WHERE id = ?",
+            (audit_id,),
+        ).fetchone()
+        if not row:
+            return {"chain_verified": False, "reason": "record_not_found"}
+        row = dict(row)
+        prev = conn.execute(
+            "SELECT integrity_hash FROM mcp_audit_log WHERE id < ? "
+            "ORDER BY id DESC LIMIT 1",
+            (audit_id,),
+        ).fetchone()
+
+    stored_hash = row.get("integrity_hash") or ""
+    if not stored_hash:
+        return {"chain_verified": False, "reason": "missing_integrity_hash"}
+
+    expected_prev = (dict(prev).get("integrity_hash") if prev else None) or "GENESIS"
+    recomputed = _compute_audit_hash(
+        row.get("prev_hash") or "",
+        row.get("ts") or "",
+        row.get("action") or "",
+        row.get("tool_name") or "",
+        row.get("role") or "",
+        row.get("reason") or "",
+    )
+    content_ok = recomputed == stored_hash
+    link_ok = (row.get("prev_hash") or "") == expected_prev
+    verified = content_ok and link_ok
+    if verified:
+        reason = "verified"
+    elif not content_ok:
+        reason = "hash mismatch"
+    else:
+        reason = "broken chain link"
+    return {
+        "chain_verified": verified,
+        "reason": reason,
+        "content_ok": content_ok,
+        "link_ok": link_ok,
+    }
+
+
 # ── Policy helpers ────────────────────────────────────────────────────────────
 
 

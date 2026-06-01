@@ -235,6 +235,43 @@ export interface AdminAuditEvent {
   [key: string]: unknown;
 }
 
+export interface ReceiptDrift {
+  detected: boolean;
+  severity: string;
+  changes: string[];
+}
+
+export interface SecurityReceipt {
+  receipt_id: string;
+  audit_id?: number;
+  timestamp: string;
+  timestamp_iso?: string;
+  agent_role: string;
+  server_id: string;
+  tool_name: string;
+  decision: string;
+  risk_score: number;
+  rule_fired: string;
+  reason: string;
+  detections: string[];
+  redactions: string[];
+  drift: ReceiptDrift;
+  integrity_hash: string;
+  prev_hash: string;
+  chain_verified: boolean;
+}
+
+export interface ReceiptBatch {
+  artifact: string;
+  version: string;
+  generated_at: string;
+  from: string | null;
+  to: string | null;
+  count: number;
+  chain_verified: boolean;
+  receipts: SecurityReceipt[];
+}
+
 export interface ShadowStats {
   total: number;
   threats?: number;
@@ -629,6 +666,13 @@ export const api = {
     request<{ ok: boolean }>('POST', `/mcp/tools/${encodeURIComponent(server_id)}/${encodeURIComponent(tool_name)}/quarantine`, payload),
   mcpAudit: (limit = 100) => request<{ events: AuditEvent[] }>('GET', `/mcp/audit?limit=${limit}`),
   adminAudit: (accessToken: string, limit = 100) => adminRequest<{ events: AdminAuditEvent[] }>('GET', `/admin/audit?limit=${limit}`, accessToken),
+  receipt: (auditId: number) => request<SecurityReceipt>('GET', `/audit/receipt/${auditId}`),
+  exportReceipts: (from?: string, to?: string) => {
+    const qs = new URLSearchParams({ format: 'json' });
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    return request<ReceiptBatch>('GET', `/audit/receipt/export?${qs.toString()}`);
+  },
   siemProviders: () =>
     request<{ providers: string[]; config_examples: Record<string, unknown> }>('GET', '/siem/providers'),
   roles: () => request<{ roles: Record<string, unknown> }>('GET', '/roles'),

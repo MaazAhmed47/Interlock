@@ -76,8 +76,10 @@ skills-lock.json
 INTERLOCK_STRATEGY.md
 nextcloud-scan-report.md
 
-# Frontend is being rebuilt separately; do not commit partial generated drafts.
-interlock-web/
+# Frontend: track source, ignore only build artifacts and local deploy/link state.
+interlock-web/node_modules/
+interlock-web/dist/
+interlock-web/.vercel/
 
 .vercel
 .env*

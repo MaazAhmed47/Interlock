@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { LockKeyhole, LogIn, RefreshCw, ShieldCheck } from 'lucide-react'
-import { AdminAuditEvent, api, AuditEvent, ScanHistoryEvent } from '../api'
+import { Download, LockKeyhole, LogIn, Receipt, RefreshCw, ShieldCheck } from 'lucide-react'
+import { AdminAuditEvent, api, AuditEvent, ScanHistoryEvent, SecurityReceipt } from '../api'
 import { authDisplayName, beginOidcLogin, useAuthSession } from '../auth'
 import { useDashboardData } from '../components/DashLayout'
+import ReceiptModal from '../components/ReceiptModal'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
 
@@ -20,6 +21,7 @@ type AuditRow = {
   severity: string
   reason: string
   scanTime?: number | null
+  auditId?: number
 }
 
 function eventTimestamp(event: AuditEvent) {
@@ -50,6 +52,7 @@ function mcpRow(event: AuditEvent, index: number): AuditRow {
     action: event.action || '-',
     severity: event.drift_severity || '-',
     reason: event.reason || event.matched_rule || '-',
+    auditId: typeof event.id === 'number' ? event.id : undefined,
   }
 }
 
@@ -74,6 +77,12 @@ export default function Audit() {
   const [adminEvents, setAdminEvents] = useState<AdminAuditEvent[]>([])
   const [adminLoading, setAdminLoading] = useState(false)
   const [adminError, setAdminError] = useState('')
+  const [receiptOpen, setReceiptOpen] = useState(false)
+  const [receipt, setReceipt] = useState<SecurityReceipt | null>(null)
+  const [receiptLoading, setReceiptLoading] = useState(false)
+  const [receiptError, setReceiptError] = useState('')
+  const [exporting, setExporting] = useState(false)
+  const [exportNote, setExportNote] = useState('')
   const session = useAuthSession()
 
   function selectView(next: 'runtime' | 'admin') {
@@ -81,8 +90,55 @@ export default function Audit() {
     setParams(next === 'admin' ? { view: 'admin' } : {})
   }
 
+  async function openReceipt(auditId: number) {
+    setReceiptOpen(true)
+    setReceipt(null)
+    setReceiptError('')
+    setReceiptLoading(true)
+    try {
+      setReceipt(await api.receipt(auditId))
+    } catch (err) {
+      setReceiptError(err instanceof Error ? err.message : 'Could not load receipt.')
+    } finally {
+      setReceiptLoading(false)
+    }
+  }
+
+  function closeReceipt() {
+    setReceiptOpen(false)
+    setReceipt(null)
+    setReceiptError('')
+  }
+
+  async function exportReceipts(mcpRows: AuditRow[]) {
+    setExportNote('')
+    const stamps = mcpRows.map(r => r.timestamp).filter(Boolean).sort()
+    const from = stamps[0]
+    const to = stamps[stamps.length - 1]
+    setExporting(true)
+    try {
+      const batch = await api.exportReceipts(from, to)
+      const blob = new Blob([JSON.stringify(batch, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `interlock-receipts-${(from || 'all').slice(0, 10)}-to-${(to || 'all').slice(0, 10)}.json`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      setExportNote(`Exported ${batch.count} receipt${batch.count === 1 ? '' : 's'}${batch.chain_verified ? ' — chain verified ✓' : ''}.`)
+    } catch (err) {
+      setExportNote(err instanceof Error ? err.message : 'Export failed.')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const rows = [...scanHistory.map(scanRow), ...audit.map(mcpRow)]
     .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime())
+
+  const mcpReceiptRows = rows.filter(r => r.source === 'mcp' && r.auditId != null)
 
   const filtered = rows.filter(e => {
     if (action !== 'all' && e.action.toLowerCase() !== action) return false
@@ -130,9 +186,21 @@ export default function Audit() {
     <div className="dash-main">
       <div className="dash-page-header">
         <div><h1>Audit Log</h1><p>Runtime decisions and admin control-plane actions in one evidence workspace</p></div>
-        <button className="btn btn-ghost btn-sm" onClick={refresh} disabled={loadingAudit || loadingScans || adminLoading}>
-          <RefreshCw size={12} />{loadingAudit || loadingScans || adminLoading ? 'Loading' : 'Refresh'}
-        </button>
+        <div className="dash-header-actions">
+          {view === 'runtime' && (
+            <button
+              className="btn btn-cyan btn-sm"
+              onClick={() => exportReceipts(mcpReceiptRows)}
+              disabled={exporting || mcpReceiptRows.length === 0}
+              title={mcpReceiptRows.length === 0 ? 'No tool-call events to export yet' : 'Download tamper-evident receipts as JSON'}
+            >
+              <Download size={12} />{exporting ? 'Exporting' : 'Export Receipts'}
+            </button>
+          )}
+          <button className="btn btn-ghost btn-sm" onClick={refresh} disabled={loadingAudit || loadingScans || adminLoading}>
+            <RefreshCw size={12} />{loadingAudit || loadingScans || adminLoading ? 'Loading' : 'Refresh'}
+          </button>
+        </div>
       </div>
 
       <div className="segmented-control audit-tabs">
@@ -143,6 +211,8 @@ export default function Audit() {
       {view === 'runtime' ? (
         <>
           {demoMode && <div className="demo-note">Demo audit timeline</div>}
+
+          {exportNote && <div className="inline-note">{exportNote}</div>}
 
           {(errors.audit || errors.scanHistory) && (
             <div className="inline-note">
@@ -181,7 +251,7 @@ export default function Audit() {
                     <thead>
                       <tr>
                         <th>Timestamp</th><th>Source</th><th>Actor</th><th>Target</th>
-                        <th>Action</th><th>Severity</th><th>Scan Time</th><th>Reason</th>
+                        <th>Action</th><th>Severity</th><th>Scan Time</th><th>Reason</th><th>Receipt</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -198,6 +268,13 @@ export default function Audit() {
                           <td className="mono dim">{e.scanTime != null ? e.scanTime + 'ms' : '-'}</td>
                           <td className="dim" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {e.reason}
+                          </td>
+                          <td>
+                            {e.auditId != null
+                              ? <button className="btn btn-ghost btn-sm receipt-row-btn" onClick={() => openReceipt(e.auditId as number)}>
+                                  <Receipt size={12} />Receipt
+                                </button>
+                              : <span className="dim">—</span>}
                           </td>
                         </tr>
                       ))}
@@ -261,6 +338,15 @@ export default function Audit() {
             }
           </div>
         </>
+      )}
+
+      {receiptOpen && (
+        <ReceiptModal
+          receipt={receipt}
+          loading={receiptLoading}
+          error={receiptError}
+          onClose={closeReceipt}
+        />
       )}
     </div>
   )

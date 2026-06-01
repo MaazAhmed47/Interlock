@@ -320,6 +320,7 @@ def custom_openapi():
 
 from routes import (  # noqa: E402
     admin_routes,
+    audit as audit_routes,
     chat as chat_routes,
     mcp as mcp_routes,
     scan as scan_routes,
@@ -331,6 +332,7 @@ app.include_router(system_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(chat_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(scan_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(mcp_routes.router)  # type: ignore[attr-defined,has-type]
+app.include_router(audit_routes.router)  # type: ignore[attr-defined,has-type]
 app.openapi = custom_openapi  # type: ignore[method-assign]
 
 # Backward-compatible aliases for tests and direct function callers.
@@ -365,3 +367,6 @@ mcp_audit = mcp_routes.mcp_audit  # type: ignore[has-type]
 mcp_validate = mcp_routes.mcp_validate  # type: ignore[has-type]
 mcp_call = mcp_routes.mcp_call  # type: ignore[has-type]
 mcp_unregister = mcp_routes.mcp_unregister  # type: ignore[has-type]
+
+get_receipt = audit_routes.get_receipt  # type: ignore[has-type]
+export_receipts = audit_routes.export_receipts  # type: ignore[has-type]
