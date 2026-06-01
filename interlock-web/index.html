@@ -1822,6 +1822,69 @@ svg text {
   .drift-cards { grid-template-columns: 1fr; }
   .drift-explainer { padding: 60px 24px; }
 }
+
+/* ── SECURITY RECEIPT SHOWCASE ───────────────────────────────────────────── */
+.receipt-showcase {
+  background: var(--black);
+  padding: 100px 48px;
+  border-bottom: 1px solid rgba(245,240,232,.06);
+  text-align: center;
+}
+.receipt-showcase-inner { max-width: 900px; margin: 0 auto; }
+.receipt-eyebrow {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px; letter-spacing: .18em; color: var(--cyan);
+  text-transform: uppercase; margin-bottom: 20px;
+}
+.receipt-showcase h2 {
+  font-family: var(--serif);
+  font-size: clamp(32px, 5vw, 56px);
+  font-weight: 480; letter-spacing: -0.01em; line-height: 1.05;
+  color: var(--white); margin-bottom: 16px;
+}
+.receipt-sub {
+  font-size: 16px; color: rgba(245,240,232,.5);
+  max-width: 620px; margin: 0 auto 48px; line-height: 1.6;
+}
+.receipt-card {
+  max-width: 520px; margin: 0 auto; text-align: left;
+  background: linear-gradient(180deg, rgba(13,13,17,.97), rgba(8,8,11,.97));
+  border: 1px solid rgba(245,240,232,.1);
+  border-top: 3px solid var(--cyan);
+  border-radius: 10px;
+  padding: 28px 30px;
+  box-shadow: 0 0 0 1px rgba(0,229,200,.06), 0 28px 70px rgba(0,0,0,.6);
+}
+.receipt-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.receipt-brand { font-family: 'DM Mono', monospace; font-size: 16px; font-weight: 600; letter-spacing: .22em; color: var(--white); }
+.receipt-kicker { font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: rgba(245,240,232,.45); margin-top: 4px; }
+.receipt-badge { font-family: 'DM Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: .08em; padding: 6px 12px; border-radius: 4px; white-space: nowrap; }
+.receipt-badge.badge-quarantine { color: var(--orange); border: 1px solid rgba(255,107,53,.4); background: rgba(255,107,53,.12); }
+.receipt-meta { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 16px; padding-bottom: 16px; border-bottom: 1px solid rgba(245,240,232,.08); font-family: 'DM Mono', monospace; font-size: 11px; color: rgba(245,240,232,.45); }
+.receipt-summary { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 18px 0; }
+.receipt-summary-text strong { display: block; font-size: 15px; line-height: 1.45; color: var(--white); margin-top: 5px; font-weight: 560; }
+.receipt-risk { flex-shrink: 0; text-align: center; border: 1px solid rgba(255,107,53,.3); border-radius: 8px; padding: 10px 16px; background: rgba(255,107,53,.06); }
+.receipt-risk-num { display: block; font-family: 'DM Mono', monospace; font-size: 30px; font-weight: 600; line-height: 1; color: var(--orange); }
+.receipt-risk-label { display: block; font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: .12em; color: rgba(245,240,232,.45); margin-top: 5px; }
+.receipt-label { display: block; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: rgba(245,240,232,.45); margin-bottom: 6px; }
+.receipt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px 0; border-top: 1px solid rgba(245,240,232,.08); border-bottom: 1px solid rgba(245,240,232,.08); }
+.receipt-grid b { font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 500; color: var(--white); word-break: break-all; }
+.receipt-detected { margin-top: 16px; }
+.receipt-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.receipt-chip { font-family: 'DM Mono', monospace; font-size: 11px; padding: 4px 10px; border-radius: 4px; }
+.receipt-chip.chip-crit { color: var(--red); border: 1px solid rgba(232,24,44,.35); background: rgba(232,24,44,.1); }
+.receipt-chip.chip-warn { color: var(--orange); border: 1px solid rgba(255,107,53,.32); background: rgba(255,107,53,.08); }
+.receipt-integrity { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 20px; padding: 14px 16px; border: 1px solid rgba(0,229,200,.3); border-radius: 8px; background: rgba(0,229,200,.05); }
+.receipt-integrity-badge { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--cyan); }
+.receipt-integrity code { font-family: 'DM Mono', monospace; font-size: 10.5px; color: rgba(245,240,232,.55); }
+.receipt-footnote { font-size: 15px; color: rgba(245,240,232,.6); max-width: 620px; margin: 32px auto 0; line-height: 1.6; }
+.receipt-footnote strong { color: var(--cyan); font-weight: 600; }
+@media (max-width: 640px) {
+  .receipt-showcase { padding: 64px 24px; }
+  .receipt-card { padding: 22px 20px; }
+  .receipt-grid { grid-template-columns: 1fr; }
+  .receipt-summary { flex-direction: column; align-items: flex-start; }
+}
 </style>
 </head>
 <body>
@@ -1850,8 +1913,8 @@ svg text {
   <div class="hero-grain"></div>
 
   <div class="hero-content">
-    <h1 class="fade-up">Catch the MCP tools that change after you trust them</h1>
-    <p class="hero-sub fade-up delay-1">Most security tools check a tool once. Interlock baselines MCP tools, tracks schema and metadata drift, and blocks risky changes before agents touch real systems.</p>
+    <h1 class="fade-up">Stop AI agents from leaking data, falling for prompt injection, and trusting tools that silently changed.</h1>
+    <p class="hero-sub fade-up delay-1">Interlock is a runtime security gateway for MCP agents. It blocks injection and data leaks, enforces policy before execution, and uniquely detects when an approved tool changes behavior after you trusted it.</p>
     <div class="hero-actions fade-up delay-2">
       <a href="https://calendly.com/maazahmed1856/interlock-demo-15-min" target="_blank" class="btn-red-hero">REQUEST ACCESS</a>
       <a href="/dashboard/" class="btn-docs-hero">VIEW DASHBOARD</a>
@@ -2151,6 +2214,61 @@ svg text {
         allowfullscreen
       ></iframe>
     </div>
+  </div>
+</section>
+
+<!-- SECURITY RECEIPT SHOWCASE -->
+<section class="receipt-showcase" id="receipt">
+  <div class="receipt-showcase-inner">
+    <div class="receipt-eyebrow">Tamper-evident evidence</div>
+    <h2>Evidence for every decision</h2>
+    <p class="receipt-sub">Interlock produces a tamper-evident Security Receipt for every tool call — what was called, what was detected, the decision and why, with hash-chain integrity verification.</p>
+
+    <div class="receipt-card">
+      <div class="receipt-card-head">
+        <div>
+          <div class="receipt-brand">INTERLOCK</div>
+          <div class="receipt-kicker">Security Receipt</div>
+        </div>
+        <span class="receipt-badge badge-quarantine">QUARANTINE</span>
+      </div>
+
+      <div class="receipt-meta">
+        <span>rcpt-4821-9f3c1a2b7e0d</span>
+        <span>2026-06-02 14:23:07 UTC</span>
+      </div>
+
+      <div class="receipt-summary">
+        <div class="receipt-summary-text">
+          <span class="receipt-label">Decision</span>
+          <strong>read_document was quarantined before execution</strong>
+        </div>
+        <div class="receipt-risk">
+          <span class="receipt-risk-num">87</span>
+          <span class="receipt-risk-label">RISK / 100</span>
+        </div>
+      </div>
+
+      <div class="receipt-grid">
+        <div><span class="receipt-label">Tool</span><b>read_document</b></div>
+        <div><span class="receipt-label">Rule fired</span><b>schema_drift_critical</b></div>
+      </div>
+
+      <div class="receipt-detected">
+        <span class="receipt-label">Detected</span>
+        <div class="receipt-chips">
+          <span class="receipt-chip chip-crit">schema drift · critical</span>
+          <span class="receipt-chip chip-warn">PII data class added</span>
+        </div>
+      </div>
+
+      <div class="receipt-integrity">
+        <span class="receipt-integrity-badge">&#9939; Hash chain verified &#10003;</span>
+        <code>integrity 7b41e2&#8230; · prev 2c9d80&#8230;</code>
+      </div>
+    </div>
+
+    <p class="receipt-footnote">Export receipts as evidence your security team can review — <strong>proof of control, not just a promise.</strong></p>
   </div>
 </section>
 
