@@ -95,6 +95,10 @@ nav {
   align-items: center; justify-content: center;
   text-align: center;
   overflow: hidden;
+  /* Breathing room below the fixed nav so the (smaller) headline isn't jammed
+     to the top; content still vertically centers within the remaining space. */
+  padding-top: clamp(60px, 10vh, 120px);
+  padding-bottom: clamp(40px, 6vh, 80px);
 }
 
 /* Simple hero background */
@@ -128,12 +132,12 @@ nav {
 
 .hero h1 {
   font-family: var(--serif);
-  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  font-size: clamp(2rem, 4.5vw, 3.25rem);
   font-weight: 460;
-  line-height: 1.05;
+  line-height: 1.1;
   letter-spacing: -0.01em;
   color: var(--white);
-  max-width: 820px;
+  max-width: 900px;
   margin: 0 auto;
 }
 .hero h1 em {
@@ -1420,8 +1424,8 @@ svg text { font-size: 13px; }
   .enterprise-proof-grid { grid-template-columns: 1fr; }
   .enterprise-proof-card { min-height: auto; }
   nav { align-items: flex-start; }
-  .hero { min-height: auto; padding: 72px 0; }
-  .hero h1 { font-size: clamp(2.25rem, 9vw, 2.85rem); }
+  .hero { min-height: auto; padding: 56px 0 48px; }
+  .hero h1 { font-size: clamp(1.5rem, 6vw, 2.25rem); }
   .hero-actions, .cta-actions { flex-direction: column; align-items: stretch; }
   .hero-actions a, .cta-actions a { text-align: center; }
   .arch-left, .arch-right, .split-left, .split-right, .cta-left, .cta-right, footer, .flow-section, .layers-section, .pricing-section { padding-left: 24px; padding-right: 24px; }
