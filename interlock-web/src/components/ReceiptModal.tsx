@@ -24,6 +24,20 @@ function decisionClass(decision: string): string {
   return 'badge-block'
 }
 
+// Past tense per decision verb. Naive `${decision}ed` produced "quarantineed"
+// and "denyed", so map explicitly.
+const DECISION_PAST_TENSE: Record<string, string> = {
+  allow: 'allowed',
+  deny: 'denied',
+  block: 'blocked',
+  monitor: 'monitored',
+  quarantine: 'quarantined',
+}
+
+function decisionPastTense(decision: string): string {
+  return DECISION_PAST_TENSE[decision.toLowerCase()] ?? decision
+}
+
 export default function ReceiptModal({ receipt, loading, error, onClose }: Props) {
   return (
     <div className="receipt-overlay receipt-no-print" onClick={onClose}>
@@ -65,7 +79,7 @@ export default function ReceiptModal({ receipt, loading, error, onClose }: Props
                   <span className="receipt-label">Decision</span>
                   <strong>
                     {receipt.tool_name} on {receipt.server_id} was{' '}
-                    {receipt.decision === 'allow' ? 'allowed' : `${receipt.decision}ed`}
+                    {decisionPastTense(receipt.decision)}
                   </strong>
                 </div>
                 <div className={`receipt-risk risk-${riskLabel(receipt.risk_score).toLowerCase()}`}>

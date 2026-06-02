@@ -985,3 +985,67 @@ textarea.form-input { resize: vertical; min-height: 100px; font-family: var(--fo
   .badge, .receipt-chip, .receipt-integrity { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .receipt-no-print { display: none !important; }
 }
+
+/* Audit log print preview + artifact.
+   Mirrors the working Security Receipt modal: a STABLE overlay (opened before
+   the user prints) so the printable doc is already in the DOM when
+   window.print() fires — no mount-on-print race. The doc is its own
+   light-on-white surface with HARDCODED colors (never inherits the dark
+   dashboard theme), so suppressed backgrounds can't blank it. It renders every
+   row (no virtualization). */
+.audit-print-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(6, 6, 8, .85); backdrop-filter: blur(2px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 32px 16px; overflow: auto;
+}
+.audit-print-shell { width: 100%; max-width: 960px; display: flex; flex-direction: column; gap: 12px; }
+.audit-print-doc {
+  background: #ffffff; color: #000000;
+  border: 1px solid #ccc; border-top: 3px solid #00b3b3;
+  border-radius: 6px; padding: 20px 24px;
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px;
+}
+.audit-print-doc * { color: #000000; }
+.audit-print-head { margin-bottom: 14px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+.audit-print-brand { font-weight: 800; letter-spacing: 2px; font-size: 15px; }
+.audit-print-title { font-size: 13px; font-weight: 700; }
+.audit-print-meta { font-size: 11px; color: #555; }
+.audit-print-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.audit-print-table th, .audit-print-table td {
+  border: 1px solid #bbb; padding: 4px 6px; text-align: left;
+  vertical-align: top; word-break: break-word; font-size: 10px;
+}
+.audit-print-table th { background: #eeeeee; font-weight: 700; }
+.audit-print-foot { margin-top: 12px; font-size: 9px; color: #555; }
+.audit-print-actions { display: flex; gap: 10px; justify-content: center; }
+
+@media print {
+  /* Hide the entire dark app (it's a sibling of the portaled overlay) so it
+     takes NO layout space, then let the print doc flow in normal document flow
+     — this is what lets a long table paginate across pages instead of being
+     clipped to page one. */
+  #root { display: none !important; }
+  /* The Security Receipt print block sets `body * { visibility: hidden }`
+     globally; counter it for our portaled doc so it actually paints. */
+  .audit-print-overlay, .audit-print-overlay * { visibility: visible !important; }
+  .audit-print-overlay {
+    position: static !important; inset: auto !important;
+    display: block !important; overflow: visible !important;
+    padding: 0 !important; background: #ffffff !important; backdrop-filter: none !important;
+  }
+  .audit-print-shell { max-width: none !important; }
+  .audit-print-doc {
+    border: none; border-radius: 0; padding: 0;
+    background: #ffffff !important; color: #000000 !important;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .audit-print-doc *, .audit-print-table th, .audit-print-table td { color: #000000 !important; }
+  .audit-print-table th {
+    background: #eeeeee !important;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .audit-print-table thead { display: table-header-group; }  /* repeat header each page */
+  .audit-print-table tr { page-break-inside: avoid; }
+  .audit-no-print { display: none !important; }
+}

@@ -213,6 +213,7 @@ export interface AuditEvent {
   reason?: string;
   blocked_by?: string;
   drift_severity?: string;
+  scan_time_ms?: number | null;
   [key: string]: unknown;
 }
 

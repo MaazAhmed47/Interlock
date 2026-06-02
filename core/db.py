@@ -14,6 +14,7 @@ plain SQL — no ORM — to keep the surface tiny and review-able.
 
 import os
 import json
+import time
 import secrets
 import sqlite3
 import hashlib
@@ -289,6 +290,7 @@ CREATE TABLE IF NOT EXISTS mcp_audit_log (
     drift_action        TEXT    NOT NULL DEFAULT 'allow',
     drift_types         TEXT    NOT NULL DEFAULT '[]',
     drift_reasons       TEXT    NOT NULL DEFAULT '[]',
+    scan_time_ms        REAL,
     prev_hash           TEXT    NOT NULL DEFAULT '',
     integrity_hash      TEXT    NOT NULL DEFAULT ''
 );
@@ -438,6 +440,7 @@ def init_db() -> None:
         _ensure_column(
             conn, "mcp_audit_log", "drift_reasons", "TEXT NOT NULL DEFAULT '[]'"
         )
+        _ensure_column(conn, "mcp_audit_log", "scan_time_ms", "REAL")
         _ensure_column(conn, "api_keys", "max_response_bytes", "INTEGER DEFAULT 50000")
         _ensure_column(conn, "api_keys", "max_array_items", "INTEGER DEFAULT 500")
         _ensure_column(conn, "mcp_servers", "source_type", "TEXT DEFAULT 'unknown'")
@@ -1832,6 +1835,7 @@ def approve_mcp_tool_baseline(
     """Approve the current stored MCP tool definition as the new trusted baseline."""
     reviewer = reviewer or "operator"
     reason = reason or "Approved current MCP tool definition as the new baseline."
+    t0 = time.perf_counter()
 
     with _db_lock, get_conn() as conn:
         row = conn.execute(
@@ -1884,6 +1888,7 @@ def approve_mcp_tool_baseline(
             "drift_action": "allow",
             "drift_types": [],
             "drift_reasons": [],
+            "scan_time_ms": round((time.perf_counter() - t0) * 1000, 2),
         }
     )
 
@@ -1900,6 +1905,7 @@ def quarantine_mcp_tool(
     """Keep or mark an MCP tool quarantined until an operator approves a new baseline."""
     reviewer = reviewer or "operator"
     reason = reason or "Operator kept this MCP tool quarantined pending review."
+    t0 = time.perf_counter()
 
     with _db_lock, get_conn() as conn:
         row = conn.execute(
@@ -1916,7 +1922,10 @@ def quarantine_mcp_tool(
         drift_types = _unique_list(
             [*(current.get("drift_types") or []), "operator_quarantine"]
         )
-        drift_reasons = _unique_list([*(current.get("drift_reasons") or []), reason])
+        # Keep the detected drift signals as the drift bullets. The operator's
+        # free-text reason is recorded as the audit `reason` (the receipt's WHY),
+        # so appending it here would duplicate it verbatim in the receipt.
+        drift_reasons = list(current.get("drift_reasons") or [])
         conn.execute(
             """
             UPDATE mcp_tool_metadata
@@ -1960,6 +1969,7 @@ def quarantine_mcp_tool(
             "drift_action": "quarantine",
             "drift_types": drift_types,
             "drift_reasons": drift_reasons,
+            "scan_time_ms": round((time.perf_counter() - t0) * 1000, 2),
         }
     )
 
@@ -2026,8 +2036,8 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
                effects, side_effect, data_classes, externality, verification_level,
                confidence, warnings, argument_keys, blocked_by, drift_status,
                drift_severity, drift_action, drift_types, drift_reasons,
-               prev_hash, integrity_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               scan_time_ms, prev_hash, integrity_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ts,
@@ -2051,6 +2061,7 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
                 event.get("drift_action", "allow") or "allow",
                 json.dumps(event.get("drift_types", []) or []),
                 json.dumps(event.get("drift_reasons", []) or []),
+                event.get("scan_time_ms"),
                 prev_hash,
                 integrity_hash,
             ),

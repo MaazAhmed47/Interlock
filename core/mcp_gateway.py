@@ -1,5 +1,7 @@
 import re
 import json
+import time
+import contextvars
 import httpx
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
@@ -10,6 +12,26 @@ from core.tool_metadata import normalize_tool_metadata
 from core import db
 from core.response_scanner import scan_injection, scan_pii_and_volume
 from core.mcp_drift import classify_server_drift
+
+# Per-operation start time for gateway-path latency. Set at the top of each
+# entry point that logs audit events (tool-call proxy, server registration);
+# the audit helpers read it so every MCP audit row carries a real scan time.
+# A ContextVar keeps concurrent async requests isolated.
+_op_start: contextvars.ContextVar[Optional[float]] = contextvars.ContextVar(
+    "mcp_op_start", default=None
+)
+
+
+def _begin_op() -> None:
+    _op_start.set(time.perf_counter())
+
+
+def _elapsed_ms() -> Optional[float]:
+    start = _op_start.get()
+    if start is None:
+        return None
+    return round((time.perf_counter() - start) * 1000, 2)
+
 
 # ── MCP Server Registry ───────────────────────────────────────────────────────
 # Used only as seed data for db.seed_mcp_servers() — never read directly at runtime.
@@ -185,6 +207,7 @@ async def discover_mcp_tools(
     Connect to an MCP server and discover its tools.
     Validates every tool definition before returning.
     """
+    _begin_op()
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
@@ -234,6 +257,7 @@ async def discover_mcp_tools(
                                 ),
                                 "drift_types": [finding["type"]],
                                 "drift_reasons": [finding["reason"]],
+                                "scan_time_ms": _elapsed_ms(),
                             }
                         )
 
@@ -295,6 +319,7 @@ async def proxy_mcp_tool_call(
     Proxy an MCP tool call through the firewall.
     Validates → inspects → routes to MCP server → scans response.
     """
+    _begin_op()
     # 1. Verify server is trusted
     server = db.lookup_mcp_server(server_id)
     if not server:
@@ -649,6 +674,7 @@ def _log_mcp_policy_audit(
     audit = dict(policy_decision.get("audit_context") or {})
     audit["action"] = audit.get("decision") or policy_decision.get("action", "")
     audit["blocked_by"] = blocked_by
+    audit["scan_time_ms"] = _elapsed_ms()
     if extra:
         audit.update(extra)
     db.log_mcp_audit_event(audit)
@@ -807,6 +833,7 @@ def _log_mcp_gateway_audit(
             "warnings": [],
             "argument_keys": sorted((arguments or {}).keys()),
             "blocked_by": blocked_by,
+            "scan_time_ms": _elapsed_ms(),
         }
     )
 
@@ -817,6 +844,7 @@ def register_mcp_server(server_id: str, config: dict) -> dict:
     import logging as _logging
 
     _logger = _logging.getLogger("interlock.mcp_gateway")
+    _begin_op()
     ok = db.register_mcp_server(server_id, config)
     if not ok:
         return {"ok": False, "error": "already_exists"}

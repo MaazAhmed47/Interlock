@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Download, LockKeyhole, LogIn, Receipt, RefreshCw, ShieldCheck } from 'lucide-react'
+import { Download, LockKeyhole, LogIn, Printer, Receipt, RefreshCw, ShieldCheck } from 'lucide-react'
 import { AdminAuditEvent, api, AuditEvent, ScanHistoryEvent, SecurityReceipt } from '../api'
 import { authDisplayName, beginOidcLogin, useAuthSession } from '../auth'
 import { useDashboardData } from '../components/DashLayout'
 import ReceiptModal from '../components/ReceiptModal'
+import AuditPrintView from '../components/AuditPrintView'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
 
 const ACTIONS = ['all', 'allow', 'block', 'monitor', 'quarantine', 'deny']
 const SEVERITIES = ['all', 'safe', 'low', 'medium', 'high', 'critical']
 
-type AuditRow = {
+export type AuditRow = {
   key: string
   timestamp: string
   source: 'scan' | 'mcp'
@@ -42,6 +43,14 @@ function scanRow(event: ScanHistoryEvent, index: number): AuditRow {
   }
 }
 
+// Structural allow/blocklist denies short-circuit before any severity is
+// scored, so drift_severity falls back to the literal "none". Don't render that
+// as a "NONE" badge — a blocked call must never read as harmless.
+function displaySeverity(raw?: string): string {
+  const s = (raw || '').toLowerCase()
+  return s === '' || s === 'none' || s === 'unknown' ? '-' : (raw as string)
+}
+
 function mcpRow(event: AuditEvent, index: number): AuditRow {
   return {
     key: 'mcp-' + (event.id ?? index),
@@ -50,8 +59,9 @@ function mcpRow(event: AuditEvent, index: number): AuditRow {
     actor: event.server_id || '-',
     target: event.tool_name || '-',
     action: event.action || '-',
-    severity: event.drift_severity || '-',
+    severity: displaySeverity(event.drift_severity),
     reason: event.reason || event.matched_rule || '-',
+    scanTime: typeof event.scan_time_ms === 'number' ? event.scan_time_ms : null,
     auditId: typeof event.id === 'number' ? event.id : undefined,
   }
 }
@@ -83,6 +93,7 @@ export default function Audit() {
   const [receiptError, setReceiptError] = useState('')
   const [exporting, setExporting] = useState(false)
   const [exportNote, setExportNote] = useState('')
+  const [printPreviewOpen, setPrintPreviewOpen] = useState(false)
   const session = useAuthSession()
 
   function selectView(next: 'runtime' | 'admin') {
@@ -188,14 +199,24 @@ export default function Audit() {
         <div><h1>Audit Log</h1><p>Runtime decisions and admin control-plane actions in one evidence workspace</p></div>
         <div className="dash-header-actions">
           {view === 'runtime' && (
-            <button
-              className="btn btn-cyan btn-sm"
-              onClick={() => exportReceipts(mcpReceiptRows)}
-              disabled={exporting || mcpReceiptRows.length === 0}
-              title={mcpReceiptRows.length === 0 ? 'No tool-call events to export yet' : 'Download tamper-evident receipts as JSON'}
-            >
-              <Download size={12} />{exporting ? 'Exporting' : 'Export Receipts'}
-            </button>
+            <>
+              <button
+                className="btn btn-cyan btn-sm"
+                onClick={() => exportReceipts(mcpReceiptRows)}
+                disabled={exporting || mcpReceiptRows.length === 0}
+                title={mcpReceiptRows.length === 0 ? 'No tool-call events to export yet' : 'Download tamper-evident receipts as JSON'}
+              >
+                <Download size={12} />{exporting ? 'Exporting' : 'Export Receipts'}
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => setPrintPreviewOpen(true)}
+                disabled={rows.length === 0}
+                title={rows.length === 0 ? 'No events to print yet' : 'Open a print-friendly view of the full log'}
+              >
+                <Printer size={12} />Print / Save PDF
+              </button>
+            </>
           )}
           <button className="btn btn-ghost btn-sm" onClick={refresh} disabled={loadingAudit || loadingScans || adminLoading}>
             <RefreshCw size={12} />{loadingAudit || loadingScans || adminLoading ? 'Loading' : 'Refresh'}
@@ -346,6 +367,14 @@ export default function Audit() {
           loading={receiptLoading}
           error={receiptError}
           onClose={closeReceipt}
+        />
+      )}
+
+      {printPreviewOpen && (
+        <AuditPrintView
+          rows={rows}
+          generatedAt={new Date().toLocaleString()}
+          onClose={() => setPrintPreviewOpen(false)}
         />
       )}
     </div>
