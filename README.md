@@ -464,6 +464,30 @@ flowchart LR
 
 ---
 
+## How Interlock Compares
+
+This compares Interlock against broad approach categories, not specific products. Capabilities within each category vary widely; treat the columns as typical defaults, not absolutes.
+
+Every capability in the Interlock column ships today — see the [Trust Checklist](#trust-checklist) for what is implemented versus what to verify before production.
+
+| Capability | Interlock | Built-in platform tools | Agent frameworks | Static-policy approaches |
+|---|---|---|---|---|
+| Continuous drift detection (re-checked at runtime, not only at setup) | Yes | No | No | No — one-time admission |
+| Deterministic argument bounds (min/max/length/enum on tool args) | Yes | Partial | Manual | Yes |
+| Tamper-evident Security Receipt (hash-chained, exportable per-call evidence) | Yes | No | No | Varies |
+| Multi-layer threat detection (injection / PII / secrets) | Yes | Partial | Manual | Partial |
+| Open source, self-hosted | Yes | No | Often | Varies |
+| No application code changes (endpoint/config change only) | Yes¹ | Native | No | Often |
+| Tamper-evident audit trail (every allow/deny/monitor/quarantine) | Yes | Varies | Manual | Yes |
+
+Legend: **Yes** = available out of the box · **Native** = built into the platform itself · **Partial** = limited or scope-restricted · **Manual** = possible, but you build it · **Often / Varies** = depends on the specific product · **No** = typically not available.
+
+¹ Applications point at the Interlock endpoint — a base-URL change for OpenAI-compatible clients, or a gateway endpoint for MCP. Agent logic is unchanged.
+
+Interlock is not uniquely strong everywhere: static-policy gateways also enforce argument bounds and keep audit trails. Interlock's distinct focus is what changes *after* trust is granted — continuous drift detection and exportable, hash-chained evidence — layered on top of those table-stakes controls.
+
+---
+
 ## Response Scanner
 
 `core/response_scanner.py` implements two response-side scanners used by the MCP gateway:
