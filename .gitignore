@@ -83,3 +83,9 @@ interlock-web/.vercel/
 
 .vercel
 .env*
+
+# Local-only demo scripts and scratch files (kept on disk, never tracked)
+demo/populate_live_demo.py
+demo/valtown-mcp-mock.js
+interlock-web/interlock-landing-reference.html
+interlock-web/public/interlock-landing-reference.html
