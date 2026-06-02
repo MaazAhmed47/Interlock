@@ -973,17 +973,33 @@ textarea.form-input { resize: vertical; min-height: 100px; font-family: var(--fo
   .receipt-grid, .receipt-cols { grid-template-columns: 1fr; }
 }
 
-/* Print: isolate the receipt document, light theme for paper/PDF */
+/* Print: isolate the receipt document, light theme for paper/PDF.
+   Self-contained, mirroring the audit print view below: the modal is PORTALED to
+   <body> (sibling of #root), so we hide #root entirely and let the receipt overlay
+   flow as the page. The old `.receipt-printable` visibility approach printed blank
+   because the modal still rendered inside #root, and the audit block's global
+   `#root { display:none }` removed it (display:none can't be undone by
+   visibility:visible on a descendant). */
 @media print {
+  #root { display: none !important; }
   body * { visibility: hidden !important; }
-  .receipt-printable, .receipt-printable * { visibility: visible !important; }
-  .receipt-overlay { position: absolute; top: 0; left: 0; inset: auto; padding: 0; background: #fff; backdrop-filter: none; display: block; overflow: visible; }
-  .receipt-printable { max-width: none; }
-  .receipt-doc { background: #fff !important; border: 1px solid #ccc; box-shadow: none; }
+  .receipt-overlay, .receipt-overlay * { visibility: visible !important; }
+  .receipt-overlay {
+    position: static !important; inset: auto !important;
+    display: block !important; overflow: visible !important;
+    padding: 0 !important; background: #fff !important; backdrop-filter: none !important;
+  }
+  .receipt-printable { max-width: none !important; }
+  .receipt-doc {
+    background: #fff !important; border: 1px solid #ccc; box-shadow: none;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
   .receipt-doc *, .receipt-doc b, .receipt-doc strong, .receipt-doc code { color: #111 !important; }
   .receipt-label, .receipt-kicker, .receipt-risk-label, .receipt-foot, .receipt-none, .receipt-hash code { color: #555 !important; }
   .badge, .receipt-chip, .receipt-integrity { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .receipt-no-print { display: none !important; }
+  /* keep logical groups from splitting awkwardly across pages */
+  .receipt-section, .receipt-cols, .receipt-grid, .receipt-integrity { page-break-inside: avoid; }
 }
 
 /* Audit log print preview + artifact.

@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { AlertTriangle, FileText, Hash, Link2, Printer, ShieldAlert, ShieldCheck, X } from 'lucide-react'
 import { SecurityReceipt } from '../api'
 
@@ -39,8 +40,12 @@ function decisionPastTense(decision: string): string {
 }
 
 export default function ReceiptModal({ receipt, loading, error, onClose }: Props) {
-  return (
-    <div className="receipt-overlay receipt-no-print" onClick={onClose}>
+  // Portaled to <body> (sibling of #root) so the print block can hide #root and
+  // let this overlay flow as the page — same isolation the audit print view uses.
+  // Rendered inside #root, it printed blank once the audit print CSS added a
+  // global `#root { display:none }`.
+  return createPortal(
+    <div className="receipt-overlay" onClick={onClose}>
       <div className="receipt-printable" onClick={e => e.stopPropagation()}>
         {loading && (
           <div className="receipt-doc receipt-state">
@@ -156,6 +161,7 @@ export default function ReceiptModal({ receipt, loading, error, onClose }: Props
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
