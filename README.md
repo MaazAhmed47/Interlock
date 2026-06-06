@@ -206,10 +206,18 @@ Now an agent calling `refund_user(amount=99999)` is denied before execution — 
 Interlock gives teams one place to inspect agent tool calls, MCP drift, runtime decisions, and audit history before agents touch real systems.
 
 <p align="center">
-  <img src="docs/assets/interlock-dashboard.png" alt="Interlock dashboard showing MCP servers, drift, shadow findings, and prompt scan examples" width="49%">
-  <img src="docs/assets/interlock-demo.png" alt="Interlock gateway flow showing discovery, baseline, policy, scan, and audit stages" width="49%">
+  <img src="./docs/assets/interlock-dashboard.png" alt="Interlock Dashboard" width="820">
 </p>
 
+<p align="center"><strong>Dashboard: live MCP runtime security overview</strong></p>
+
+<br>
+
+<p align="center">
+  <img src="./docs/assets/interlock-demo.png" alt="Interlock Security Receipt" width="820">
+</p>
+
+<p align="center"><strong>Security Receipt: drift evidence, quarantine decision, and hash-chain verification</strong></p>
 ---
 
 ## 2-Minute Chat Proxy Integration
