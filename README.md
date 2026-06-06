@@ -36,6 +36,7 @@ Zero-trust security for AI agents and MCP servers. Interlock sits inline between
 [Watch 2-min Demo](https://youtu.be/zYDgD8Eo7uc) ·
 [Drift Decision Object](docs/drift-decision-object.md) ·
 [Runtime Governance](docs/agentic-runtime-governance.md) ·
+[MCP Runtime Security Threat Model](docs/mcp-runtime-security-threat-model.md) ·
 [OWASP MCP Coverage](docs/interlock-owasp-mcp-coverage.md) ·
 [MCP Threat Map](docs/mcp-threat-map.md) ·
 [Enterprise Evaluation](docs/enterprise-evaluation.md) ·
@@ -405,6 +406,7 @@ Evaluation docs:
 
 - [10-minute evaluator quickstart](docs/evaluator-quickstart.md)
 - [Drift Decision Object](docs/drift-decision-object.md)
+- [MCP Runtime Security Threat Model](docs/mcp-runtime-security-threat-model.md)
 - [Enterprise evaluation guide](docs/enterprise-evaluation.md)
 - [Production readiness](docs/production-readiness.md)
 - [Compliance posture](docs/compliance-posture.md)
