@@ -673,6 +673,8 @@ Expected: risky metadata/effect warnings and a validation decision.
 | `GET /admin/shadow/servers` | List detected shadow MCP servers. |
 | `PATCH /admin/shadow/servers/{id}` | Review a shadow MCP finding. |
 
+The `/ws` real-time scan feed requires an API key via `?api_key=` for browser clients or the `x-api-key` header for non-browser clients.
+
 ---
 
 ## Repository Layout
