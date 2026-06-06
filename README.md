@@ -15,6 +15,8 @@
 [![Tests](https://img.shields.io/badge/tests-214%20passing-green)](https://github.com/MaazAhmed47/Interlock/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
+Interlock is a self-hosted MCP runtime trust layer for AI agents. It detects when approved MCP tools change schema, data access, external reach, or behavior after approval, then can quarantine risky changes before execution.
+
 [![Interlock Demo](./interlock_thumbnail.jpg)](https://www.youtube.com/watch?v=zYDgD8Eo7uc)
 
 ### Interlock catches MCP tools that change after approval: drift detection, runtime policy enforcement, response scanning, and tamper-evident audit logs. Open source, self-hosted.
@@ -43,6 +45,32 @@ Zero-trust security for AI agents and MCP servers. Interlock sits inline between
 [Book Pilot Call](https://calendly.com/maazahmed1856/interlock-demo-15-min)
 
 </div>
+
+---
+
+## When would I use this?
+
+Use Interlock when an AI agent can call MCP tools that touch real systems: files, internal documents, databases, Slack, GitHub, customer records, or deployment workflows.
+
+Example: you approved a read-only MCP tool for internal documents. Later, the same tool name gains external export behavior or starts exposing sensitive data fields. Interlock detects the drift, blocks or quarantines the tool before execution, and records a Security Receipt for review.
+
+---
+
+## Quick start
+
+After cloning the repo, run the local gateway quick start:
+
+```bash
+./scripts/quickstart.sh
+```
+
+Windows PowerShell:
+
+```powershell
+.\scripts\quickstart.ps1
+```
+
+The script creates `.env` if needed, starts the gateway, waits for `/health`, and runs a blocked-prompt smoke test. For the full evaluation path, use the [10-minute evaluator quickstart](docs/evaluator-quickstart.md).
 
 ---
 
