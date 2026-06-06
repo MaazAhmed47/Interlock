@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Interlock — The MCP Security Control Plane</title>
+<title>Interlock - MCP Runtime Trust Layer</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 <link rel="icon" type="image/x-icon" href="/favicon.ico" />
 <link rel="apple-touch-icon" href="/favicon.svg" />
@@ -2112,11 +2112,11 @@ svg text {
   </div>
 
   <div class="hero-content">
-    <h1 class="fade-up">Stop AI agents from leaking data, falling for prompt injection, and trusting tools that silently changed.</h1>
-    <p class="hero-sub fade-up delay-1">Interlock is a runtime security gateway for MCP agents. It blocks injection and data leaks, enforces policy before execution, and uniquely detects when an approved tool changes behavior after you trusted it.</p>
+    <h1 class="fade-up">Stop MCP tools from doing what they were never approved to do.</h1>
+    <p class="hero-sub fade-up delay-1">Interlock is an open-source runtime trust layer for MCP agents. It baselines tools at approval, detects post-approval drift, quarantines risky changes before execution, and records Security Receipts for audit.</p>
     <div class="hero-actions fade-up delay-2">
       <a href="https://calendly.com/maazahmed1856/interlock-demo-15-min" target="_blank" class="btn-red-hero">REQUEST ACCESS</a>
-      <a href="/dashboard/" class="btn-docs-hero">VIEW DASHBOARD</a>
+      <a href="#demo" class="btn-docs-hero">WATCH DEMO</a>
       <a href="https://github.com/MaazAhmed47/Interlock" target="_blank" class="github-star-btn">View on GitHub</a>
     </div>
     <p class="trust-badge">SELF-HOSTED · APACHE 2.0 · OPEN SOURCE</p>
@@ -2142,7 +2142,7 @@ svg text {
     <h2>What is<br>Interlock?</h2>
   </div>
   <div class="arch-right">
-    <p>Interlock is an MCP security control plane for teams using multiple MCP servers and agent tools together. It gives operators one place for tool baselines, drift detection, role-aware policy, response scanning, and structured audit logs across heterogeneous servers. This is not a replacement for server RBAC; it is the centralized policy, audit, and output-scanning layer in front of many MCP servers.</p>
+    <p>Interlock is an MCP runtime trust layer for teams using agents with real tool access. It gives operators one place for tool baselines, drift detection, role-aware policy, response scanning, and structured audit logs across heterogeneous servers. It checks whether a tool is still the one you approved before the agent gets to use it.</p>
   </div>
 </div>
 
@@ -2400,13 +2400,13 @@ svg text {
 <!-- VIDEO DEMO SECTION -->
 <section class="demo-section" id="demo">
   <div class="demo-inner">
-    <div class="demo-eyebrow">Live Demo</div>
-    <h2>See It In Action</h2>
-    <p>Interlock detects and quarantines a critical MCP schema drift in real time</p>
+    <div class="demo-eyebrow">Latest Demo</div>
+    <h2>MCP tool drift blocked before execution</h2>
+    <p>A tool approved as read-only later adds external export and PII access under the same name. Interlock catches the drift, quarantines it, and records the decision.</p>
     <div class="demo-video-wrap">
       <iframe
-        src="https://www.youtube.com/embed/kc5wAbgoEkw"
-        title="Interlock — MCP schema drift detection demo"
+        src="https://www.youtube.com/embed/zYDgD8Eo7uc"
+        title="Interlock demo catching MCP tool drift before execution"
         frameborder="0"
         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
         referrerpolicy="strict-origin-when-cross-origin"
@@ -2863,7 +2863,7 @@ svg text {
 <div class="founder-section">
   <div class="founder-info">
     <strong>Built by Syed Maaz Ahmed</strong><br>
-    Solo founder · Building in public · 30 days · 196 tests
+    Solo founder · Open source · Runtime security for MCP agents
   </div>
   <div class="founder-info" style="text-align:right;">
     <a href="mailto:maaz@getinterlock.dev">maaz@getinterlock.dev</a> &nbsp;·&nbsp;
@@ -2876,7 +2876,7 @@ svg text {
   <div class="footer-grid">
     <div class="footer-brand">
       <div class="footer-brand-name">Interlock</div>
-      <p>MCP security control plane for tool baselines, drift detection, policy enforcement, response scanning, and audit evidence.</p>
+      <p>MCP runtime trust layer for tool baselines, drift detection, policy enforcement, response scanning, and audit evidence.</p>
     </div>
     <div class="footer-col">
       <h5>Product</h5>

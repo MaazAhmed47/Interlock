@@ -15,9 +15,9 @@
 [![Tests](https://img.shields.io/badge/tests-214%20passing-green)](https://github.com/MaazAhmed47/Interlock/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
-[![Interlock Demo](./interlock_thumbnail.jpg)](https://www.youtube.com/watch?v=kc5wAbgoEkw)
+[![Interlock Demo](./interlock_thumbnail.jpg)](https://www.youtube.com/watch?v=zYDgD8Eo7uc)
 
-### Interlock catches MCP tools that change after approval — drift detection, runtime policy enforcement, response scanning, and tamper-evident audit logs. Open source, self-hosted.
+### Interlock catches MCP tools that change after approval: drift detection, runtime policy enforcement, response scanning, and tamper-evident audit logs. Open source, self-hosted.
 
 Zero-trust security for AI agents and MCP servers. Interlock sits inline between agents and tools, validates MCP tool definitions, enforces role-aware policy before execution, scans responses before they reach the model, and audits every allow, deny, monitor, and quarantine decision.
 
@@ -32,7 +32,8 @@ Zero-trust security for AI agents and MCP servers. Interlock sits inline between
 [Product Brief](https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664) ·
 [2-Minute Integration](#2-minute-chat-proxy-integration) ·
 [10-Minute Evaluation](docs/evaluator-quickstart.md) ·
-[Watch 2-min Demo](https://youtu.be/kc5wAbgoEkw) ·
+[Watch 2-min Demo](https://youtu.be/zYDgD8Eo7uc) ·
+[Drift Decision Object](docs/drift-decision-object.md) ·
 [OWASP MCP Coverage](docs/interlock-owasp-mcp-coverage.md) ·
 [MCP Threat Map](docs/mcp-threat-map.md) ·
 [Enterprise Evaluation](docs/enterprise-evaluation.md) ·
@@ -336,6 +337,7 @@ Interlock is strongest when agents are close to real systems: databases, Slack, 
 Evaluation docs:
 
 - [10-minute evaluator quickstart](docs/evaluator-quickstart.md)
+- [Drift Decision Object](docs/drift-decision-object.md)
 - [Enterprise evaluation guide](docs/enterprise-evaluation.md)
 - [Production readiness](docs/production-readiness.md)
 - [Compliance posture](docs/compliance-posture.md)
@@ -538,7 +540,7 @@ clean MCP tool baseline
 -> audit event written
 ```
 
-Watch the short demo: https://youtu.be/kc5wAbgoEkw
+Watch the short demo: https://youtu.be/zYDgD8Eo7uc
 
 ![Interlock MCP drift quarantine demo](docs/assets/mcp-drift-quarantine-demo.png)
 
