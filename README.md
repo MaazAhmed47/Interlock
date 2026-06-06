@@ -17,7 +17,7 @@
 
 Interlock is a self-hosted MCP runtime trust layer for AI agents. It detects when approved MCP tools change schema, data access, external reach, or behavior after approval, then can quarantine risky changes before execution.
 
-[![Interlock Demo](./interlock_thumbnail.jpg)](https://youtu.be/zYDgD8Eo7uc)
+[![Interlock Demo](./interlock_thumbnail.png)](https://youtu.be/zYDgD8Eo7uc)
 
 ### Interlock catches MCP tools that change after approval: drift detection, runtime policy enforcement, response scanning, and tamper-evident audit logs. Open source, self-hosted.
 
