@@ -1,7 +1,7 @@
 ## Verified Status
 | Check | Status |
 |-------|--------|
-| Backend tests | ✅ 214 passing |
+| Backend tests | ✅ 220 passing |
 | Code quality | ✅ ruff · black · mypy (core/routes) |
 | Docker build | ✅ passing |
 | Live demo | ✅ getinterlock.dev |
@@ -12,12 +12,12 @@
 # Interlock
 
 [![CI](https://github.com/MaazAhmed47/Interlock/actions/workflows/tests.yml/badge.svg)](https://github.com/MaazAhmed47/Interlock/actions)
-[![Tests](https://img.shields.io/badge/tests-214%20passing-green)](https://github.com/MaazAhmed47/Interlock/actions)
+[![Tests](https://img.shields.io/badge/tests-220%20passing-green)](https://github.com/MaazAhmed47/Interlock/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 Interlock is a self-hosted MCP runtime trust layer for AI agents. It detects when approved MCP tools change schema, data access, external reach, or behavior after approval, then can quarantine risky changes before execution.
 
-[![Interlock Demo](./interlock_thumbnail.jpg)](https://www.youtube.com/watch?v=zYDgD8Eo7uc)
+[![Interlock Demo](./interlock_thumbnail.jpg)](https://youtu.be/zYDgD8Eo7uc)
 
 ### Interlock catches MCP tools that change after approval: drift detection, runtime policy enforcement, response scanning, and tamper-evident audit logs. Open source, self-hosted.
 
@@ -147,7 +147,7 @@ Interlock/
 ├── models/
 │   └── schemas.py            # Shared Pydantic schemas — ScanResult, ThreatLevel, ResponseScanResult
 ├── interlock-web/            # React dashboard — Vite + TypeScript, drift review and operational views
-├── tests/                    # 185 tests covering drift, MCP gateway, RBAC, provenance, response scan, and more
+├── tests/                    # 220 tests covering drift, MCP gateway, RBAC, provenance, response scan, and more
 ├── helm/                     # Kubernetes Helm chart — HPA, PDB, NetworkPolicy, ServiceMonitor
 ├── demo/                     # Runnable demos (mcp-drift-quarantine-demo.py requires no LLM keys)
 ├── docs/                     # Architecture docs, OWASP MCP coverage, threat model, and evaluation guides
@@ -736,15 +736,21 @@ pytest tests/test_provenance.py
 pytest tests/test_shadow_scanner.py
 ```
 
-Expected counts from the current project state:
+Verified in the latest local run:
+
+| Command | Result |
+|---|---:|
+| `python3 -m pytest tests -q -s` | 220 passed |
+
+Selected suite counts from the current project state:
 
 | Suite | Count |
 |---|---:|
 | `tests/test_response_scanner.py` | 14 |
 | `tests/test_mcp_gateway.py` | 28 |
 | `tests/test_mcp_registry_audit.py` | 9 |
-| `tests/test_mcp_review_api.py` | 4 |
-| `tests/test_new_routes.py` | 7 |
+| `tests/test_mcp_review_api.py` | 6 |
+| `tests/test_new_routes.py` | 19 |
 | `tests/test_provenance.py` | 14 |
 | `tests/test_shadow_scanner.py` | 13 |
 
