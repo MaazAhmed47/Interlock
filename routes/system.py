@@ -128,7 +128,23 @@ async def list_siem_providers(x_api_key: Optional[str] = Header(None)):
 
 @router.websocket("/ws")
 async def websocket_feed(websocket: WebSocket):
-    """Real-time scan-event feed consumed by dashboard.html."""
+    """Real-time scan-event feed.
+
+    Requires a valid API key so live prompt previews and threat metadata are
+    never broadcast to anonymous clients. Supply the key as a ``?api_key=``
+    query parameter (browsers cannot set custom headers on a WebSocket
+    handshake) or, for non-browser clients, an ``x-api-key`` header.
+    """
+    api_key = websocket.query_params.get("api_key") or websocket.headers.get(
+        "x-api-key"
+    )
+    try:
+        proxy.verify_key(api_key)
+    except proxy.HTTPException:
+        # 1008 = policy violation. Reject before accept() so no scan data is sent.
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
     proxy._active_ws.append(websocket)
     try:

@@ -305,17 +305,24 @@ def test_usage_rejects_missing_key():
     assert exc.value.status_code == 401
 
 
+class FakeWebSocket:
+    def __init__(self, api_key=TEST_KEY):
+        self.accepted = False
+        self.closed = None
+        self.query_params = {"api_key": api_key} if api_key else {}
+        self.headers = {}
+
+    async def accept(self):
+        self.accepted = True
+
+    async def close(self, code=1000):
+        self.closed = code
+
+    async def send_json(self, _message):
+        raise AssertionError("No ping should be sent before forced disconnect")
+
+
 def test_websocket_handler_accepts_and_cleans_up_connection():
-    class FakeWebSocket:
-        def __init__(self):
-            self.accepted = False
-
-        async def accept(self):
-            self.accepted = True
-
-        async def send_json(self, _message):
-            raise AssertionError("No ping should be sent before forced disconnect")
-
     async def disconnect_immediately(_seconds):
         raise proxy.WebSocketDisconnect(code=1000)
 
@@ -328,6 +335,24 @@ def test_websocket_handler_accepts_and_cleans_up_connection():
         proxy.asyncio.sleep = original_sleep
 
     assert fake.accepted is True
+    assert fake not in proxy._active_ws
+
+
+def test_websocket_handler_rejects_unauthenticated_connection():
+    fake = FakeWebSocket(api_key=None)
+    run(proxy.websocket_feed(fake))
+
+    assert fake.accepted is False
+    assert fake.closed == 1008
+    assert fake not in proxy._active_ws
+
+
+def test_websocket_handler_rejects_invalid_api_key():
+    fake = FakeWebSocket(api_key="lf-not-a-real-key-zzz")
+    run(proxy.websocket_feed(fake))
+
+    assert fake.accepted is False
+    assert fake.closed == 1008
     assert fake not in proxy._active_ws
 
 
