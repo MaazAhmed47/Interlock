@@ -26,7 +26,6 @@ Zero-trust security for AI agents and MCP servers. Interlock sits inline between
 [![GitHub](https://img.shields.io/badge/GitHub-Interlock-181717?logo=github)](https://github.com/MaazAhmed47/Interlock)
 [![Status](https://img.shields.io/badge/status-pre--release-blue)](#current-state)
 [![MCP](https://img.shields.io/badge/MCP-security%20gateway-00b894)](#mcp-security-controls)
-[![OWASP](https://img.shields.io/badge/OWASP%20MCP-10%2F10-orange)](docs/interlock-owasp-mcp-coverage.md)
 [![Pilot](https://img.shields.io/badge/design%20partners-open-7c3aed)](https://calendly.com/maazahmed1856/interlock-demo-15-min)
 
 [Product Brief](https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664) ·
@@ -34,6 +33,7 @@ Zero-trust security for AI agents and MCP servers. Interlock sits inline between
 [10-Minute Evaluation](docs/evaluator-quickstart.md) ·
 [Watch 2-min Demo](https://youtu.be/zYDgD8Eo7uc) ·
 [Drift Decision Object](docs/drift-decision-object.md) ·
+[Runtime Governance](docs/agentic-runtime-governance.md) ·
 [OWASP MCP Coverage](docs/interlock-owasp-mcp-coverage.md) ·
 [MCP Threat Map](docs/mcp-threat-map.md) ·
 [Enterprise Evaluation](docs/enterprise-evaluation.md) ·
@@ -43,6 +43,22 @@ Zero-trust security for AI agents and MCP servers. Interlock sits inline between
 [Book Pilot Call](https://calendly.com/maazahmed1856/interlock-demo-15-min)
 
 </div>
+
+---
+
+## Why runtime governance matters
+
+Agentic AI security is moving from periodic review to runtime control. Public agentic security guidance highlights the need for live monitoring, baselines that flag drift, rapid containment, and audit evidence.
+
+Interlock is built around that runtime control gap for MCP agents:
+
+* baseline approved MCP tools
+* detect post-approval tool/schema drift
+* enforce quarantine before execution
+* scan prompts and responses
+* produce audit evidence for runtime decisions
+
+Interlock is not affiliated with or endorsed by OWASP. The mapping above describes alignment with public agentic security guidance.
 
 ---
 
