@@ -109,6 +109,20 @@ This makes Interlock different from local-only sidecars and one-time admission c
 
 ---
 
+## Supporting runtime controls
+
+Interlock's wedge is MCP tool drift detection, but the gateway also includes supporting controls for evaluating agent tool access safely:
+
+* **Role-aware policy / RBAC** — enforce different permissions for different agent or operator roles.
+* **Shadow Mode** — observe and score risky behavior without blocking during evaluation.
+* **Response scanning** — inspect outputs for prompt injection, secrets, PII, and oversized responses before they reach the model or user.
+* **API key enforcement** — protect runtime APIs and the `/ws` real-time scan feed.
+* **Tamper-evident audit logs** — record allow, deny, monitor, and quarantine decisions with hash-chain verification.
+* **Security Receipts** — preserve evidence for drift, policy, and quarantine decisions.
+* **Webhook/SIEM-ready events** — export runtime decisions to Slack, Datadog, Splunk, Elastic, PagerDuty, Sumo Logic, or generic webhooks.
+
+---
+
 ## Project Structure
 
 ```text
@@ -218,6 +232,7 @@ Interlock gives teams one place to inspect agent tool calls, MCP drift, runtime 
 </p>
 
 <p align="center"><strong>Security Receipt: drift evidence, quarantine decision, and hash-chain verification</strong></p>
+
 ---
 
 ## 2-Minute Chat Proxy Integration
