@@ -407,6 +407,7 @@ Evaluation docs:
 - [10-minute evaluator quickstart](docs/evaluator-quickstart.md)
 - [Drift Decision Object](docs/drift-decision-object.md)
 - [MCP Runtime Security Threat Model](docs/mcp-runtime-security-threat-model.md)
+- [MCP Runtime Security Coverage Map](docs/mcp-vulnerability-coverage-map.md) - what Interlock directly addresses, partially addresses, and does not claim to solve.
 - [Enterprise evaluation guide](docs/enterprise-evaluation.md)
 - [Production readiness](docs/production-readiness.md)
 - [Compliance posture](docs/compliance-posture.md)
