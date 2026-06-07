@@ -30,7 +30,6 @@ MAX_MCP_TOOL_LIMIT = 500
 MAX_MCP_AUDIT_LIMIT = 500
 
 
-
 def _tool_inventory_with_server_policy(
     server_id: Optional[str] = None, limit: int = MAX_MCP_TOOL_LIMIT
 ) -> list[dict]:
@@ -85,9 +84,7 @@ def _tool_inventory_with_server_policy(
 
 
 @router.get("/mcp/servers")
-async def mcp_list_servers(
-    limit: int = 100, x_api_key: Optional[str] = Header(None)
-):
+async def mcp_list_servers(limit: int = 100, x_api_key: Optional[str] = Header(None)):
     """List all registered MCP servers."""
     proxy.verify_key(x_api_key)
     safe_limit = clamp_limit(limit, default=100, maximum=MAX_MCP_SERVER_LIMIT)

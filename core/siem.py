@@ -399,7 +399,7 @@ async def send_to_siem(
                         SIEM_PROVIDERS["pagerduty"]["url_template"],
                         context="PagerDuty SIEM",
                     ),
-                    json=event
+                    json=event,
                 )
                 return {
                     "provider": "pagerduty",

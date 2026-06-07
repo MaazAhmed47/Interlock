@@ -28,7 +28,6 @@ router = APIRouter()
 MAX_RECEIPT_EXPORT_LIMIT = 1000
 
 
-
 def _export_filename(from_ts: Optional[str], to_ts: Optional[str], fmt: str) -> str:
     def _stamp(ts: Optional[str]) -> str:
         if not ts:
