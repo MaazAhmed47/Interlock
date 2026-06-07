@@ -36,7 +36,7 @@ Register MCP servers, discover tools, then call tools through Interlock:
 
 ```bash
 curl -X POST http://localhost:8001/mcp/servers \
-  -H "x-api-key: lf-dev-key-456" \
+  -H "x-api-key: <YOUR_INTERLOCK_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
     "server_id": "internal-slack",
@@ -49,7 +49,7 @@ curl -X POST http://localhost:8001/mcp/servers \
 
 ```bash
 curl -X POST http://localhost:8001/mcp/call \
-  -H "x-api-key: lf-dev-key-456" \
+  -H "x-api-key: <YOUR_INTERLOCK_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
     "server_id": "internal-slack",

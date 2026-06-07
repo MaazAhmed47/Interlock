@@ -21,7 +21,7 @@ Interlock includes role-aware policy for agent tool calls. The goal is simple: a
 
 ```bash
 curl -X POST http://localhost:8001/inspect/tool-call \
-  -H "x-api-key: lf-dev-key-456" \
+  -H "x-api-key: <YOUR_INTERLOCK_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
     "tool_name": "delete_record",
@@ -41,7 +41,7 @@ Expected: denied by RBAC before execution.
 
 ```bash
 curl -X POST http://localhost:8001/inspect/tool-call \
-  -H "x-api-key: lf-dev-key-456" \
+  -H "x-api-key: <YOUR_INTERLOCK_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
     "tool_name": "write_file",
@@ -61,7 +61,7 @@ Expected: denied because a readonly agent cannot write files.
 
 ```bash
 curl -X POST http://localhost:8001/inspect/tool-call \
-  -H "x-api-key: lf-dev-key-456" \
+  -H "x-api-key: <YOUR_INTERLOCK_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
     "tool_name": "run_sql",

@@ -154,12 +154,12 @@ assert "[REDACTED-CREDIT-CARD]" in r.sanitized_content
 print("  OK")
 
 # ── Test 6: api_key pattern is redacted ───────────────────────────────────────
-print("Test 6: api_key: sk-abc123 redacted ...")
-r = scan_pii_and_volume(json.dumps({"result": "api_key: sk-abc123xyz"}))
+print("Test 6: api_key: example-api-key redacted ...")
+r = scan_pii_and_volume(json.dumps({"result": "api_key: example-api-key-value"}))
 assert r.is_threat
 assert r.threat_type == "OUTPUT_DATA_LEAK"
 assert r.sanitized_content is not None
-assert "sk-abc123xyz" not in r.sanitized_content
+assert "example-api-key-value" not in r.sanitized_content
 assert "[REDACTED-API-KEY]" in r.sanitized_content
 print("  OK")
 
@@ -207,7 +207,7 @@ print("  OK")
 
 # ── Test 11: Bearer token is redacted ────────────────────────────────────────
 print("Test 11: Bearer token redacted ...")
-bearer_text = json.dumps({"result": "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abc"})
+bearer_text = json.dumps({"result": "Authorization: Bearer <EXAMPLE_BEARER_TOKEN>"})
 r = scan_pii_and_volume(bearer_text)
 assert r.is_threat
 assert r.threat_type == "OUTPUT_DATA_LEAK"
@@ -491,7 +491,7 @@ Test 2: injection — ignore previous instructions ... OK
 Test 3: two injection patterns accumulate confidence ... OK
 Test 4: SSN (dashed 123-45-6789) is redacted ... OK
 Test 5: 16-digit credit card redacted ... OK
-Test 6: api_key: sk-abc123 redacted ... OK
+Test 6: api_key: example-api-key redacted ... OK
 Test 7: AWS AKIA key redacted ... OK
 Test 8: response > 50KB with no PII → CONTEXT_OVERSHARING ... OK
 Test 9: JSON array with 501 items → CONTEXT_OVERSHARING ... OK

@@ -224,7 +224,7 @@ return {
 | 3 | Two injection patterns in one response | confidence accumulates, still `PROMPT_INJECTION` |
 | 4 | SSN (dashed: 123-45-6789) | redacted to `[REDACTED-SSN]`, `safe_to_proceed=True`, `sanitized_content` set |
 | 5 | Credit card (16-digit) | redacted to `[REDACTED-CREDIT-CARD]` |
-| 6 | `api_key: sk-abc123` | redacted to `[REDACTED-API-KEY]` |
+| 6 | `api_key: example-api-key` | redacted to `[REDACTED-API-KEY]` |
 | 7 | AWS key `AKIAIOSFODNN7EXAMPLE` | redacted to `[REDACTED-API-KEY]` |
 | 8 | Response > 50 KB, no PII | `CONTEXT_OVERSHARING`, `safe_to_proceed=True`, `sanitized_content=None` |
 | 9 | JSON array with 501 items | `CONTEXT_OVERSHARING`, `safe_to_proceed=True` |

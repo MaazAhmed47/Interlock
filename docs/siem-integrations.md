@@ -109,7 +109,7 @@ Interlock can dispatch scan results to Slack, Datadog, Splunk HEC, Elastic, Page
 
 ```bash
 curl -X POST http://localhost:8001/siem/test \
-  -H "x-api-key: lf-dev-key-456" \
+  -H "x-api-key: <YOUR_INTERLOCK_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
     "provider": "slack",
