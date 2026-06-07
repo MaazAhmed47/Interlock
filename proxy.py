@@ -21,6 +21,7 @@ from core.policy import policy_scan, ROLE_POLICIES
 from core.shadow_mode import calculate_risk_score
 from core.siem import trigger_siem_dispatch
 from core.webhook import trigger_webhook
+from config import api_docs_enabled, cors_allowed_origins
 from models.schemas import (  # noqa: F401
     ChatMessage,
     ChatRequest,
@@ -74,17 +75,22 @@ async def lifespan(app: FastAPI):
     yield
 
 
+_api_docs_enabled = api_docs_enabled()
+
 app = FastAPI(
     title="Interlock",
     description="OpenAI-compatible reverse proxy with AI security scanning",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if _api_docs_enabled else None,
+    redoc_url="/redoc" if _api_docs_enabled else None,
+    openapi_url="/openapi.json" if _api_docs_enabled else None,
 )
 _default_openapi_builder = app.openapi
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("ALLOWED_ORIGINS", "*").split(","),
+    allow_origins=cors_allowed_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )

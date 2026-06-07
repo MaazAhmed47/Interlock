@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, List
 from models.schemas import ScanResult
+from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
 
 # ── SIEM Provider Configurations ──────────────────────────────────────────────
 SIEM_PROVIDERS: dict[str, dict[str, Any]] = {
@@ -303,7 +304,10 @@ async def send_to_siem(
     try:
         if provider == "datadog":
             region = config.get("region", "us")
-            url = SIEM_PROVIDERS["datadog"]["url_template"].format(region=region)
+            url = ensure_safe_outbound_url(
+                SIEM_PROVIDERS["datadog"]["url_template"].format(region=region),
+                context="Datadog SIEM",
+            )
             event = build_datadog_event(
                 result, api_key_prefix, config.get("source", "interlock")
             )
@@ -320,8 +324,11 @@ async def send_to_siem(
                 }
 
         elif provider == "splunk_hec":
-            url = SIEM_PROVIDERS["splunk_hec"]["url_template"].format(
-                url=config["url"].rstrip("/")
+            url = ensure_safe_outbound_url(
+                SIEM_PROVIDERS["splunk_hec"]["url_template"].format(
+                    url=config["url"].rstrip("/")
+                ),
+                context="Splunk SIEM",
             )
             event = build_splunk_event(result, api_key_prefix)
             headers = {
@@ -340,7 +347,10 @@ async def send_to_siem(
 
         elif provider == "elastic":
             index = config.get("index", "interlock-logs")
-            url = f"{config['url'].rstrip('/')}/{index}/_doc"
+            url = ensure_safe_outbound_url(
+                f"{config['url'].rstrip('/')}/{index}/_doc",
+                context="Elastic SIEM",
+            )
             event = build_elastic_event(result, api_key_prefix)
             headers = {
                 "Authorization": f"ApiKey {config['api_key']}",
@@ -359,7 +369,10 @@ async def send_to_siem(
         elif provider == "slack":
             event = build_slack_event(result, api_key_prefix)
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.post(config["webhook_url"], json=event)
+                url = ensure_safe_outbound_url(
+                    config["webhook_url"], context="Slack webhook"
+                )
+                resp = await client.post(url, json=event)
                 return {
                     "provider": "slack",
                     "status": resp.status_code,
@@ -382,7 +395,11 @@ async def send_to_siem(
             )
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.post(
-                    SIEM_PROVIDERS["pagerduty"]["url_template"], json=event
+                    ensure_safe_outbound_url(
+                        SIEM_PROVIDERS["pagerduty"]["url_template"],
+                        context="PagerDuty SIEM",
+                    ),
+                    json=event
                 )
                 return {
                     "provider": "pagerduty",
@@ -405,7 +422,8 @@ async def send_to_siem(
             }
             headers = config.get("headers", {})
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.post(config["url"], json=payload, headers=headers)
+                url = ensure_safe_outbound_url(config["url"], context="Webhook SIEM")
+                resp = await client.post(url, json=payload, headers=headers)
                 return {
                     "provider": "webhook",
                     "status": resp.status_code,
@@ -415,6 +433,13 @@ async def send_to_siem(
         else:
             return {"provider": provider, "ok": False, "error": "unknown_provider"}
 
+    except OutboundUrlRejected as exc:
+        return {
+            "provider": provider,
+            "ok": False,
+            "error": "unsafe_outbound_url",
+            "message": str(exc),
+        }
     except httpx.TimeoutException:
         return {"provider": provider, "ok": False, "error": "timeout"}
     except httpx.ConnectError:

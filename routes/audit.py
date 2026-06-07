@@ -20,9 +20,13 @@ from fastapi.responses import JSONResponse
 
 import proxy
 from core import db
+from core.limits import clamp_limit
 from core import receipt as receipt_builder
 
 router = APIRouter()
+
+MAX_RECEIPT_EXPORT_LIMIT = 1000
+
 
 
 def _export_filename(from_ts: Optional[str], to_ts: Optional[str], fmt: str) -> str:
@@ -39,6 +43,7 @@ async def export_receipts(
     from_ts: Optional[str] = Query(None, alias="from"),
     to_ts: Optional[str] = Query(None, alias="to"),
     format: str = "json",
+    limit: int = 500,
     x_api_key: Optional[str] = Header(None),
 ):
     """Export a batch of Security Receipts for a time range as a download."""
@@ -54,7 +59,8 @@ async def export_receipts(
             ),
         )
 
-    rows = db.list_mcp_audit_logs_between(from_ts, to_ts)
+    safe_limit = clamp_limit(limit, default=500, maximum=MAX_RECEIPT_EXPORT_LIMIT)
+    rows = db.list_mcp_audit_logs_between(from_ts, to_ts, limit=safe_limit)
     chain = db.verify_audit_chain()
     batch = receipt_builder.build_batch(
         rows,

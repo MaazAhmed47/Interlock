@@ -5,6 +5,8 @@ from fastapi import APIRouter, Header, HTTPException
 
 import proxy
 from core import db
+from core.limits import clamp_limit
+from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
 from core.mcp_gateway import (
     discover_mcp_tools,
     list_mcp_servers,
@@ -23,12 +25,19 @@ from models.schemas import (
 
 router = APIRouter()
 
+MAX_MCP_SERVER_LIMIT = 100
+MAX_MCP_TOOL_LIMIT = 500
+MAX_MCP_AUDIT_LIMIT = 500
 
-def _tool_inventory_with_server_policy(server_id: Optional[str] = None) -> list[dict]:
-    tools = db.list_mcp_tool_metadata(server_id)
+
+
+def _tool_inventory_with_server_policy(
+    server_id: Optional[str] = None, limit: int = MAX_MCP_TOOL_LIMIT
+) -> list[dict]:
+    tools = db.list_mcp_tool_metadata(server_id, limit=limit)
     seen = {(tool.get("server_id"), tool.get("tool_name")) for tool in tools}
 
-    for server in list_mcp_servers():
+    for server in list_mcp_servers(limit=limit):
         sid = server.get("server_id")
         if server_id and sid != server_id:
             continue
@@ -72,14 +81,17 @@ def _tool_inventory_with_server_policy(server_id: Optional[str] = None) -> list[
             )
             seen.add(key)
 
-    return tools
+    return tools[:limit]
 
 
 @router.get("/mcp/servers")
-async def mcp_list_servers(x_api_key: Optional[str] = Header(None)):
+async def mcp_list_servers(
+    limit: int = 100, x_api_key: Optional[str] = Header(None)
+):
     """List all registered MCP servers."""
     proxy.verify_key(x_api_key)
-    return {"servers": list_mcp_servers()}
+    safe_limit = clamp_limit(limit, default=100, maximum=MAX_MCP_SERVER_LIMIT)
+    return {"servers": list_mcp_servers(limit=safe_limit)}
 
 
 @router.post("/mcp/servers")
@@ -88,6 +100,10 @@ async def mcp_register(
 ):
     """Register a new MCP server (requires manual verification before use)."""
     proxy.verify_key(x_api_key)
+    try:
+        ensure_safe_outbound_url(request.url, context="MCP server")
+    except OutboundUrlRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return register_mcp_server(request.server_id, request.dict())
 
 
@@ -100,25 +116,35 @@ async def mcp_discover(
     Every tool is validated for malicious patterns before being returned.
     """
     proxy.verify_key(x_api_key)
+    try:
+        ensure_safe_outbound_url(request.server_url, context="MCP discovery")
+    except OutboundUrlRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return await discover_mcp_tools(request.server_url, server_id=request.server_id)
 
 
 @router.get("/mcp/tools")
 async def mcp_tools(
-    server_id: Optional[str] = None, x_api_key: Optional[str] = Header(None)
+    server_id: Optional[str] = None,
+    limit: int = 100,
+    x_api_key: Optional[str] = Header(None),
 ):
     """List persisted MCP tool metadata, optionally for one server."""
     proxy.verify_key(x_api_key)
-    return {"tools": _tool_inventory_with_server_policy(server_id)}
+    safe_limit = clamp_limit(limit, default=100, maximum=MAX_MCP_TOOL_LIMIT)
+    return {"tools": _tool_inventory_with_server_policy(server_id, safe_limit)}
 
 
 @router.get("/mcp/tools/drifted")
 async def mcp_drifted_tools(
-    server_id: Optional[str] = None, x_api_key: Optional[str] = Header(None)
+    server_id: Optional[str] = None,
+    limit: int = 100,
+    x_api_key: Optional[str] = Header(None),
 ):
     """List MCP tools that need operator review because they changed or are quarantined."""
     proxy.verify_key(x_api_key)
-    return {"tools": db.list_drifted_mcp_tools(server_id)}
+    safe_limit = clamp_limit(limit, default=100, maximum=MAX_MCP_TOOL_LIMIT)
+    return {"tools": db.list_drifted_mcp_tools(server_id, limit=safe_limit)}
 
 
 @router.post("/mcp/tools/{server_id}/{tool_name}/approve")
@@ -170,7 +196,8 @@ async def mcp_audit(limit: int = 100, x_api_key: Optional[str] = Header(None)):
     """List recent MCP audit decisions."""
     proxy.verify_key(x_api_key)
     try:
-        return {"events": db.list_mcp_audit_logs(limit)}
+        safe_limit = clamp_limit(limit, default=100, maximum=MAX_MCP_AUDIT_LIMIT)
+        return {"events": db.list_mcp_audit_logs(safe_limit)}
     except Exception:
         proxy.logger.exception("Failed to list MCP audit logs")
         return {"events": [], "warning": "audit_unavailable"}

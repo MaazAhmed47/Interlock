@@ -1478,12 +1478,18 @@ def lookup_mcp_server_by_url(url: str) -> Optional[Dict[str, Any]]:
     return _mcp_row_to_dict(row) if row else None
 
 
-def list_mcp_servers() -> List[Dict[str, Any]]:
-    """Return all registered MCP servers ordered by registration time."""
+def list_mcp_servers(limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Return registered MCP servers ordered by registration time."""
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM mcp_servers ORDER BY registered_at ASC"
-        ).fetchall()
+        if limit is not None:
+            rows = conn.execute(
+                "SELECT * FROM mcp_servers ORDER BY registered_at ASC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM mcp_servers ORDER BY registered_at ASC"
+            ).fetchall()
     return [_mcp_row_to_dict(r) for r in rows]
 
 
@@ -1774,10 +1780,22 @@ def lookup_mcp_tool_metadata(
     return _mcp_tool_metadata_row_to_dict(row) if row else None
 
 
-def list_mcp_tool_metadata(server_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_mcp_tool_metadata(
+    server_id: Optional[str] = None, limit: Optional[int] = None
+) -> List[Dict[str, Any]]:
     """List stored MCP tool metadata, optionally filtered by server."""
     with get_conn() as conn:
-        if server_id:
+        if server_id and limit is not None:
+            rows = conn.execute(
+                """
+                SELECT * FROM mcp_tool_metadata
+                 WHERE server_id = ?
+                 ORDER BY tool_name ASC
+                 LIMIT ?
+                """,
+                (server_id, limit),
+            ).fetchall()
+        elif server_id:
             rows = conn.execute(
                 """
                 SELECT * FROM mcp_tool_metadata
@@ -1785,6 +1803,15 @@ def list_mcp_tool_metadata(server_id: Optional[str] = None) -> List[Dict[str, An
                  ORDER BY tool_name ASC
                 """,
                 (server_id,),
+            ).fetchall()
+        elif limit is not None:
+            rows = conn.execute(
+                """
+                SELECT * FROM mcp_tool_metadata
+                 ORDER BY server_id ASC, tool_name ASC
+                 LIMIT ?
+                """,
+                (limit,),
             ).fetchall()
         else:
             rows = conn.execute("""
@@ -1804,10 +1831,23 @@ def get_known_tool_names(server_id: str) -> set:
     return {row_value(r, "tool_name", 0) for r in rows if row_value(r, "tool_name", 0)}
 
 
-def list_drifted_mcp_tools(server_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_drifted_mcp_tools(
+    server_id: Optional[str] = None, limit: Optional[int] = None
+) -> List[Dict[str, Any]]:
     """List MCP tools that need operator review because they changed or are quarantined."""
     with get_conn() as conn:
-        if server_id:
+        if server_id and limit is not None:
+            rows = conn.execute(
+                """
+                SELECT * FROM mcp_tool_metadata
+                 WHERE server_id = ?
+                   AND (status != 'active' OR drift_severity != 'none' OR drift_action != 'allow')
+                 ORDER BY last_changed DESC, tool_name ASC
+                 LIMIT ?
+                """,
+                (server_id, limit),
+            ).fetchall()
+        elif server_id:
             rows = conn.execute(
                 """
                 SELECT * FROM mcp_tool_metadata
@@ -1816,6 +1856,16 @@ def list_drifted_mcp_tools(server_id: Optional[str] = None) -> List[Dict[str, An
                  ORDER BY last_changed DESC, tool_name ASC
                 """,
                 (server_id,),
+            ).fetchall()
+        elif limit is not None:
+            rows = conn.execute(
+                """
+                SELECT * FROM mcp_tool_metadata
+                 WHERE status != 'active' OR drift_severity != 'none' OR drift_action != 'allow'
+                 ORDER BY last_changed DESC, server_id ASC, tool_name ASC
+                 LIMIT ?
+                """,
+                (limit,),
             ).fetchall()
         else:
             rows = conn.execute("""

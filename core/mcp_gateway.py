@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 from models.schemas import ScanResult, ThreatLevel
 from core.metadata_policy import evaluate_metadata_policy
+from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
 from core.tool_inspector import inspect_tool_call
 from core.tool_metadata import normalize_tool_metadata
 from core import db
@@ -209,6 +210,7 @@ async def discover_mcp_tools(
     """
     _begin_op()
     try:
+        server_url = ensure_safe_outbound_url(server_url, context="MCP discovery")
         async with httpx.AsyncClient(timeout=timeout) as client:
             payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
             resp = await client.post(server_url, json=payload)
@@ -301,6 +303,8 @@ async def discover_mcp_tools(
                 "validations": validation_results,
             }
 
+    except OutboundUrlRejected as exc:
+        return {"ok": False, "error": "unsafe_mcp_server_url", "message": str(exc)}
     except httpx.TimeoutException:
         return {"ok": False, "error": "MCP server timeout", "server_url": server_url}
     except Exception as e:
@@ -586,6 +590,7 @@ async def proxy_mcp_tool_call(
 
     # 5. Forward to actual MCP server
     try:
+        server_url = ensure_safe_outbound_url(server["url"], context="MCP server")
         async with httpx.AsyncClient(timeout=30.0) as client:
             payload = {
                 "jsonrpc": "2.0",
@@ -593,7 +598,7 @@ async def proxy_mcp_tool_call(
                 "method": "tools/call",
                 "params": {"name": tool_name, "arguments": arguments},
             }
-            resp = await client.post(server["url"], json=payload)
+            resp = await client.post(server_url, json=payload)
             data = resp.json()
 
             # 6. Scan the response — MCP06 (injection) then MCP10 (PII + volume).
@@ -658,6 +663,9 @@ async def proxy_mcp_tool_call(
                 "policy_decision": policy_decision,
             }
 
+    except OutboundUrlRejected as exc:
+        _log_mcp_policy_audit(policy_decision, blocked_by="unsafe_mcp_server_url")
+        return {"ok": False, "error": "unsafe_mcp_server_url", "message": str(exc)}
     except httpx.TimeoutException:
         _log_mcp_policy_audit(policy_decision, blocked_by="mcp_timeout")
         return {"ok": False, "error": "mcp_server_timeout"}
@@ -872,6 +880,6 @@ def register_mcp_server(server_id: str, config: dict) -> dict:
     return {"ok": True, "server_id": server_id, "verified": False}
 
 
-def list_mcp_servers() -> list:
-    """List all registered MCP servers from the DB."""
-    return db.list_mcp_servers()
+def list_mcp_servers(limit: Optional[int] = None) -> list:
+    """List registered MCP servers from the DB."""
+    return db.list_mcp_servers(limit=limit)

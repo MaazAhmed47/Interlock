@@ -10,6 +10,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 import proxy
 from core import db
+from core.limits import clamp_limit
 from core.detector import PII_PATTERNS
 from core.history import get_history, get_stats, save_scan
 from core.policy import rbac_scan
@@ -29,6 +30,10 @@ from models.schemas import (
 )
 
 router = APIRouter()
+
+MAX_SCAN_HISTORY_LIMIT = 500
+MAX_SHADOW_LOG_LIMIT = 500
+
 logger = logging.getLogger("interlock.scan")
 ASYNC_SCAN_PERSISTENCE = os.getenv(
     "INTERLOCK_SYNC_SCAN_PERSISTENCE", "false"
@@ -212,7 +217,8 @@ async def scan_output(request: ScanRequest, x_api_key: Optional[str] = Header(No
 @router.get("/scan/history")
 async def scan_history(limit: int = 50, x_api_key: Optional[str] = Header(None)):
     _, raw_key = proxy.verify_key(x_api_key)
-    return {"events": get_history(raw_key, limit)}
+    safe_limit = clamp_limit(limit, default=50, maximum=MAX_SCAN_HISTORY_LIMIT)
+    return {"events": get_history(raw_key, safe_limit)}
 
 
 @router.get("/scan/stats")
@@ -249,7 +255,8 @@ async def shadow_scan(
 @router.get("/shadow/logs")
 async def shadow_logs(limit: int = 50, x_api_key: Optional[str] = Header(None)):
     proxy.verify_key(x_api_key)
-    return {"logs": get_shadow_logs(limit)}
+    safe_limit = clamp_limit(limit, default=50, maximum=MAX_SHADOW_LOG_LIMIT)
+    return {"logs": get_shadow_logs(safe_limit)}
 
 
 @router.get("/shadow/stats")

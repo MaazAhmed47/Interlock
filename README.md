@@ -75,6 +75,25 @@ The script creates `.env` if needed, starts the gateway, waits for `/health`, an
 
 ---
 
+## Design Partner Pilot
+
+I'm looking for 3-5 MCP builders, AI agent teams, or security engineers to test Interlock on one real non-production MCP workflow.
+
+Best fit:
+
+* MCP server builders
+* AI agent teams with real tool access
+* DevTools / AI infra builders
+* security engineers evaluating MCP risk
+
+Pilot mode:
+Self-hosted, local, or isolated demo environment only.
+
+Interested?
+Email: `maaz@getinterlock.dev`
+
+---
+
 ## Why runtime governance matters
 
 Agentic AI security is moving from periodic review to runtime control. Public agentic security guidance highlights the need for live monitoring, baselines that flag drift, rapid containment, and audit evidence.
@@ -805,6 +824,25 @@ https://interlock.onrender.com/v1
 
 Use hosted endpoints only with an issued Interlock API key.
 
+### Hosted safety model
+
+Interlock is currently intended for self-hosted, single-tenant deployments. Treat an Interlock API key as access to that deployment's runtime trust state, including MCP server registrations, drift review actions, audit receipts, and shadow-mode logs.
+
+Do not share one hosted backend or one API key across unrelated external testers. For design partners, use a self-hosted install or an isolated demo environment per team. Shared hosted multi-tenant mode requires tenant/key scoping before production use.
+
+Production/hosted deployments should set:
+
+- `INTERLOCK_ENV=production`
+- explicit `ALLOWED_ORIGINS` for the dashboard origin; `*` is rejected in production
+- `ENABLE_API_DOCS=false` unless the API docs are intentionally gated elsewhere
+- default outbound URL protection enabled; only set `INTERLOCK_ALLOW_PRIVATE_OUTBOUND=true` for controlled local/private deployments
+
+Secrets hygiene:
+
+- do not commit `.env` or real provider keys
+- rotate keys if they appear in screenshots, logs, recordings, demos, support threads, or chat transcripts
+- use restricted demo/dev keys for recordings and public demos
+
 Kubernetes production-style deploys should create secrets out-of-band and reference them from Helm:
 
 ```bash
@@ -834,6 +872,11 @@ Common variables:
 | `DATABASE_URL` | Optional Postgres connection string for hosted/production deployments. |
 | `REDIS_URL` | Optional Redis connection string for shared rate limits across workers/pods. |
 | `FIREWALL_DB_PATH` | Local SQLite path; defaults to `data/firewall.db`. |
+| `INTERLOCK_ENV` | Set to `production` for hosted deployments; local/dev keeps permissive defaults. |
+| `ALLOWED_ORIGINS` | Required in production; comma-separated dashboard origins for CORS. |
+| `ENABLE_API_DOCS` | Defaults to off in production and on in local/dev. |
+| `INTERLOCK_PROTECT_OUTBOUND_URLS` | Enables SSRF-oriented outbound URL checks; defaults on in production. |
+| `INTERLOCK_ALLOW_PRIVATE_OUTBOUND` | Override for controlled private/local outbound URLs; avoid on shared hosted deployments. |
 | `SHADOW_SCAN_ENABLED` | Opt-in background shadow MCP probing. |
 | `SHADOW_SCAN_INTERVAL` | Shadow scan interval in seconds. |
 
@@ -863,28 +906,6 @@ High-value next work:
 1. Add encoding-bypass detection to `scan_injection()` for base64, Unicode lookalikes, and ROT13.
 2. Deploy and harden the hosted React dashboard for design partners.
 3. Continue production hardening around hosted auth, SIEM polish, and design-partner onboarding.
-
----
-
-## Design Partner Program
-
-Interlock is looking for teams deploying agents with real tool access.
-
-You get:
-
-- 90 days free
-- direct founder support
-- integration help
-- roadmap influence
-- custom risk scan for your MCP stack
-
-Useful fit:
-
-- you run or plan to run MCP servers
-- agents can read/write operational data
-- you need auditability, policy, and runtime enforcement before broad rollout
-
-[Book a 15-minute pilot call](https://calendly.com/maazahmed1856/interlock-demo-15-min)
 
 ---
 
