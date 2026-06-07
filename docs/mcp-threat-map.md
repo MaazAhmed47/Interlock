@@ -1,14 +1,14 @@
 # Interlock — MCP Threat Map
 
-This page is the buyer-friendly threat map for Interlock. It explains the MCP risks Interlock is designed to reduce, how each risk maps to an Interlock control, and which claims are safe to use in public outreach.
+This document summarizes MCP runtime-security risks and how Interlock maps to them.
 
 Interlock does not replace secure MCP server design. It adds a runtime control plane in front of MCP tools: metadata baselining, drift detection, role-aware policy, argument inspection, response scanning, provenance checks, shadow-server discovery, and audit evidence.
 
 ---
 
-## Safe Positioning
+## Public Positioning
 
-Use this wording in emails, docs, and demos:
+Concise public positioning:
 
 > Interlock maps to the OWASP MCP Top 10 by enforcing runtime policy, detecting schema and provenance drift, scanning arguments and responses, probing operator-provided shadow targets, and auditing every allow, deny, monitor, and quarantine decision.
 
@@ -37,13 +37,13 @@ OWASP does not certify Interlock, and shadow discovery only scans operator-provi
 
 ---
 
-## Public Claims To Use
+## Public Wording Notes
 
-These are safe:
+Use careful wording:
 
-- Interlock provides a documented OWASP MCP Top 10 coverage mapping.
-- Interlock currently maps to 10/10 OWASP MCP categories in its coverage document.
-- MCP04 and MCP09 are covered through provenance policy and operator-provided shadow target discovery.
+- Interlock provides a practical mapping against OWASP MCP Top 10-style risk categories.
+- Interlock maps its runtime controls to the relevant risk categories in its practical mapping.
+- MCP04 and MCP09 are partially mapped through provenance policy and operator-provided shadow target discovery.
 - Shadow scanning is opt-in and only probes configured targets.
 - Response scanning handles prompt-injection patterns, PII, secrets, and response-volume anomalies.
 - Every allow, deny, monitor, and quarantine decision is auditable.
@@ -69,9 +69,9 @@ These need careful wording:
 
 ---
 
-## Best Demo Story
+## Demo Flow
 
-Use this 2-minute flow:
+A concise demo flow:
 
 1. Register a clean MCP tool baseline.
 2. Simulate a changed tool schema that adds external sharing.
@@ -80,7 +80,7 @@ Use this 2-minute flow:
 5. Interlock blocks or redacts the response.
 6. Show the audit log with decision, reason, matched rule, and evidence.
 
-This demo makes Interlock feel concrete: tool changed, risk detected, policy enforced, evidence recorded.
+This demo keeps the story concrete: tool changed, risk detected, policy enforced, evidence recorded.
 
 ---
 

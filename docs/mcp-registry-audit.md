@@ -60,32 +60,16 @@ quarantined - critical drift was detected and execution is blocked until review
 
 ## Drift Severity
 
-Interlock does not treat every hash change equally. It classifies drift by what changed and maps it to a runtime action:
+Interlock does not treat every hash change equally. It classifies drift by whether the approved tool contract changed in a way that affects runtime trust. Typical actions include allow, monitor, deny, and quarantine.
 
-```text
-none     -> allow
-minor    -> monitor
-moderate -> monitor
-high     -> deny
-critical -> quarantine
-```
+The examples below are illustrative, not exact enforcement logic. Deployed policy can tune severity and action per environment.
 
-Examples:
-
-```text
-description changed                 -> minor / monitor
-optional schema field added          -> moderate / monitor
-required schema field added          -> high / deny
-sensitive field added                -> high / deny
-sensitive data class added            -> high / deny
-internal tool became external         -> high / deny
-authenticated user became service account -> high / deny
-write/admin/execute scope added       -> high / deny
-read-only tool became mutating        -> high / deny
-execute/delete/share/export added     -> critical / quarantine
-mutating tool became destructive      -> critical / quarantine
-metadata verification level downgraded -> high / deny
-```
+| Change type | Typical handling |
+|---|---|
+| Description-only or documentation changes | Usually monitor or review |
+| Schema, data-class, external-reach, or effect expansion | May require denial or re-approval |
+| Export, delete, destructive, or external-sharing capability added | May trigger quarantine before execution |
+| Metadata confidence, provenance, or verification downgrade | May require review before continued trust |
 
 ## Runtime Use
 

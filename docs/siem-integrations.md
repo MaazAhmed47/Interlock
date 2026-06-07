@@ -41,7 +41,7 @@ Interlock can dispatch scan results to Slack, Datadog, Splunk HEC, Elastic, Page
   "siem_configs": [
     {
       "provider": "datadog",
-      "api_key": "<datadog-api-key>",
+      "api_key": "<YOUR_DATADOG_API_KEY>",
       "region": "us",
       "source": "interlock",
       "min_severity": "MEDIUM"
@@ -60,7 +60,7 @@ Interlock can dispatch scan results to Slack, Datadog, Splunk HEC, Elastic, Page
     {
       "provider": "splunk_hec",
       "url": "https://splunk.example.com:8088",
-      "token": "<hec-token>",
+      "token": "<YOUR_SPLUNK_HEC_TOKEN>",
       "verify_ssl": true,
       "min_severity": "LOW"
     }
@@ -78,7 +78,7 @@ Interlock can dispatch scan results to Slack, Datadog, Splunk HEC, Elastic, Page
     {
       "provider": "elastic",
       "url": "https://elastic.example.com",
-      "api_key": "<elastic-api-key>",
+      "api_key": "<YOUR_ELASTIC_API_KEY>",
       "index": "interlock-logs",
       "verify_ssl": true
     }
@@ -96,7 +96,7 @@ Interlock can dispatch scan results to Slack, Datadog, Splunk HEC, Elastic, Page
     {
       "provider": "webhook",
       "url": "https://security.example.com/interlock-alerts",
-      "headers": {"Authorization": "Bearer <token>"},
+      "headers": {"Authorization": "Bearer <YOUR_WEBHOOK_BEARER_TOKEN>"},
       "min_severity": "LOW"
     }
   ]

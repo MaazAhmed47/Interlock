@@ -31,14 +31,14 @@ From the repo root, set your Interlock API settings:
 
 ```bash
 export INTERLOCK_API_URL=https://interlock.onrender.com
-export INTERLOCK_API_KEY=<your-interlock-api-key>
+export INTERLOCK_API_KEY=<YOUR_INTERLOCK_API_KEY>
 ```
 
 For local development:
 
 ```bash
 export INTERLOCK_API_URL=http://localhost:8001
-export INTERLOCK_API_KEY=<your-local-api-key>
+export INTERLOCK_API_KEY=<YOUR_LOCAL_INTERLOCK_API_KEY>
 ```
 
 Then add this MCP config to your OpenCode config, or copy `examples/opencode/opencode.json`:

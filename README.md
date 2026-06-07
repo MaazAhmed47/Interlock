@@ -485,22 +485,22 @@ Interlock is not a replacement for secure MCP server design or native MCP server
 
 ---
 
-## Current Coverage
+## Practical Risk Mapping
 
-Interlock currently maps to **10 / 10 OWASP MCP Top 10 categories**.
+Interlock maintains a practical coverage map against OWASP MCP Top 10-style risk categories. This is Interlock's own mapping, not a certification or endorsement.
 
-| OWASP MCP Risk | Status | Primary Interlock Control |
+| OWASP MCP Risk | Mapping | Primary Interlock Control |
 |---|---|---|
-| MCP01 Token Mismanagement & Secret Exposure | Covered | Response scanning, secret redaction, audit |
-| MCP02 Privilege Escalation via Scope Creep | Covered | Metadata baselines, drift detection, quarantine |
-| MCP03 Tool Poisoning | Covered | Full-schema tool validation and baseline comparison |
-| MCP04 Supply Chain Attacks | Covered | Provenance metadata, trusted registry policy, hash/version drift |
-| MCP05 Command Injection & Execution | Covered | Tool argument inspection and policy enforcement |
-| MCP06 Intent Flow Subversion | Covered | Tool-response prompt injection detection |
-| MCP07 Insufficient Auth & Authorization | Covered | Per-agent role RBAC before tool execution |
-| MCP08 Lack of Audit and Telemetry | Covered | Durable MCP audit log for every decision |
-| MCP09 Shadow MCP Servers | Covered | Operator-provided shadow target discovery and review lifecycle |
-| MCP10 Context Injection & Over-Sharing | Covered | PII redaction, secret redaction, volume anomaly detection |
+| MCP01 Token Mismanagement & Secret Exposure | Mapped | Response scanning, secret redaction, audit |
+| MCP02 Privilege Escalation via Scope Creep | Mapped | Metadata baselines, drift detection, quarantine |
+| MCP03 Tool Poisoning | Mapped | Full-schema tool validation and baseline comparison |
+| MCP04 Supply Chain Attacks | Mapped | Provenance metadata, trusted registry policy, hash/version drift |
+| MCP05 Command Injection & Execution | Mapped | Tool argument inspection and policy enforcement |
+| MCP06 Intent Flow Subversion | Mapped | Tool-response prompt injection detection |
+| MCP07 Insufficient Auth & Authorization | Mapped | Per-agent role RBAC before tool execution |
+| MCP08 Lack of Audit and Telemetry | Mapped | Durable MCP audit log for every decision |
+| MCP09 Shadow MCP Servers | Mapped | Operator-provided shadow target discovery and review lifecycle |
+| MCP10 Context Injection & Over-Sharing | Mapped | PII redaction, secret redaction, volume anomaly detection |
 
 Full mapping: [docs/interlock-owasp-mcp-coverage.md](docs/interlock-owasp-mcp-coverage.md)
 
@@ -588,7 +588,6 @@ Interlock is not uniquely strong everywhere: static-policy gateways also enforce
 | `scan_injection()` | MCP06 | Checks 20 prompt-injection patterns with confidence scoring; blocks matched tool responses. |
 | `scan_pii_and_volume()` | MCP10 | Applies 12 PII/secret redaction rules and flags byte-count or array-size volume anomalies. |
 
-Known hardening TODO: add encoding-bypass detection for base64, Unicode lookalikes, and ROT13 in `scan_injection()`.
 
 ---
 
@@ -903,11 +902,7 @@ Working now:
 - Render backend deployment
 - React dashboard foundation in `interlock-web/`
 
-High-value next work:
-
-1. Add encoding-bypass detection to `scan_injection()` for base64, Unicode lookalikes, and ROT13.
-2. Deploy and harden the hosted React dashboard for design partners.
-3. Continue production hardening around hosted auth, SIEM polish, and design-partner onboarding.
+For active roadmap work, see GitHub issues and discussions.
 
 ---
 

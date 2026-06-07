@@ -53,7 +53,7 @@ Reference links:
 
 ## Buyer-Facing Language
 
-Use this wording in outreach or diligence:
+Suggested wording for security reviews:
 
 ```text
 Interlock is currently pre-certification. For pilots, we can provide architecture, threat model, production hardening, retention, secret rotation, and audit evidence. Infrastructure vendor compliance documents are available from Supabase/Vercel/Render depending on the selected deployment path and plan. Interlock does not currently claim SOC 2, ISO 27001, HIPAA, or GDPR certification as its own product.

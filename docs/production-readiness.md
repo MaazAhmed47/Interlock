@@ -1,6 +1,6 @@
 # Interlock Production Readiness
 
-Interlock is ready for serious design-partner evaluation today. This document separates what is already implemented from the remaining work required before broad enterprise production rollout.
+Interlock is prepared for controlled design-partner evaluation. This document separates what is already implemented from the remaining work required before broad enterprise production rollout.
 
 ## Executive Status
 

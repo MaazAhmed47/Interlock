@@ -1,192 +1,163 @@
-# Interlock — OWASP MCP Top 10 Coverage
+# Interlock OWASP MCP Practical Mapping
 
-> Interlock turns MCP security from trust-on-first-use into continuous verification: baseline every tool, detect schema drift, enforce policy before execution, scan responses, and audit every decision.
+Interlock maintains a practical product-evaluation mapping against OWASP MCP Top 10-style risk categories. This document explains where Interlock has runtime controls, where those controls are complementary, and where teams still need server-side or infrastructure controls.
 
----
+This is Interlock's own practical mapping for product evaluation. It is not an OWASP certification, endorsement, or formal compliance claim.
 
-## How Interlock Maps to the OWASP MCP Top 10
+## How To Read This
 
-The OWASP MCP Top 10 (2025) is the first security framework dedicated to the Model Context Protocol. It catalogs the ten most critical risk categories in MCP deployments.
+- **Mapped** means Interlock has a runtime control that directly helps evaluate or reduce the risk.
+- **Partially mapped** means Interlock contributes evidence or enforcement, but the risk also depends on MCP server design, identity, deployment, or infrastructure controls.
+- **Out of scope** means the risk should be handled outside Interlock.
 
----
-
-### MCP01:2025 — Token Mismanagement & Secret Exposure
-
-**The risk:** Hard-coded credentials, long-lived tokens, and secrets stored in model memory or protocol logs. Attackers retrieve them through prompt injection, compromised context, or debug traces.
-
-**Interlock coverage: ✅ COVERED**
-
-- Response scanning detects secrets, API keys, and tokens in tool outputs before they reach the model.
-- Audit log records every tool response, enabling forensic review of credential exposure.
-- Policy rules can deny tool calls from roles that should never access credential-bearing tools.
+Interlock should be evaluated as one runtime trust layer, not as a complete replacement for secure MCP server implementation.
 
 ---
 
-### MCP02:2025 — Privilege Escalation via Scope Creep
+## MCP01: Token Mismanagement And Secret Exposure
 
-**The risk:** Agent permissions expand over time beyond their intended scope. Tools that were once read-only quietly gain write or external-sharing capabilities.
+**Risk:** Tools, responses, logs, or model context may expose credentials, API keys, bearer tokens, or other sensitive values.
 
-**Interlock coverage: ✅ COVERED**
+**Interlock mapping: Mapped**
 
-- Baseline captures the exact effects, side effects, and data classes a tool had at registration.
-- Drift detection fires when a tool's permissions expand beyond its baseline.
-- Quarantine holds any scope expansion until an operator approves it with a reason.
-- Audit trail records exactly when permissions changed and who approved them.
-
----
-
-### MCP03:2025 — Tool Poisoning
-
-**The risk:** Malicious instructions hidden in tool descriptions, schemas, or outputs trick AI into executing harmful actions. CyberArk's "Poison Everywhere" research demonstrated Full-Schema Poisoning (FSP) — attacks embedded not just in descriptions but in parameter names, types, required fields, and default values.
-
-**Interlock coverage: ✅ COVERED (core capability)**
-
-- Metadata normalization captures the full tool schema at registration: effects, side effects, data classes, externality, identity mode.
-- Baseline comparison detects any change to any schema field — descriptions, parameter names, types, defaults, enums, required fields.
-- Drift scoring classifies changes by risk level (high, medium, low).
-- Auto-quarantine holds high-risk changes until an operator reviews them.
-
-**Source:** CyberArk "Poison Everywhere" — https://www.cyberark.com/resources/threat-research-blog/poison-everywhere-no-output-from-your-mcp-server-is-safe
+- Response scanning can detect and redact common secret and credential patterns before output is forwarded downstream.
+- Audit logs preserve the runtime decision and evidence category for later review.
+- Policy can restrict roles from calling tools likely to handle sensitive data.
 
 ---
 
-### MCP04:2025 — Software Supply Chain Attacks & Dependency Tampering
+## MCP02: Privilege Escalation Via Scope Creep
 
-**The risk:** Compromised MCP packages, typosquatted servers, and backdoored dependencies introduce malicious behavior into otherwise trusted tool chains.
+**Risk:** A tool that was approved for narrow use later gains broader capability, such as write access, export behavior, or new sensitive data access.
 
-**Interlock coverage: ✅ COVERED**
+**Interlock mapping: Mapped**
 
-- Provenance metadata captured at registration: source_type, registry, package_name, package_version, source_url, source_hash.
-- Trusted-source policy: allowed registries, allowed source URLs, pinned versions, pinned SHA-256 hashes. Stored in `system_config` and managed via `PUT /admin/mcp/provenance-policy`.
-- Missing provenance → monitor (log, proceed). Unknown registry → monitor. Version/hash mismatch → quarantine (block until operator approves). Operator-set deny → permanent block.
-- Drift detection: hash or version change after prior approval → quarantine + `provenance_drift` audit event. Re-evaluated on every tool call — not just at registration — to catch postmark-mcp style silent package substitutions.
-- Full audit trail: `provenance_check`, `provenance_drift`, `provenance_approved`, `provenance_denied`, `provenance_block` events in `mcp_audit_log`.
-- Operator override API: `PATCH /admin/mcp/servers/{id}/provenance` to approve or permanently deny a quarantined server.
-
-**Real-world context:** The postmark-mcp supply chain attack (Sep 2025) — a fake npm package impersonated Postmark's email service, silently BCC'ing every agent-sent email to an attacker for weeks. Interlock detects hash or behavioral change after a malicious version replaces a trusted one, and re-evaluates provenance on every tool call.
+- Tool baselines capture the approved capability envelope.
+- Drift detection compares the current tool definition with the approved baseline.
+- Risky changes can require review or quarantine before execution.
+- Audit evidence records the decision and review path.
 
 ---
 
-### MCP05:2025 — Command Injection & Execution
+## MCP03: Tool Poisoning
 
-**The risk:** Agents build shell commands, SQL queries, or API calls from untrusted input without validation, enabling arbitrary code execution on the host.
+**Risk:** Tool metadata, descriptions, schemas, or outputs may steer an agent toward unsafe behavior.
 
-**Interlock coverage: ✅ COVERED**
+**Interlock mapping: Mapped**
 
-- Argument scanning inspects every tool call's parameters before execution.
-- Pattern detection for shell metacharacters, SQL injection, and path traversal payloads.
-- Policy enforcement blocks tool calls with suspicious argument patterns before they reach the MCP server.
-
-**Real-world context:** Endor Labs found that among 2,614 MCP implementations, 82% use filesystem operations prone to path traversal, 67% use code injection-prone APIs, and 34% use command injection-prone APIs.
-
-**Source:** Endor Labs MCP AppSec Report — https://www.endorlabs.com/learn/classic-vulnerabilities-meet-ai-infrastructure-why-mcp-needs-appsec
+- Tool metadata is normalized and baselined at approval time.
+- Schema and metadata changes can be detected as drift.
+- Response scanning can inspect tool output before it reaches the next model step.
+- High-risk changes can be held for review instead of silently trusted.
 
 ---
 
-### MCP06:2025 — Intent Flow Subversion / Prompt Injection via Context
+## MCP04: Supply Chain Attacks And Dependency Tampering
 
-**The risk:** Malicious instructions embedded in retrieved data, tool responses, or external content hijack the agent's reasoning chain, subverting the user's original intent.
+**Risk:** A package, connector, or MCP server dependency may be replaced, backdoored, typosquatted, or altered after trust was established.
 
-**Interlock coverage: ✅ COVERED**
+**Interlock mapping: Partially mapped**
 
-- Response scanning detects 20 injection patterns (16 shared with request scanning + 4 response-specific) in tool outputs before they reach the model.
-- Confidence scoring: each matched pattern adds 0.35; one hit is enough to block the response entirely.
-- Full audit trail: matched patterns, threat type, and confidence are written to the MCP audit log on every block.
-- Detection covers nested JSON values — `json.dumps` flattening ensures injection in any field is caught without recursive traversal.
+- Provenance metadata can be recorded and reviewed as part of server trust.
+- Version, source, and hash changes can be treated as runtime trust signals.
+- Audit logs can preserve provenance checks and operator decisions.
 
----
-
-### MCP07:2025 — Insufficient Authentication & Authorization
-
-**The risk:** Missing or weak authentication on MCP endpoints allows unauthorized clients to invoke tools. No authorization checks mean any authenticated user can access any functionality.
-
-**Interlock coverage: ✅ COVERED**
-
-- Runtime policy enforcement evaluates role-aware RBAC before every tool call — not after.
-- Per-agent role definitions: readonly, finance, devops, admin, custom.
-- Policy rules deny tool access based on agent role, tool effects, and data classification.
-- Every allow/deny/monitor/quarantine decision is recorded with the role and rule that triggered it.
+Still required: dependency scanning, package signing, SBOMs, secure build pipelines, and server-side supply-chain controls.
 
 ---
 
-### MCP08:2025 — Lack of Audit and Telemetry
+## MCP05: Command Injection And Execution
 
-**The risk:** Without comprehensive logging, security incidents go undetected, forensic investigation becomes impossible, and compliance requirements cannot be met.
+**Risk:** Tool arguments may carry shell, SQL, path traversal, or other dangerous payloads into an MCP server.
 
-**Interlock coverage: ✅ COVERED (core capability)**
+**Interlock mapping: Partially mapped**
 
-- Centralized audit log records every decision — allow, deny, monitor, quarantine — with full context: timestamp, agent role, tool name, server, matched rule, and reason.
-- Every drift detection event is logged with the before/after diff.
-- Every operator review (approve baseline, keep quarantined) is logged with operator identity and reason.
-- Searchable, exportable audit trail for compliance.
+- Runtime policy and argument inspection can block suspicious calls before they reach the MCP server.
+- Audit logs record the decision and matched risk category.
 
----
-
-### MCP09:2025 — Shadow MCP Servers
-
-**The risk:** Unapproved MCP server deployments operating outside the organization's security governance, often with default credentials and permissive configurations.
-
-**Interlock coverage: ✅ COVERED**
-
-- Operator-provided target list: `POST /admin/shadow/targets` adds URLs to probe. No arbitrary network scanning — discovery is always operator-authorized.
-- Periodic probing via `httpx.AsyncClient` (5s timeout). Detects MCP endpoints by: JSON `tools` array in 200 response, `error` key in 200 response, or 401/403 (auth-gated endpoint).
-- Findings stored in `shadow_mcp_servers`: URL, probe_path, status, first_seen, last_seen, auth_required, tool_listing_available, risk_score.
-- Risk scoring: 10 base + 40 for tool listing available + 30 for unauthenticated listing + 20 for auth-required. Maximum 100.
-- Lifecycle management: unreviewed → approved / ignored / quarantined via `PATCH /admin/shadow/servers/{id}`.
-- Full audit trail: `shadow_discovered` on first detection, `shadow_reviewed` on operator action.
-- Opt-in activation: `SHADOW_SCAN_ENABLED=true` env var (default off). Scan interval configurable via `SHADOW_SCAN_INTERVAL` (default 3600s).
+Still required: secure MCP server implementation, input validation, sandboxing where appropriate, least-privilege credentials, and server-side tests.
 
 ---
 
-### MCP10:2025 — Context Injection & Over-Sharing
+## MCP06: Intent Flow Subversion
 
-**The risk:** Tools return more data than the agent needs, exposing sensitive information to the model context. Tool outputs carry PII, credentials, or internal data that leak through the conversation.
+**Risk:** Retrieved content or tool output may contain instructions that try to hijack the agent's next step.
 
-**Interlock coverage: ✅ COVERED**
+**Interlock mapping: Mapped**
 
-- In-place PII redaction: 12 pattern rules cover SSN (dashed and undashed), credit cards, email, phone, passwords, API keys (generic, AWS AKIA format), bearer tokens, and private key blocks. Sensitive values are replaced with typed markers (`[REDACTED-SSN]`, `[REDACTED-API-KEY]`, etc.) before the response reaches the model.
-- Sanitized content is returned to the caller rather than blocking — legitimate data in mixed responses is preserved.
-- Data volume anomaly detection: responses exceeding per-key byte or array-item thresholds are flagged as `CONTEXT_OVERSHARING` and logged. Volume alone does not block; it warns.
-- Per-key configurable thresholds (`max_response_bytes`, `max_array_items`) managed via `PATCH /admin/keys/{prefix}`. Defaults: 50 KB / 500 items.
-- Full audit trail: `threat_type`, `matched_patterns`, and `redactions` written to the MCP audit log on every scan with a finding.
-- Data classification in tool metadata enables policy rules restricting which agent roles access tools that handle sensitive data classes.
+- Response scanning can inspect tool output for instruction-like or exfiltration-oriented content.
+- Runtime decisions can block, monitor, or record suspicious output before downstream reuse.
+- Audit evidence keeps the finding explainable for review.
 
 ---
 
-## Coverage Summary
+## MCP07: Insufficient Authentication And Authorization
 
-| ID | OWASP MCP Risk | Interlock Coverage | Key Control |
-|---|---|---|---|
-| MCP01 | Token Mismanagement & Secret Exposure | ✅ Covered | Response scanning, audit log |
-| MCP02 | Privilege Escalation via Scope Creep | ✅ Covered | Drift detection, baseline comparison |
-| MCP03 | Tool Poisoning | ✅ Covered (core) | Full-schema baseline, quarantine |
-| MCP04 | Supply Chain Attacks | ✅ Covered | Provenance metadata, registry policy, hash pinning, drift detection |
-| MCP05 | Command Injection & Execution | ✅ Covered | Argument scanning, policy enforcement |
-| MCP06 | Intent Flow Subversion | ✅ Covered | Injection pattern matching on responses, confidence scoring, full audit trail |
-| MCP07 | Insufficient Auth & Authorization | ✅ Covered | Role-aware RBAC, policy enforcement |
-| MCP08 | Lack of Audit and Telemetry | ✅ Covered (core) | Centralized audit log |
-| MCP09 | Shadow MCP Servers | ✅ Covered | Operator-provided target probing, risk scoring, lifecycle management |
-| MCP10 | Context Injection & Over-Sharing | ✅ Covered | In-place PII redaction (12 rules), volume anomaly detection, per-key thresholds |
+**Risk:** Agents or users may invoke tools they should not be allowed to use.
 
-**10 of 10 fully covered.**
+**Interlock mapping: Partially mapped**
+
+- Role-aware policy can enforce agent or operator permissions before tool execution.
+- API key enforcement protects Interlock runtime APIs and feeds.
+- Audit logs record role, rule, and decision context.
+
+Still required: MCP server authentication, identity provider configuration, tenant isolation where needed, and least-privilege credentials.
 
 ---
 
-## Key Real-World Incidents
+## MCP08: Lack Of Audit And Telemetry
 
-**postmark-mcp supply chain attack (Sep 2025):** A fake npm package impersonated Postmark's email service, silently BCC'ing every agent-sent email to an attacker. Interlock's baseline + drift detection catches when a trusted tool's behavior changes. *(Source: CSO Online)*
+**Risk:** Teams may not know which agent called which tool, why a call was allowed or blocked, or what changed over time.
 
-**CyberArk Full-Schema Poisoning (Dec 2025):** Demonstrated that every field in a tool schema — not just descriptions — is an attack vector. Interlock baselines every schema field and detects changes at the field level. *(Source: CyberArk "Poison Everywhere")*
+**Interlock mapping: Mapped**
 
-**Endor Labs MCP Dependency Report:** Among 2,614 MCP implementations, 82% use filesystem operations prone to path traversal, 67% use code injection-prone APIs, 34% use command injection-prone APIs. *(Source: Endor Labs)*
+- Runtime audit logs record allow, deny, monitor, and quarantine decisions.
+- Security Receipts preserve evidence for drift, policy, and quarantine decisions.
+- Webhook/SIEM-style event paths can support external monitoring workflows where configured.
 
 ---
 
-## Sources
+## MCP09: Shadow MCP Servers
 
-- OWASP MCP Top 10: https://owasp.org/www-project-mcp-top-10/
-- OWASP MCP03 Tool Poisoning: https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025–Tool-Poisoning
-- OWASP MCP09 Shadow Servers: https://owasp.org/www-project-mcp-top-10/2025/MCP09-2025–Shadow-MCP-Servers
-- CyberArk "Poison Everywhere": https://www.cyberark.com/resources/threat-research-blog/poison-everywhere-no-output-from-your-mcp-server-is-safe
-- Endor Labs MCP AppSec Report: https://www.endorlabs.com/learn/classic-vulnerabilities-meet-ai-infrastructure-why-mcp-needs-appsec
-- postmark-mcp incident: https://www.csoonline.com/article/4064009/trust-in-mcp-takes-first-in-the-wild-hit-via-squatted-postmark-connector.html
+**Risk:** Teams may run unapproved MCP endpoints outside the expected gateway or governance path.
+
+**Interlock mapping: Partially mapped**
+
+- Shadow discovery is opt-in and limited to operator-provided targets.
+- Findings can be reviewed with status, risk context, and audit evidence.
+- Interlock does not claim to automatically discover every MCP server.
+
+Still required: asset inventory, network governance, endpoint ownership, and deployment controls.
+
+---
+
+## MCP10: Context Injection And Over-Sharing
+
+**Risk:** Tools may return more data than the agent needs, including PII, credentials, internal records, or instruction-bearing content.
+
+**Interlock mapping: Mapped**
+
+- Response scanning can redact common sensitive-data patterns.
+- Oversized or unusual responses can be flagged for review.
+- Tool metadata can support role-aware restrictions for sensitive data classes.
+
+Still required: app-level data isolation, MCP server least privilege, prompt/context design, and customer-specific retention policy.
+
+---
+
+## Summary
+
+| Risk area | Interlock mapping | Primary control |
+|---|---|---|
+| Token and secret exposure | Mapped | Response scanning, audit evidence |
+| Scope creep and privilege expansion | Mapped | Tool baselines, drift detection, quarantine |
+| Tool poisoning | Mapped | Metadata baseline, drift review, response scanning |
+| Supply-chain tampering | Partially mapped | Provenance evidence and runtime drift signals |
+| Command injection | Partially mapped | Argument inspection and policy enforcement |
+| Intent flow subversion | Mapped | Response scanning and runtime decisions |
+| Authorization gaps | Partially mapped | Role-aware policy and API key enforcement |
+| Audit and telemetry gaps | Mapped | Audit logs, Security Receipts, SIEM-ready events |
+| Shadow MCP servers | Partially mapped | Operator-provided target review |
+| Context over-sharing | Mapped | Response scanning and data-class policy |
+
+Use this page as a practical evaluation guide. Test Interlock against the target MCP workflow, then pair it with secure server design, identity controls, deployment hardening, and operational monitoring.
