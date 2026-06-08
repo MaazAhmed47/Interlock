@@ -148,7 +148,7 @@ def test_oidc_rejects_unapproved_algorithm(oidc_keys):
             "groups": ["interlock-operators"],
             "exp": int(time.time()) + 3600,
         },
-        "shared-secret",
+        "shared-secret-for-test-at-least-32-bytes",
         algorithm="HS256",
     )
     token = token.decode("utf-8") if isinstance(token, bytes) else token
