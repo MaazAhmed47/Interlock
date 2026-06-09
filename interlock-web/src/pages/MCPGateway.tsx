@@ -83,7 +83,7 @@ export default function MCPGateway() {
       {drifted.length > 0 && (
         <>
           <div className="dash-section-title" style={{ color: 'var(--orange)' }}>
-            Drifted / Quarantined - {drifted.length} tool{drifted.length !== 1 ? 's' : ''} need review
+            Drifted / Quarantined - {drifted.length} {drifted.length === 1 ? 'tool needs' : 'tools need'} review
           </div>
           <div className="drift-grid" style={{ marginBottom: 28 }}>
             {drifted.map(tool => {

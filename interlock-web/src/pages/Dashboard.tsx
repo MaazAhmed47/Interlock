@@ -60,7 +60,7 @@ function getShadowMetric(shadow: ShadowStats | null) {
     return {
       label: 'Shadow Threat Rate',
       value: Math.round(threatRate * 100) + '%',
-      sub: total + ' shadow scans',
+      sub: `${total} shadow scan${total === 1 ? '' : 's'}`,
     }
   }
 
@@ -111,9 +111,9 @@ function ExecutiveDemoBrief({
   scanCount: number
 }) {
   const environmentLabel = demoMode ? 'Demo evidence' : 'Live environment'
-  const auditLabel = auditCount > 0 ? auditCount + ' evidence events' : 'No evidence yet'
-  const driftLabel = driftedCount > 0 ? driftedCount + ' tools need review' : 'No drift pending'
-  const scanLabel = scanCount > 0 ? scanCount + ' scan events' : 'Ready for scans'
+  const auditLabel = auditCount > 0 ? `${auditCount} evidence event${auditCount === 1 ? '' : 's'}` : 'No evidence yet'
+  const driftLabel = driftedCount > 0 ? `${driftedCount} ${driftedCount === 1 ? 'tool needs' : 'tools need'} review` : 'No drift pending'
+  const scanLabel = scanCount > 0 ? `${scanCount} scan event${scanCount === 1 ? '' : 's'}` : 'Ready for scans'
 
   return (
     <div className="exec-demo-panel glow-card">
@@ -154,7 +154,7 @@ function SecurityPosture({ scanStats }: { scanStats: ScanStats | null }) {
         <div className="posture-card">
           <div className="posture-label">Average Risk</div>
           <div className="risk-meter">
-            <div className="risk-meter-top"><strong>{avgRisk}/100</strong><span>{total} scans</span></div>
+            <div className="risk-meter-top"><strong>{avgRisk}/100</strong><span>{total} scan{total === 1 ? '' : 's'}</span></div>
             <div className="risk-bar"><span style={{ width: Math.max(0, Math.min(100, avgRisk)) + '%' }} /></div>
           </div>
         </div>

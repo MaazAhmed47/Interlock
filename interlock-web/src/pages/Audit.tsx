@@ -257,7 +257,7 @@ export default function Audit() {
             <select className="filter-select" value={severity} onChange={e => setSeverity(e.target.value)}>
               {SEVERITIES.map(s => <option key={s} value={s}>{s === 'all' ? 'All severities' : s.toUpperCase()}</option>)}
             </select>
-            <span style={{ fontSize: 12, color: 'var(--dim)' }}>{filtered.length} events</span>
+            <span style={{ fontSize: 12, color: 'var(--dim)' }}>{filtered.length} event{filtered.length === 1 ? '' : 's'}</span>
           </div>
 
           <div className="card glow-card" style={{ padding: 0 }}>

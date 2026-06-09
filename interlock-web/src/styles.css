@@ -21,7 +21,6 @@ body {
   background: var(--black);
   color: var(--white);
   font-family: var(--font-body);
-  overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
 }
 a { color: inherit; text-decoration: none; }
@@ -91,11 +90,12 @@ input, textarea, select {
 .dash-content {
   margin-left: 220px;
   flex: 1;
+  min-width: 0;            /* let wide content (tables) shrink so .table-wrap scrolls instead of pushing the page */
   min-height: 100vh;
   display: flex;
   flex-direction: column;
 }
-.dash-main { padding: 28px; flex: 1; }
+.dash-main { padding: 28px; flex: 1; min-width: 0; }
 .dash-section-title {
   font-size: 11px; font-weight: 600;
   letter-spacing: 2.5px; text-transform: uppercase;
@@ -105,7 +105,7 @@ input, textarea, select {
 }
 .dash-page-header {
   display: flex; align-items: flex-start; justify-content: space-between;
-  margin-bottom: 24px; gap: 16px;
+  margin-bottom: 24px; gap: 16px; flex-wrap: wrap;
 }
 .dash-page-header h1 { font-size: 22px; font-weight: 700; letter-spacing: -.4px; }
 .dash-page-header p { font-size: 13px; color: var(--dim); margin-top: 4px; }
@@ -197,7 +197,7 @@ input, textarea, select {
 .card-title { font-size: 13px; font-weight: 600; letter-spacing: .3px; }
 
 /* ── TABLES ──────────────────────────────────────────────────────────────── */
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; max-width: 100%; }
 table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .data-table th {
   text-align: left; padding: 8px 12px;
@@ -267,7 +267,7 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .form-input:focus { border-color: rgba(0,229,200,.4); }
 .form-input::placeholder { color: rgba(245,240,232,.25); }
 textarea.form-input { resize: vertical; min-height: 100px; font-family: var(--font-mono); font-size: 12px; }
-.form-hint { font-size: 12px; color: var(--dim); margin-top: 6px; }
+.form-hint { font-size: 12px; color: var(--dim); margin-top: 6px; overflow-wrap: anywhere; }
 
 /* ── SCAN RESULT ─────────────────────────────────────────────────────────── */
 .scan-result { border: 1px solid var(--border); background: var(--card-bg); padding: 18px; margin-top: 16px; }
@@ -351,7 +351,7 @@ textarea.form-input { resize: vertical; min-height: 100px; font-family: var(--fo
 .level-fill.medium { background: #ffcc00; }
 .level-fill.low { background: rgba(245,240,232,.38); }
 .level-fill.safe { background: var(--cyan); }
-.inline-note { border: 1px solid rgba(255,204,0,.22); background: rgba(255,204,0,.06); color: rgba(245,240,232,.72); padding: 10px 12px; font-size: 12px; margin-bottom: 14px; }
+.inline-note { border: 1px solid rgba(255,204,0,.22); background: rgba(255,204,0,.06); color: rgba(245,240,232,.72); padding: 10px 12px; font-size: 12px; margin-bottom: 14px; overflow-wrap: anywhere; }
 .demo-note { display: inline-flex; align-items: center; width: fit-content; border: 1px solid rgba(0,229,200,.20); background: rgba(0,229,200,.055); color: rgba(245,240,232,.72); padding: 6px 10px; font-family: var(--font-mono); font-size: 10px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; margin-bottom: 14px; }
 
 /* -- EXECUTIVE DEMO BRIEF -------------------------------------------------- */
@@ -543,7 +543,7 @@ textarea.form-input { resize: vertical; min-height: 100px; font-family: var(--fo
 /* -- CONTROL SUMMARY ------------------------------------------------------- */
 .control-summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
   margin-bottom: 18px;
 }
@@ -593,6 +593,7 @@ textarea.form-input { resize: vertical; min-height: 100px; font-family: var(--fo
 
 /* ── RESPONSIVE ──────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
+  .dash-shell { flex-direction: column; }   /* stack mobile nav on top of content instead of beside it */
   .dash-sidebar { display: none; }
   .dash-content { margin-left: 0; }
   .dash-mobile-nav {
@@ -900,7 +901,7 @@ textarea.form-input { resize: vertical; min-height: 100px; font-family: var(--fo
 }
 
 /* ── SECURITY RECEIPT ──────────────────────────────────────────────────────── */
-.dash-header-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.dash-header-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .receipt-row-btn { display: inline-flex; align-items: center; gap: 5px; }
 
 .receipt-overlay {

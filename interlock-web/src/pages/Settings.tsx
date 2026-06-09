@@ -162,7 +162,7 @@ export default function Settings() {
             </div>
           </div>
           {!supabaseStatus.configured && <div className="inline-note">Supabase missing: {supabaseStatus.missing.join(', ')}</div>}
-          {!oidcStatus.configured && <div className="inline-note">Generic OIDC missing: {oidcStatus.missing.join(', ')}</div>}
+          {!oidcStatus.configured && <div className="inline-note">Generic OIDC (optional) — not configured. Add authorization + token endpoints to enable Okta/Auth0/Azure.</div>}
           {oidcError && <ErrorCard message={oidcError} />}
           <div className="login-actions">
             <button className="btn btn-primary" onClick={saveSupabase}><Save size={13} />{supabaseSaved ? 'Saved!' : 'Save Supabase'}</button>
