@@ -25,6 +25,18 @@ export type AuditRow = {
   auditId?: number
 }
 
+function compactCell(value: string, fallback = '-') {
+  const normalized = (value || '').replace(/\s+/g, ' ').trim()
+  return normalized || fallback
+}
+
+function scanReason(event: ScanHistoryEvent) {
+  const parts = [event.reason || event.threat_type || '', event.prompt_preview ? `Prompt: ${event.prompt_preview}` : '']
+    .map(part => compactCell(part, ''))
+    .filter(Boolean)
+  return parts.join(' — ') || '-'
+}
+
 function eventTimestamp(event: AuditEvent) {
   return event.timestamp || event.ts || ''
 }
@@ -35,10 +47,10 @@ function scanRow(event: ScanHistoryEvent, index: number): AuditRow {
     timestamp: event.timestamp,
     source: 'scan',
     actor: event.endpoint || '/scan',
-    target: event.prompt_preview || '-',
+    target: event.endpoint || '/scan',
     action: event.is_threat ? 'block' : 'allow',
     severity: event.threat_level || 'SAFE',
-    reason: event.reason || event.threat_type || '-',
+    reason: scanReason(event),
     scanTime: event.scan_time_ms,
   }
 }
@@ -56,11 +68,11 @@ function mcpRow(event: AuditEvent, index: number): AuditRow {
     key: 'mcp-' + (event.id ?? index),
     timestamp: eventTimestamp(event),
     source: 'mcp',
-    actor: event.server_id || '-',
-    target: event.tool_name || '-',
+    actor: compactCell(event.server_id || '-'),
+    target: compactCell(event.tool_name || '-'),
     action: event.action || '-',
     severity: displaySeverity(event.drift_severity),
-    reason: event.reason || event.matched_rule || '-',
+    reason: compactCell(event.reason || event.matched_rule || '-'),
     scanTime: typeof event.scan_time_ms === 'number' ? event.scan_time_ms : null,
     auditId: typeof event.id === 'number' ? event.id : undefined,
   }
@@ -282,12 +294,12 @@ export default function Audit() {
                             {e.timestamp ? new Date(e.timestamp).toLocaleString() : '-'}
                           </td>
                           <td><StatusBadge value={e.source} /></td>
-                          <td className="mono">{e.actor}</td>
-                          <td className="mono dim" style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.target}</td>
+                          <td className="mono" title={e.actor}>{e.actor}</td>
+                          <td className="mono dim audit-cell-target" title={e.target}>{e.target}</td>
                           <td><StatusBadge value={e.action} /></td>
                           <td>{e.severity !== '-' ? <StatusBadge value={e.severity} /> : <span className="dim">-</span>}</td>
                           <td className="mono dim">{e.scanTime != null ? e.scanTime + 'ms' : '-'}</td>
-                          <td className="dim" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <td className="dim audit-cell-reason" title={e.reason}>
                             {e.reason}
                           </td>
                           <td>

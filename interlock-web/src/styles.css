@@ -211,6 +211,14 @@ table.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 .data-table tr:last-child td { border-bottom: none; }
 .data-table tr:hover td { background: rgba(245,240,232,.02); }
+.audit-cell-target,
+.audit-cell-reason {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.audit-cell-reason { max-width: 300px; }
 .mono { font-family: var(--font-mono); font-size: 12px; }
 .dim  { color: var(--dim); }
 
