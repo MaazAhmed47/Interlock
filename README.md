@@ -1,29 +1,22 @@
-## Verified Status
-| Check | Status |
-|-------|--------|
-| Backend tests | ✅ 220 passing |
-| Code quality | ✅ ruff · black · mypy (core/routes) |
-| Docker build | ✅ passing |
-| Live demo | ✅ getinterlock.dev |
-| Last verified | May 2026 |
-
 <div align="center">
 
 # Interlock
 
 [![CI](https://github.com/MaazAhmed47/Interlock/actions/workflows/tests.yml/badge.svg)](https://github.com/MaazAhmed47/Interlock/actions)
-[![Tests](https://img.shields.io/badge/tests-220%20passing-green)](https://github.com/MaazAhmed47/Interlock/actions)
+[![Tests](https://img.shields.io/badge/tests-228%20passing-green)](https://github.com/MaazAhmed47/Interlock/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
-Interlock is a self-hosted MCP runtime trust layer for AI agents. It detects when approved MCP tools change schema, data access, external reach, or behavior after approval, then can quarantine risky changes before execution.
+Interlock is a self-hosted MCP runtime trust layer for AI agents.
+
+It detects when approved MCP tools change their schema, data access, external reach, side effects, auth scope, or behavior after approval, then can hold or quarantine risky changes before execution and preserve audit evidence.
 
 _Pre-release, design-partner stage — self-hosted, for trying drift detection on one non-production MCP workflow. [Quick start ↓](#quick-start)_
 
 [![Interlock Demo](./interlock_thumbnail.png)](https://youtu.be/zYDgD8Eo7uc)
 
-### Interlock catches MCP tools that change after approval: drift detection, runtime policy enforcement, response scanning, and tamper-evident audit logs. Open source, self-hosted.
+### Stop MCP tools from doing what they were never approved to do.
 
-Zero-trust security for AI agents and MCP servers. Interlock sits inline between agents and tools, validates MCP tool definitions, enforces role-aware policy before execution, scans responses before they reach the model, and audits every allow, deny, monitor, and quarantine decision.
+Interlock focuses on post-approval tool and capability drift: the changes that happen after an MCP tool has already been trusted. It can still enforce policy, scan responses, and record audit evidence, but the core question is whether the tool is still inside the approved trust boundary.
 
 **Live at: https://getinterlock.dev**
 
@@ -48,6 +41,17 @@ Zero-trust security for AI agents and MCP servers. Interlock sits inline between
 [Book Pilot Call](https://calendly.com/maazahmed1856/interlock-demo-15-min)
 
 </div>
+
+---
+
+## Verified Status
+| Check | Status |
+|-------|--------|
+| Backend tests | 228 passing |
+| Code quality | ruff · black · mypy (core/routes) |
+| Docker build | passing |
+| Live demo | getinterlock.dev |
+| Last verified | June 2026 |
 
 ---
 
@@ -79,7 +83,7 @@ The script creates `.env` if needed, starts the gateway, waits for `/health`, an
 
 ## Design Partner Pilot
 
-I'm looking for 3-5 MCP builders, AI agent teams, or security engineers to test Interlock on one real non-production MCP workflow.
+I'm looking for 2-3 MCP builders, AI-agent teams, or security engineers this week to test Interlock on one real non-production MCP workflow.
 
 Best fit:
 
@@ -183,7 +187,7 @@ Interlock/
 ├── models/
 │   └── schemas.py            # Shared Pydantic schemas — ScanResult, ThreatLevel, ResponseScanResult
 ├── interlock-web/            # React dashboard — Vite + TypeScript, drift review and operational views
-├── tests/                    # 220 tests covering drift, MCP gateway, RBAC, provenance, response scan, and more
+├── tests/                    # 228 tests covering drift, MCP gateway, RBAC, provenance, response scan, and more
 ├── helm/                     # Kubernetes Helm chart — HPA, PDB, NetworkPolicy, ServiceMonitor
 ├── demo/                     # Runnable demos (mcp-drift-quarantine-demo.py requires no LLM keys)
 ├── docs/                     # Architecture docs, OWASP MCP coverage, threat model, and evaluation guides
@@ -788,7 +792,7 @@ Verified in the latest local run:
 
 | Command | Result |
 |---|---:|
-| `python3 -m pytest tests -q -s` | 220 passed |
+| `python3 -m pytest tests -q -s` | 228 passed |
 
 Selected suite counts from the current project state:
 
