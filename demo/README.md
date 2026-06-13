@@ -1,7 +1,13 @@
 # Interlock - Live Demo
 
 Live endpoint: https://interlock.onrender.com
-API key for testing: `lf-dev-key-456`
+
+The old public demo key has been retired. Mint your own key on the gateway
+(admin token required) via `POST /admin/tokens` then `POST /admin/keys`, then
+export it before running the scripts — each script reads `INTERLOCK_API_KEY`:
+
+- PowerShell: `$env:INTERLOCK_API_KEY = "<your-key>"`
+- bash: `export INTERLOCK_API_KEY="<your-key>"`
 
 ## Run These In Order
 

@@ -25,8 +25,9 @@ App Version: {{ .Chart.AppVersion }}
 
 🚀 QUICK TEST:
 
+  # Mint an API key first: POST /admin/tokens -> POST /admin/keys (needs ADMIN_TOKEN).
   curl -X POST https://api.interlock.example.com/v1/chat/completions \
-    -H "x-api-key: lf-dev-key-456" \
+    -H "x-api-key: YOUR_API_KEY_HERE" \
     -H "Content-Type: application/json" \
     -d '{
       "model": "gpt-4o",

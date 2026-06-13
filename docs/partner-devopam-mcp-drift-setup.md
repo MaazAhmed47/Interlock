@@ -9,12 +9,12 @@ and that a trivial benign change does *not* trip the alarm.
 
 Time budget: ~15–20 minutes. Every command below is real; nothing is a placeholder.
 
-> ⚠️ **Rotate the demo key first.** `lf-dev-key-456` is a seeded legacy demo key.
-> It is published throughout this repo's history (`demo/`, `scripts/quickstart.*`,
-> `INSTALL.md`, `helm/templates/NOTES.txt`) and on the public hosted demo, and it
-> works on a fresh local instance. **Treat it as compromised.** Do **not** use it
-> here — create your own key (Step 2) and disable/rotate `lf-dev-key-456` before any
-> non‑throwaway use.
+> ⚠️ **Don't use the old public demo key.** `lf-dev-key-456` *was* a seeded legacy
+> demo key, published throughout this repo's history (`demo/`, `scripts/quickstart.*`,
+> `INSTALL.md`, `helm/templates/NOTES.txt`) and on the public hosted demo. It has
+> since been **removed from the seed and revoked**, so it no longer authenticates.
+> **Treat it as compromised.** Mint your own key (Step 2) and never paste a public
+> demo key.
 
 ---
 
