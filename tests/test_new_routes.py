@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -51,6 +52,83 @@ def seeded_db():
 
 def run(coro):
     return asyncio.run(coro)
+
+
+def test_mcp_verify_endpoint_marks_server_verified():
+    server_id = "_verify_route_server"
+    db.unregister_mcp_server(server_id)
+    db.register_mcp_server(server_id, {
+        "url": "http://localhost:9777/mcp",
+        "description": "Verify endpoint route test server",
+        "allowed_tools": ["list_avatars"],
+        "blocked_tools": [],
+        "rate_limit": 10,
+    })
+    try:
+        assert db.lookup_mcp_server(server_id)["verified"] is False
+        result = run(proxy.mcp_verify_server(server_id, x_api_key=TEST_KEY))
+        assert result["ok"] is True
+        assert result["server_id"] == server_id
+        assert result["verified"] is True
+        assert db.lookup_mcp_server(server_id)["verified"] is True
+
+        latest = db.list_mcp_audit_logs(limit=1)[0]
+        assert latest["server_id"] == server_id
+        assert latest["action"] == "verify"
+        assert latest["matched_rule"] == "manual_server_verification"
+    finally:
+        db.unregister_mcp_server(server_id)
+
+
+def test_mcp_verify_endpoint_missing_server_returns_404():
+    with pytest.raises(proxy.HTTPException) as exc:
+        run(proxy.mcp_verify_server("_missing_verify_server", x_api_key=TEST_KEY))
+
+    assert exc.value.status_code == 404
+
+
+def test_mcp_verify_endpoint_requires_api_key():
+    with pytest.raises(proxy.HTTPException) as exc:
+        run(proxy.mcp_verify_server("trusted-filesystem", x_api_key=None))
+
+    assert exc.value.status_code == 401
+
+
+def test_mcp_verified_server_can_pass_call_verification_gate():
+    server_id = "_verify_then_call_server"
+    db.unregister_mcp_server(server_id)
+    db.register_mcp_server(server_id, {
+        "url": "http://example.test/mcp",
+        "description": "Verify then call route test server",
+        "allowed_tools": ["list_avatars"],
+        "blocked_tools": [],
+        "rate_limit": 10,
+    })
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"result": {"avatars": []}}
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    try:
+        result = run(proxy.mcp_verify_server(server_id, x_api_key=TEST_KEY))
+        assert result["verified"] is True
+
+        with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
+            out = run(proxy.mcp_call(
+                proxy.MCPToolCallRequest(
+                    server_id=server_id,
+                    tool_name="list_avatars",
+                    arguments={},
+                ),
+                x_api_key=TEST_KEY,
+            ))
+
+        assert out["ok"] is True
+        assert "error" not in out
+    finally:
+        db.unregister_mcp_server(server_id)
 
 
 def test_scan_output_blocks_ssn():

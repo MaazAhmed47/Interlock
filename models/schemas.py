@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -62,6 +62,9 @@ class MCPRegisterRequest(BaseModel):
     allowed_tools: Optional[List[str]] = []
     blocked_tools: Optional[List[str]] = []
     rate_limit: Optional[int] = 60
+    auth_type: Literal["none", "bearer", "x-api-key"] = "none"
+    auth_header: Optional[str] = None
+    auth_token_env: Optional[str] = None
 
 
 class MCPDiscoverRequest(BaseModel):

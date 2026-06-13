@@ -3,7 +3,7 @@
 # Interlock
 
 [![CI](https://github.com/MaazAhmed47/Interlock/actions/workflows/tests.yml/badge.svg)](https://github.com/MaazAhmed47/Interlock/actions)
-[![Tests](https://img.shields.io/badge/tests-228%20passing-green)](https://github.com/MaazAhmed47/Interlock/actions)
+[![Tests](https://img.shields.io/badge/tests-234%20passing-green)](https://github.com/MaazAhmed47/Interlock/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 Interlock is a self-hosted MCP runtime trust layer for AI agents.
@@ -47,7 +47,7 @@ Interlock focuses on post-approval tool and capability drift: the changes that h
 ## Verified Status
 | Check | Status |
 |-------|--------|
-| Backend tests | 228 passing |
+| Backend tests | 234 passing |
 | Code quality | ruff · black · mypy (core/routes) |
 | Docker build | passing |
 | Live demo | getinterlock.dev |
@@ -78,6 +78,29 @@ Windows PowerShell:
 ```
 
 The script creates `.env` if needed, starts the gateway, waits for `/health`, and runs a blocked-prompt smoke test. For the full evaluation path, use the [10-minute evaluator quickstart](docs/evaluator-quickstart.md).
+
+### Testing ASMI hosted MCP safely
+
+ASMI's hosted MCP endpoint requires bearer auth. Store the token in your local `.env`; do not paste the raw token into Interlock server config or public docs:
+
+```env
+ASMI_MCP_TOKEN=<YOUR_ASMI_MCP_TOKEN>
+```
+
+Register the server with the env var name only:
+
+```json
+{
+  "server_id": "asmi-demo",
+  "url": "https://broen.tech/api/asmi/mcp",
+  "description": "ASMI hosted MCP test server",
+  "allowed_tools": ["list_avatars"],
+  "auth_type": "bearer",
+  "auth_token_env": "ASMI_MCP_TOKEN"
+}
+```
+
+Use a non-production ASMI workflow only. First baseline `list_avatars`, then make or simulate a safe function change and verify that Interlock detects the changed tool surface before execution.
 
 ---
 
@@ -187,7 +210,7 @@ Interlock/
 ├── models/
 │   └── schemas.py            # Shared Pydantic schemas — ScanResult, ThreatLevel, ResponseScanResult
 ├── interlock-web/            # React dashboard — Vite + TypeScript, drift review and operational views
-├── tests/                    # 228 tests covering drift, MCP gateway, RBAC, provenance, response scan, and more
+├── tests/                    # 234 tests covering drift, MCP gateway, RBAC, provenance, response scan, and more
 ├── helm/                     # Kubernetes Helm chart — HPA, PDB, NetworkPolicy, ServiceMonitor
 ├── demo/                     # Runnable demos (mcp-drift-quarantine-demo.py requires no LLM keys)
 ├── docs/                     # Architecture docs, OWASP MCP coverage, threat model, and evaluation guides
@@ -792,17 +815,17 @@ Verified in the latest local run:
 
 | Command | Result |
 |---|---:|
-| `python3 -m pytest tests -q -s` | 228 passed |
+| `python3 -m pytest tests -q -s` | 234 passed |
 
 Selected suite counts from the current project state:
 
 | Suite | Count |
 |---|---:|
 | `tests/test_response_scanner.py` | 14 |
-| `tests/test_mcp_gateway.py` | 28 |
+| `tests/test_mcp_gateway.py` | 31 |
 | `tests/test_mcp_registry_audit.py` | 9 |
 | `tests/test_mcp_review_api.py` | 6 |
-| `tests/test_new_routes.py` | 19 |
+| `tests/test_new_routes.py` | 23 |
 | `tests/test_provenance.py` | 14 |
 | `tests/test_shadow_scanner.py` | 13 |
 

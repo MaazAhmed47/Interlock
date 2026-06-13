@@ -1,5 +1,6 @@
 import re
 import json
+import os
 import time
 import contextvars
 import httpx
@@ -13,6 +14,7 @@ from core.tool_metadata import normalize_tool_metadata
 from core import db
 from core.response_scanner import scan_injection, scan_pii_and_volume
 from core.mcp_drift import classify_server_drift
+from core import drift_evidence
 
 # Per-operation start time for gateway-path latency. Set at the top of each
 # entry point that logs audit events (tool-call proxy, server registration);
@@ -54,6 +56,74 @@ TRUSTED_MCP_SERVERS = {
         "verified": True,
     },
 }
+
+UPSTREAM_AUTH_TYPES = {"none", "bearer", "x-api-key"}
+AUTH_HEADER_RE = re.compile(r"^[A-Za-z0-9-]+$")
+
+
+class UpstreamAuthConfigError(ValueError):
+    """Raised when upstream MCP auth is configured unsafely or incompletely."""
+
+
+def _normalize_upstream_auth_config(config: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    config = dict(config or {})
+    auth_type = str(config.get("auth_type") or "none").strip().lower()
+    if auth_type not in UPSTREAM_AUTH_TYPES:
+        raise UpstreamAuthConfigError(
+            "Upstream auth_type must be one of: none, bearer, x-api-key."
+        )
+
+    auth_header = str(config.get("auth_header") or "").strip()
+    if not auth_header and auth_type == "bearer":
+        auth_header = "Authorization"
+    elif not auth_header and auth_type == "x-api-key":
+        auth_header = "x-api-key"
+
+    auth_token_env = str(config.get("auth_token_env") or "").strip()
+    if auth_type == "none":
+        return {"auth_type": "none", "auth_header": "", "auth_token_env": ""}
+
+    if not auth_token_env:
+        raise UpstreamAuthConfigError(
+            "Upstream auth is enabled but auth_token_env is not configured."
+        )
+    if not auth_header or not AUTH_HEADER_RE.fullmatch(auth_header):
+        raise UpstreamAuthConfigError("Upstream auth_header is invalid.")
+
+    return {
+        "auth_type": auth_type,
+        "auth_header": auth_header,
+        "auth_token_env": auth_token_env,
+    }
+
+
+def _resolve_upstream_auth_headers(server: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    auth_config = _normalize_upstream_auth_config(server)
+    auth_type = auth_config["auth_type"]
+    if auth_type == "none":
+        return {}
+
+    token_env = auth_config["auth_token_env"]
+    token = os.getenv(token_env)
+    if not token:
+        raise UpstreamAuthConfigError(
+            f"Upstream auth token env var '{token_env}' is not set."
+        )
+
+    header = auth_config["auth_header"]
+    if auth_type == "bearer":
+        return {header: f"Bearer {token}"}
+    return {header: token}
+
+
+def _mcp_post_kwargs(
+    payload: Dict[str, Any], headers: Dict[str, str]
+) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {"json": payload}
+    if headers:
+        kwargs["headers"] = headers
+    return kwargs
+
 
 # ── MCP Tool Definition Validation ────────────────────────────────────────────
 SUSPICIOUS_TOOL_NAMES = [
@@ -211,9 +281,19 @@ async def discover_mcp_tools(
     _begin_op()
     try:
         server_url = ensure_safe_outbound_url(server_url, context="MCP discovery")
+        registered = (
+            db.lookup_mcp_server(server_id)
+            if server_id
+            else db.lookup_mcp_server_by_url(server_url)
+        )
+        registry_server_id = server_id or (
+            registered.get("server_id") if registered else None
+        )
+        headers = _resolve_upstream_auth_headers(registered)
+
         async with httpx.AsyncClient(timeout=timeout) as client:
             payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
-            resp = await client.post(server_url, json=payload)
+            resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
             data = resp.json()
 
             tools = data.get("result", {}).get("tools", [])
@@ -222,11 +302,6 @@ async def discover_mcp_tools(
             validation_results = []
             safe_tools = []
             blocked_tools = []
-
-            registry_server_id = server_id
-            if not registry_server_id:
-                registered = db.lookup_mcp_server_by_url(server_url)
-                registry_server_id = registered.get("server_id") if registered else None
 
             # ── Server-level drift check (tool additions / removals) ──────────
             # Must run BEFORE upsert so previous_names still reflects prior state.
@@ -305,6 +380,13 @@ async def discover_mcp_tools(
 
     except OutboundUrlRejected as exc:
         return {"ok": False, "error": "unsafe_mcp_server_url", "message": str(exc)}
+    except UpstreamAuthConfigError as exc:
+        return {
+            "ok": False,
+            "error": "upstream_auth_unavailable",
+            "message": str(exc),
+            "server_url": server_url,
+        }
     except httpx.TimeoutException:
         return {"ok": False, "error": "MCP server timeout", "server_url": server_url}
     except Exception as e:
@@ -591,6 +673,7 @@ async def proxy_mcp_tool_call(
     # 5. Forward to actual MCP server
     try:
         server_url = ensure_safe_outbound_url(server["url"], context="MCP server")
+        headers = _resolve_upstream_auth_headers(server)
         async with httpx.AsyncClient(timeout=30.0) as client:
             payload = {
                 "jsonrpc": "2.0",
@@ -598,11 +681,16 @@ async def proxy_mcp_tool_call(
                 "method": "tools/call",
                 "params": {"name": tool_name, "arguments": arguments},
             }
-            resp = await client.post(server_url, json=payload)
+            resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
             data = resp.json()
 
             # 6. Scan the response — MCP06 (injection) then MCP10 (PII + volume).
-            response_text = json.dumps(data)
+            # Scan only the tool result payload, never the JSON-RPC envelope.
+            # The envelope `id` is a unix-timestamp integer that the PII scanner
+            # matches as a phone number and redacts, which would corrupt the
+            # JSON we later re-parse. Only the result payload is real tool output.
+            result_payload = data.get("result")
+            response_text = json.dumps(result_payload)
 
             inj_result = scan_injection(response_text)
             if inj_result.is_threat:
@@ -653,7 +741,7 @@ async def proxy_mcp_tool_call(
                 "ok": True,
                 "server_id": server_id,
                 "tool_name": tool_name,
-                "result": json.loads(effective_result).get("result"),
+                "result": json.loads(effective_result),
                 "scanned": True,
                 "threat_flags": (
                     [pii_result.threat_type] if pii_result.is_threat else []
@@ -666,6 +754,9 @@ async def proxy_mcp_tool_call(
     except OutboundUrlRejected as exc:
         _log_mcp_policy_audit(policy_decision, blocked_by="unsafe_mcp_server_url")
         return {"ok": False, "error": "unsafe_mcp_server_url", "message": str(exc)}
+    except UpstreamAuthConfigError as exc:
+        _log_mcp_policy_audit(policy_decision, blocked_by="upstream_auth_unavailable")
+        return {"ok": False, "error": "upstream_auth_unavailable", "message": str(exc)}
     except httpx.TimeoutException:
         _log_mcp_policy_audit(policy_decision, blocked_by="mcp_timeout")
         return {"ok": False, "error": "mcp_server_timeout"}
@@ -709,6 +800,28 @@ def _stored_tool_drift_context(
     if status == "active" and severity == "none" and action == "allow":
         return None
 
+    # Content-addressed drift evidence: hash the approved and current tool
+    # surfaces and retain their canonical bytes so the hashes stay
+    # re-derivable even after a later baseline approval wipes
+    # previous_tool_definition. Best-effort — evidence emission must never
+    # break the call path.
+    baseline_surface_hash = ""
+    current_surface_hash = ""
+    try:
+        previous_def = stored_tool.get("previous_tool_definition") or {}
+        current_def = stored_tool.get("raw_tool_definition") or {}
+        if previous_def:
+            canonical = drift_evidence.canonical_surface_json(previous_def)
+            baseline_surface_hash = drift_evidence.tool_surface_hash(previous_def)
+            db.save_tool_surface_snapshot(baseline_surface_hash, canonical)
+        if current_def:
+            canonical = drift_evidence.canonical_surface_json(current_def)
+            current_surface_hash = drift_evidence.tool_surface_hash(current_def)
+            db.save_tool_surface_snapshot(current_surface_hash, canonical)
+    except Exception:
+        baseline_surface_hash = ""
+        current_surface_hash = ""
+
     return {
         "status": status,
         "severity": severity,
@@ -718,6 +831,8 @@ def _stored_tool_drift_context(
         "last_changed": stored_tool.get("last_changed"),
         "previous_schema_hash": stored_tool.get("previous_schema_hash"),
         "current_schema_hash": stored_tool.get("tool_schema_hash"),
+        "baseline_surface_hash": baseline_surface_hash,
+        "current_surface_hash": current_surface_hash,
     }
 
 
@@ -744,6 +859,8 @@ def _attach_drift_context(
     audit["drift_action"] = drift.get("action")
     audit["drift_types"] = drift.get("types") or []
     audit["drift_reasons"] = drift.get("reasons") or []
+    audit["drift_baseline_hash"] = drift.get("baseline_surface_hash") or ""
+    audit["drift_current_hash"] = drift.get("current_surface_hash") or ""
 
 
 def _set_policy_decision(
@@ -853,6 +970,16 @@ def register_mcp_server(server_id: str, config: dict) -> dict:
 
     _logger = _logging.getLogger("interlock.mcp_gateway")
     _begin_op()
+    try:
+        config = dict(config)
+        config.update(_normalize_upstream_auth_config(config))
+    except UpstreamAuthConfigError as exc:
+        return {
+            "ok": False,
+            "error": "invalid_upstream_auth_config",
+            "message": str(exc),
+        }
+
     ok = db.register_mcp_server(server_id, config)
     if not ok:
         return {"ok": False, "error": "already_exists"}

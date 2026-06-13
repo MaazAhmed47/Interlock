@@ -56,6 +56,10 @@ class ToolMetadata:
     verification_level: str = SOURCE_UNKNOWN
     confidence: float = 0.0
     warnings: List[str] = field(default_factory=list)
+    # Fields whose final value came only from heuristic inference (no declared
+    # source). Consumers use this to avoid letting low-confidence inference, on
+    # its own, drive a hard decision such as deny.
+    inferred: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
@@ -63,6 +67,7 @@ class ToolMetadata:
         data["data_classes"] = _ordered_unique(data["data_classes"])
         data["required_scopes"] = _ordered_unique(data["required_scopes"])
         data["warnings"] = _ordered_unique(data["warnings"])
+        data["inferred"] = _ordered_unique(data["inferred"])
         return data
 
 
@@ -124,6 +129,28 @@ def normalize_tool_metadata(tool: dict) -> Dict[str, Any]:
         output.data_classes = []
     if output.side_effect == "unknown":
         output.side_effect = _side_effect_from_effects(output.effects)
+
+    # Per-field provenance: mark fields that no declared source (interlock /
+    # security / MCP annotations) supplied, so a value present only because the
+    # heuristic inferred it is flagged as low-confidence.
+    declared_partials = [interlock_meta, security_meta, annotations]
+    for f in (
+        "effects",
+        "data_classes",
+        "externality",
+        "side_effect",
+        "identity_mode",
+        "required_scopes",
+    ):
+        value = getattr(output, f)
+        if value in (None, [], "", "unknown"):
+            continue
+        declared = any(
+            partial.get(f) not in (None, [], "", "unknown")
+            for partial in declared_partials
+        )
+        if not declared:
+            output.inferred.append(f)
 
     return output.to_dict()
 

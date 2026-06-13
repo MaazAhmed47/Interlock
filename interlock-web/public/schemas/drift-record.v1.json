@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getinterlock.dev/schemas/drift-record.v1.json",
+  "title": "Interlock Drift Evidence Record (v1)",
+  "description": "The canonical drift record an Interlock Security Receipt's evidenceRef digest commits to. The evidenceRef (per the io.modelcontextprotocol/trust-annotations draft) carries digest = 'sha256:' + sha256 over the record's canonical JSON bytes, with canonicalization 'json/jcs-rfc8785' (RFC 8785 JCS: lexicographically sorted keys, no insignificant whitespace, UTF-8, unescaped non-ASCII). Every field is a string or a list of strings — no numbers, objects, or nulls — which is what makes naive sorted-key JSON serialization byte-identical to JCS, so any independent party can recompute and verify the digest with standard tooling. The record describes one detected drift of one MCP tool's surface (name + description + inputSchema) away from its approved baseline, and the gateway's decision about it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_type",
+    "schema_version",
+    "server_id",
+    "tool_name",
+    "approved_surface_hash",
+    "current_surface_hash",
+    "diff_classification",
+    "finding_types",
+    "severity",
+    "decision"
+  ],
+  "properties": {
+    "record_type": {
+      "description": "Discriminator identifying this object as an Interlock drift record.",
+      "const": "interlock.drift-record"
+    },
+    "schema_version": {
+      "description": "Version of the drift-record schema, as a string. This document describes version 1.",
+      "const": "1"
+    },
+    "server_id": {
+      "description": "Identifier of the MCP server hosting the drifted tool, as registered with the Interlock gateway. May be empty when unknown.",
+      "type": "string"
+    },
+    "tool_name": {
+      "description": "Name of the MCP tool whose surface drifted. May be empty when unknown.",
+      "type": "string"
+    },
+    "approved_surface_hash": {
+      "description": "Content address of the approved (baseline) tool surface: 'sha256:' + lowercase hex sha256 over the canonical JSON of {name, description, inputSchema}.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "current_surface_hash": {
+      "description": "Content address of the currently observed tool surface, computed the same way as approved_surface_hash.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "diff_classification": {
+      "description": "Single highest-precedence classification bucket among the finding types, in precedence order (most dangerous first): external-reach > auth-scope > data-exposure > capability > schema. Finding types the classifier does not recognize bucket as 'capability'.",
+      "type": "string",
+      "enum": ["schema", "capability", "data-exposure", "auth-scope", "external-reach"]
+    },
+    "finding_types": {
+      "description": "The full list of drift finding types detected by Interlock's drift classifier (e.g. 'description_changed', 'schema_field_added', 'scope_escalated', 'externality_escalated'). Open vocabulary: forward-compatible with finding types added after this schema version. Entries are non-empty strings.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "severity": {
+      "description": "Drift severity assigned by the classifier.",
+      "type": "string",
+      "enum": ["none", "minor", "moderate", "high", "critical"]
+    },
+    "decision": {
+      "description": "Action the Interlock gateway took for this drift event.",
+      "type": "string",
+      "enum": ["allow", "monitor", "deny", "quarantine"]
+    }
+  }
+}

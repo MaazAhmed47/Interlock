@@ -104,6 +104,40 @@ async def mcp_register(
     return register_mcp_server(request.server_id, request.dict())
 
 
+@router.post("/mcp/servers/{server_id}/verify")
+async def mcp_verify_server(server_id: str, x_api_key: Optional[str] = Header(None)):
+    """Mark a registered MCP server verified after manual operator review."""
+    proxy.verify_key(x_api_key)
+    verified = db.verify_mcp_server(server_id)
+    if not verified:
+        raise HTTPException(status_code=404, detail="MCP server not found.")
+
+    server = db.lookup_mcp_server(server_id) or {
+        "server_id": server_id,
+        "verified": True,
+    }
+    db.log_mcp_audit_event(
+        {
+            "server_id": server_id,
+            "tool_name": "",
+            "role": "operator",
+            "action": "verify",
+            "matched_rule": "manual_server_verification",
+            "reason": "MCP server manually verified after operator review.",
+            "effects": [],
+            "side_effect": "unknown",
+            "data_classes": [],
+            "externality": "unknown",
+            "verification_level": "manual",
+            "confidence": 1.0,
+            "warnings": [],
+            "argument_keys": [],
+            "blocked_by": "",
+        }
+    )
+    return {"ok": True, "server_id": server_id, "verified": True, "server": server}
+
+
 @router.post("/mcp/discover")
 async def mcp_discover(
     request: MCPDiscoverRequest, x_api_key: Optional[str] = Header(None)

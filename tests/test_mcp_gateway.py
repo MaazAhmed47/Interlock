@@ -5,7 +5,7 @@ Covers: trust registry, tool-name validation, description injection,
 Run: python -m pytest tests/test_mcp_gateway.py -v
      python tests/test_mcp_gateway.py
 """
-import sys, asyncio, os, tempfile, pytest
+import sys, asyncio, os, tempfile, pytest, json
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -238,6 +238,7 @@ def test_discovery_metadata_and_persistence():
             server_id="_test_discovery_persist",
         ))
     assert discovery["ok"] is True
+    assert "headers" not in mock_client.post.call_args.kwargs
     assert discovery["validations"][0]["tool_metadata"]["side_effect"] == "mutating"
     assert discovery["validations"][0]["tool_metadata"]["externality"] == "external"
     assert "share" in discovery["validations"][0]["tool_metadata"]["effects"]
@@ -245,6 +246,79 @@ def test_discovery_metadata_and_persistence():
     stored = db.lookup_mcp_tool_metadata("_test_discovery_persist", "share_file")
     assert stored["normalized_metadata"]["externality"] == "external"
     db.unregister_mcp_server("_test_discovery_persist")
+
+
+def test_discovery_sends_bearer_upstream_auth_from_env(monkeypatch):
+    monkeypatch.setenv("TEST_MCP_BEARER_TOKEN", "secret-bearer-token")
+    db.register_mcp_server("_test_discovery_bearer", {
+        "url": "http://auth.example/mcp",
+        "description": "Bearer auth discovery test server",
+        "allowed_tools": ["list_avatars"],
+        "blocked_tools": [],
+        "rate_limit": 10,
+        "auth_type": "bearer",
+        "auth_token_env": "TEST_MCP_BEARER_TOKEN",
+    })
+    db.verify_mcp_server("_test_discovery_bearer")
+    mock_discovery_resp = MagicMock()
+    mock_discovery_resp.json.return_value = {"result": {"tools": []}}
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_discovery_resp)
+
+    try:
+        with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
+            discovery = asyncio.run(discover_mcp_tools(
+                "http://auth.example/mcp",
+                server_id="_test_discovery_bearer",
+            ))
+        assert discovery["ok"] is True
+        assert mock_client.post.call_args.kwargs["headers"] == {
+            "Authorization": "Bearer secret-bearer-token"
+        }
+        assert "secret-bearer-token" not in json.dumps(discovery)
+    finally:
+        db.unregister_mcp_server("_test_discovery_bearer")
+
+
+def test_call_sends_x_api_key_upstream_auth_and_does_not_log_token(monkeypatch):
+    monkeypatch.setenv("TEST_MCP_X_API_KEY", "secret-x-api-key")
+    db.register_mcp_server("_test_call_x_api_key", {
+        "url": "http://auth.example/mcp",
+        "description": "x-api-key auth call test server",
+        "allowed_tools": ["list_avatars"],
+        "blocked_tools": [],
+        "rate_limit": 10,
+        "auth_type": "x-api-key",
+        "auth_header": "x-api-key",
+        "auth_token_env": "TEST_MCP_X_API_KEY",
+    })
+    db.verify_mcp_server("_test_call_x_api_key")
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"result": {"avatars": []}}
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    try:
+        with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
+            out = asyncio.run(proxy_mcp_tool_call(
+                "_test_call_x_api_key",
+                "list_avatars",
+                {},
+                role="admin_agent",
+            ))
+        assert out["ok"] is True
+        assert mock_client.post.call_args.kwargs["headers"] == {
+            "x-api-key": "secret-x-api-key"
+        }
+        assert "secret-x-api-key" not in json.dumps(out)
+        assert "secret-x-api-key" not in json.dumps(db.list_mcp_servers())
+        assert "secret-x-api-key" not in json.dumps(db.list_mcp_audit_logs(limit=5))
+    finally:
+        db.unregister_mcp_server("_test_call_x_api_key")
 
 
 # ── proxy_mcp_tool_call — trust registry ─────────────────────────────────────
@@ -439,6 +513,7 @@ def test_clean_mcp_response_passes_with_metadata_policy_context():
             "trusted-filesystem", "read_file", {"path": "hello.txt"}
         ))
     assert out["ok"] is True
+    assert "headers" not in mock_client.post.call_args.kwargs
     assert out["tool_name"] == "read_file"
     assert out["scanned"] is True
     assert out["policy_decision"]["action"] == "allow"

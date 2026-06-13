@@ -113,32 +113,55 @@ def classify_tool_drift(
     added_fields = sorted(curr_fields - prev_fields)
     removed_fields = sorted(prev_fields - curr_fields)
 
-    if added_fields:
+    # A same-type, same-required add+remove pair is ONE rename, not a field
+    # addition + removal (+ a synthesized required-field change). Without this, a
+    # benign rename of a required field is wrongly denied.
+    renames = _detect_renames(previous_tool, current_tool, added_fields, removed_fields)
+    renamed_old = {old for old, _ in renames}
+    renamed_new = {new for _, new in renames}
+    effective_added = [f for f in added_fields if f not in renamed_new]
+    effective_removed = [f for f in removed_fields if f not in renamed_old]
+
+    for old, new in renames:
+        findings.append(
+            _finding("field_renamed", "moderate", f"Field renamed: {old} -> {new}.")
+        )
+    if effective_added:
         findings.append(
             _finding(
                 "schema_field_added",
                 "moderate",
-                f"Schema fields added: {added_fields}.",
+                f"Schema fields added: {effective_added}.",
             )
         )
-    if removed_fields:
+    if effective_removed:
         findings.append(
             _finding(
                 "schema_field_removed",
                 "moderate",
-                f"Schema fields removed: {removed_fields}.",
+                f"Schema fields removed: {effective_removed}.",
             )
         )
 
     prev_required = _schema_required(previous_tool)
     curr_required = _schema_required(current_tool)
-    added_required = sorted(curr_required - prev_required)
+    added_required = sorted((curr_required - prev_required) - renamed_new)
+    removed_required = sorted((prev_required - curr_required) - renamed_old)
     if added_required:
         findings.append(
             _finding(
                 "required_field_added",
                 "high",
                 f"Required schema fields added: {added_required}.",
+            )
+        )
+    if removed_required:
+        findings.append(
+            _finding(
+                "required_field_removed",
+                "high",
+                f"Required schema fields removed: {removed_required}. "
+                "A safety/approval gate may have been dropped.",
             )
         )
 
@@ -158,6 +181,11 @@ def classify_tool_drift(
             )
         )
 
+    # Constraint relaxation on a field whose name and type did not change:
+    # enum/const widening, looser numeric/length bounds, dropped pattern, or
+    # opened additionalProperties. Tightening emits nothing.
+    findings.extend(_constraint_widenings(previous_tool, current_tool))
+
     sensitive_added = [field for field in added_fields if _is_sensitive_field(field)]
     if sensitive_added:
         findings.append(
@@ -168,6 +196,10 @@ def classify_tool_drift(
             )
         )
 
+    # Fields whose current value is only heuristically inferred (no declared
+    # source). Low-confidence inference must not, on its own, drive a deny.
+    curr_inferred = set(current_metadata.get("inferred") or [])
+
     prev_effects = set(previous_metadata.get("effects") or [])
     curr_effects = set(current_metadata.get("effects") or [])
     added_effects = sorted(curr_effects - prev_effects)
@@ -175,18 +207,20 @@ def classify_tool_drift(
         effect for effect in added_effects if effect in CRITICAL_EFFECTS
     ]
     if critical_added_effects:
+        severity = "moderate" if "effects" in curr_inferred else "critical"
         findings.append(
             _finding(
                 "effect_escalated",
-                "critical",
+                severity,
                 f"High-risk effects added: {critical_added_effects}.",
             )
         )
     elif added_effects:
+        severity = "moderate" if "effects" in curr_inferred else "high"
         findings.append(
             _finding(
                 "effect_escalated",
-                "high",
+                severity,
                 f"Tool effects expanded: {added_effects}.",
             )
         )
@@ -198,10 +232,11 @@ def classify_tool_drift(
         value for value in added_data_classes if value in SENSITIVE_DATA_CLASSES
     ]
     if sensitive_data_added:
+        severity = "moderate" if "data_classes" in curr_inferred else "high"
         findings.append(
             _finding(
                 "data_class_escalated",
-                "high",
+                severity,
                 f"Sensitive data classes added: {sensitive_data_added}.",
             )
         )
@@ -217,7 +252,10 @@ def classify_tool_drift(
     prev_side = previous_metadata.get("side_effect") or "unknown"
     curr_side = current_metadata.get("side_effect") or "unknown"
     if SIDE_EFFECT_RANK.get(curr_side, 0) > SIDE_EFFECT_RANK.get(prev_side, 0):
-        severity = "critical" if curr_side == "destructive" else "high"
+        if "side_effect" in curr_inferred:
+            severity = "moderate"
+        else:
+            severity = "critical" if curr_side == "destructive" else "high"
         findings.append(
             _finding(
                 "side_effect_escalated",
@@ -231,10 +269,11 @@ def classify_tool_drift(
     if EXTERNALITY_RANK.get(curr_externality, 0) > EXTERNALITY_RANK.get(
         prev_externality, 0
     ):
+        severity = "moderate" if "externality" in curr_inferred else "high"
         findings.append(
             _finding(
                 "externality_escalated",
-                "high",
+                severity,
                 f"Externality escalated from {prev_externality} to {curr_externality}.",
             )
         )
@@ -373,6 +412,141 @@ def _schema_field_names(schema: Any) -> Set[str]:
             for item in child:
                 names.update(_schema_field_names(item))
     return names
+
+
+def _detect_renames(
+    previous_tool: dict,
+    current_tool: dict,
+    added_fields: List[str],
+    removed_fields: List[str],
+) -> List[tuple]:
+    """Pair a removed and an added top-level field with identical type and
+    required-status as a single rename. Conservative: only same-signature pairs
+    match, so a rename collapses to one change rather than add+remove+required
+    churn. Sensitive-field detection stays on the full added set, so a rename
+    *to* a sensitive name is still flagged elsewhere."""
+    prev_types = _schema_field_types(previous_tool)
+    curr_types = _schema_field_types(current_tool)
+    prev_required = _schema_required(previous_tool)
+    curr_required = _schema_required(current_tool)
+    renames: List[tuple] = []
+    used: Set[str] = set()
+    for old in removed_fields:
+        if old not in prev_types:
+            continue
+        old_sig = (prev_types[old], old in prev_required)
+        for new in added_fields:
+            if new in used or new not in curr_types:
+                continue
+            if (curr_types[new], new in curr_required) == old_sig:
+                renames.append((old, new))
+                used.add(new)
+                break
+    return renames
+
+
+def _num(value: Any):
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, (int, float)) else None
+
+
+def _allowed_values(prop: dict):
+    """Return the closed value set of a property (enum, or single-value const),
+    or None when the property is unconstrained."""
+    enum = prop.get("enum")
+    if isinstance(enum, list):
+        return [str(v) for v in enum]
+    if "const" in prop:
+        return [str(prop["const"])]
+    return None
+
+
+def _constraint_widenings(
+    previous_tool: dict, current_tool: dict
+) -> List[Dict[str, str]]:
+    """Detect constraint RELAXATION on shared top-level properties: enum/const
+    widening (high — expands the allowed operations), and looser numeric/length
+    bounds, dropped pattern, or opened additionalProperties (moderate)."""
+    prev_schema = _schema(previous_tool)
+    curr_schema = _schema(current_tool)
+    prev_props = prev_schema.get("properties") or {}
+    curr_props = curr_schema.get("properties") or {}
+    findings: List[Dict[str, str]] = []
+
+    if isinstance(prev_props, dict) and isinstance(curr_props, dict):
+        for name in sorted(set(prev_props) & set(curr_props)):
+            prev_p = prev_props.get(name)
+            curr_p = curr_props.get(name)
+            if not isinstance(prev_p, dict) or not isinstance(curr_p, dict):
+                continue
+            high: List[str] = []
+            moderate: List[str] = []
+
+            prev_allowed = _allowed_values(prev_p)
+            curr_allowed = _allowed_values(curr_p)
+            if prev_allowed is not None:
+                if curr_allowed is None:
+                    high.append(f"'{name}' enum/const constraint removed")
+                elif set(curr_allowed) > set(prev_allowed):
+                    added = sorted(set(curr_allowed) - set(prev_allowed))
+                    high.append(f"'{name}' enum widened to include {added}")
+
+            prev_max = _num(prev_p.get("maximum"))
+            if prev_max is not None:
+                if "maximum" not in curr_p:
+                    moderate.append(f"'{name}' maximum bound removed")
+                elif _num(curr_p.get("maximum")) is not None and _num(
+                    curr_p["maximum"]
+                ) > prev_max:
+                    moderate.append(f"'{name}' maximum bound raised")
+
+            prev_min = _num(prev_p.get("minimum"))
+            if prev_min is not None:
+                if "minimum" not in curr_p:
+                    moderate.append(f"'{name}' minimum bound removed")
+                elif _num(curr_p.get("minimum")) is not None and _num(
+                    curr_p["minimum"]
+                ) < prev_min:
+                    moderate.append(f"'{name}' minimum bound lowered")
+
+            prev_ml = _num(prev_p.get("maxLength"))
+            if prev_ml is not None:
+                if "maxLength" not in curr_p:
+                    moderate.append(f"'{name}' maxLength removed")
+                elif _num(curr_p.get("maxLength")) is not None and _num(
+                    curr_p["maxLength"]
+                ) > prev_ml:
+                    moderate.append(f"'{name}' maxLength raised")
+
+            if prev_p.get("pattern") and curr_p.get("pattern") != prev_p.get("pattern"):
+                moderate.append(f"'{name}' pattern relaxed or removed")
+
+            if prev_p.get("additionalProperties") is False and curr_p.get(
+                "additionalProperties"
+            ) is not False:
+                moderate.append(f"'{name}' additionalProperties opened")
+
+            if high:
+                findings.append(
+                    _finding("constraint_relaxed", "high", "; ".join(high) + ".")
+                )
+            elif moderate:
+                findings.append(
+                    _finding("constraint_relaxed", "moderate", "; ".join(moderate) + ".")
+                )
+
+    if prev_schema.get("additionalProperties") is False and curr_schema.get(
+        "additionalProperties"
+    ) is not False:
+        findings.append(
+            _finding(
+                "constraint_relaxed",
+                "moderate",
+                "Root additionalProperties opened to accept arbitrary fields.",
+            )
+        )
+    return findings
 
 
 def _is_sensitive_field(field: str) -> bool:

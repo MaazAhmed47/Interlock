@@ -5,6 +5,9 @@ Security Receipt endpoints.
                                     single downloadable artifact (JSON now,
                                     CSV/PDF later).
   GET /audit/receipt/{audit_id}   - one tamper-evident receipt for one event.
+  GET /audit/evidence/surface/{surface_hash}
+                                  - canonical tool-surface bytes behind a
+                                    drift-evidence hash (client recomputation).
 
 Both require API-key auth (same surface as GET /mcp/audit, which serves the
 underlying runtime audit log to the dashboard).
@@ -76,6 +79,28 @@ async def export_receipts(
         content=batch,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/audit/evidence/surface/{surface_hash}")
+async def get_surface_snapshot(
+    surface_hash: str, x_api_key: Optional[str] = Header(None)
+):
+    """
+    Resolve a drift-evidence surface hash to the retained canonical
+    tool-surface bytes, so an external verifier can re-derive the hash
+    (sha256 over the UTF-8 bytes of canonical_json) without trusting us.
+    """
+    proxy.verify_key(x_api_key)
+
+    snapshot = db.get_tool_surface_snapshot(surface_hash)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="Surface snapshot not found.")
+    return {
+        "surface_hash": snapshot["surface_hash"],
+        "canonical_json": snapshot["canonical_json"],
+        "canonicalization": "json/jcs-rfc8785",
+        "created_at": snapshot["created_at"],
+    }
 
 
 @router.get("/audit/receipt/{audit_id}")

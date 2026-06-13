@@ -364,6 +364,7 @@ inspect_tool = scan_routes.inspect_tool  # type: ignore[has-type]
 
 mcp_list_servers = mcp_routes.mcp_list_servers  # type: ignore[has-type]
 mcp_register = mcp_routes.mcp_register  # type: ignore[has-type]
+mcp_verify_server = mcp_routes.mcp_verify_server  # type: ignore[has-type]
 mcp_discover = mcp_routes.mcp_discover  # type: ignore[has-type]
 mcp_tools = mcp_routes.mcp_tools  # type: ignore[has-type]
 mcp_drifted_tools = mcp_routes.mcp_drifted_tools  # type: ignore[has-type]

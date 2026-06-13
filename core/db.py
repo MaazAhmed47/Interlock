@@ -238,6 +238,9 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     allowed_tools   TEXT    NOT NULL DEFAULT '[]',  -- JSON list
     blocked_tools   TEXT    NOT NULL DEFAULT '[]',  -- JSON list
     rate_limit      INTEGER NOT NULL DEFAULT 60,
+    auth_type       TEXT    NOT NULL DEFAULT 'none',
+    auth_header     TEXT    NOT NULL DEFAULT '',
+    auth_token_env  TEXT    NOT NULL DEFAULT '',
     verified        INTEGER NOT NULL DEFAULT 0,
     registered_at   TEXT    NOT NULL
 );
@@ -290,6 +293,8 @@ CREATE TABLE IF NOT EXISTS mcp_audit_log (
     drift_action        TEXT    NOT NULL DEFAULT 'allow',
     drift_types         TEXT    NOT NULL DEFAULT '[]',
     drift_reasons       TEXT    NOT NULL DEFAULT '[]',
+    drift_baseline_hash TEXT    NOT NULL DEFAULT '',
+    drift_current_hash  TEXT    NOT NULL DEFAULT '',
     scan_time_ms        REAL,
     prev_hash           TEXT    NOT NULL DEFAULT '',
     integrity_hash      TEXT    NOT NULL DEFAULT ''
@@ -299,6 +304,12 @@ CREATE INDEX IF NOT EXISTS idx_mcp_audit_ts ON mcp_audit_log(ts);
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_server_tool ON mcp_audit_log(server_id, tool_name);
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_action ON mcp_audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_drift_severity ON mcp_audit_log(drift_severity);
+
+CREATE TABLE IF NOT EXISTS tool_surface_snapshots (
+    surface_hash   TEXT PRIMARY KEY,
+    canonical_json TEXT NOT NULL,
+    created_at     TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS system_config (
     key   TEXT PRIMARY KEY,
@@ -443,6 +454,11 @@ def init_db() -> None:
         _ensure_column(conn, "mcp_audit_log", "scan_time_ms", "REAL")
         _ensure_column(conn, "api_keys", "max_response_bytes", "INTEGER DEFAULT 50000")
         _ensure_column(conn, "api_keys", "max_array_items", "INTEGER DEFAULT 500")
+        _ensure_column(conn, "mcp_servers", "auth_type", "TEXT NOT NULL DEFAULT 'none'")
+        _ensure_column(conn, "mcp_servers", "auth_header", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(
+            conn, "mcp_servers", "auth_token_env", "TEXT NOT NULL DEFAULT ''"
+        )
         _ensure_column(conn, "mcp_servers", "source_type", "TEXT DEFAULT 'unknown'")
         _ensure_column(conn, "mcp_servers", "registry", "TEXT DEFAULT ''")
         _ensure_column(conn, "mcp_servers", "package_name", "TEXT DEFAULT ''")
@@ -466,6 +482,12 @@ def init_db() -> None:
         _ensure_column(conn, "mcp_audit_log", "prev_hash", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(
             conn, "mcp_audit_log", "integrity_hash", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(
+            conn, "mcp_audit_log", "drift_baseline_hash", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(
+            conn, "mcp_audit_log", "drift_current_hash", "TEXT NOT NULL DEFAULT ''"
         )
         _ensure_column(conn, "admin_audit_log", "prev_hash", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(
@@ -1436,8 +1458,9 @@ def register_mcp_server(server_id: str, config: dict) -> bool:
                 """
                 INSERT INTO mcp_servers
                   (server_id, url, description, allowed_tools, blocked_tools,
-                   rate_limit, verified, registered_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   rate_limit, auth_type, auth_header, auth_token_env, verified,
+                   registered_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     server_id,
@@ -1446,6 +1469,9 @@ def register_mcp_server(server_id: str, config: dict) -> bool:
                     json.dumps(config.get("allowed_tools", [])),
                     json.dumps(config.get("blocked_tools", [])),
                     config.get("rate_limit", 60),
+                    config.get("auth_type", "none"),
+                    config.get("auth_header", ""),
+                    config.get("auth_token_env", ""),
                     False,
                     datetime.now(timezone.utc).isoformat(),
                 ),
@@ -2059,6 +2085,57 @@ def merge_stored_and_runtime_metadata(
     return merged
 
 
+# ── Tool surface snapshots (drift evidence) ──────────────────────────────────
+
+
+def save_tool_surface_snapshot(surface_hash: str, canonical_json: str) -> bool:
+    """
+    Retain the canonical tool-surface bytes behind a drift-evidence hash.
+
+    Content-addressed and append-only: keyed by the surface hash itself, so
+    later baseline approvals (which wipe previous_tool_definition on the
+    metadata row) never destroy the bytes an emitted drift record committed
+    to. Returns True if a new row was written.
+    """
+    if not surface_hash or not canonical_json:
+        return False
+    try:
+        with _db_lock, get_conn() as conn:
+            existing = conn.execute(
+                "SELECT 1 FROM tool_surface_snapshots WHERE surface_hash = ?",
+                (surface_hash,),
+            ).fetchone()
+            if existing:
+                return False
+            conn.execute(
+                """
+                INSERT INTO tool_surface_snapshots
+                  (surface_hash, canonical_json, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    surface_hash,
+                    canonical_json,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+        return True
+    except Exception as e:
+        if _is_integrity_error(e):
+            return False
+        raise
+
+
+def get_tool_surface_snapshot(surface_hash: str) -> Optional[Dict[str, Any]]:
+    """Return a retained tool-surface snapshot by its content address."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM tool_surface_snapshots WHERE surface_hash = ?",
+            (surface_hash,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 # ── MCP audit log ─────────────────────────────────────────────────────────────
 
 
@@ -2086,8 +2163,9 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
                effects, side_effect, data_classes, externality, verification_level,
                confidence, warnings, argument_keys, blocked_by, drift_status,
                drift_severity, drift_action, drift_types, drift_reasons,
+               drift_baseline_hash, drift_current_hash,
                scan_time_ms, prev_hash, integrity_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ts,
@@ -2111,6 +2189,8 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
                 event.get("drift_action", "allow") or "allow",
                 json.dumps(event.get("drift_types", []) or []),
                 json.dumps(event.get("drift_reasons", []) or []),
+                event.get("drift_baseline_hash", "") or "",
+                event.get("drift_current_hash", "") or "",
                 event.get("scan_time_ms"),
                 prev_hash,
                 integrity_hash,

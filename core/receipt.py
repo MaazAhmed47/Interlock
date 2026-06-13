@@ -13,6 +13,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
+from core import drift_evidence as drift_evidence_mod
+
 # Decisions a receipt can present. Any block variant the audit log records
 # collapses to "deny".
 _DECISIONS = {"allow", "deny", "monitor", "quarantine"}
@@ -192,6 +194,26 @@ def receipt_id(row: Dict[str, Any]) -> str:
     return f"rcpt-{row.get('id')}-{suffix}"
 
 
+def derive_drift_evidence(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Build the content-addressed drift evidence block for a receipt, or None
+    when the row has no emittable drift evidence (no drift, or a row written
+    before the surface-hash columns existed).
+
+    ``record`` is the exact object the digest commits to; ``evidence_ref`` is
+    the trust-annotations-shaped reference an external consumer verifies by
+    recomputation (see core/drift_evidence.py).
+    """
+    record = drift_evidence_mod.build_drift_record_from_audit_row(row)
+    if record is None:
+        return None
+    ref = f"audit://interlock/{row.get('id')}" if row.get("id") is not None else None
+    return {
+        "record": record,
+        "evidence_ref": drift_evidence_mod.build_evidence_ref(record, ref=ref),
+    }
+
+
 def build_receipt(row: Dict[str, Any], chain_verified: bool = False) -> Dict[str, Any]:
     """Map a single mcp_audit_log row to a Security Receipt."""
     ts = row.get("ts") or ""
@@ -214,6 +236,7 @@ def build_receipt(row: Dict[str, Any], chain_verified: bool = False) -> Dict[str
         "detections": detections,
         "redactions": redactions,
         "drift": derive_drift(row),
+        "drift_evidence": derive_drift_evidence(row),
         "integrity_hash": row.get("integrity_hash") or "",
         "prev_hash": row.get("prev_hash") or "",
         "chain_verified": bool(chain_verified),
