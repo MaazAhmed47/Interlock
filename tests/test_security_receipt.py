@@ -37,7 +37,7 @@ from core import db  # noqa: E402
 from core import receipt as receipt_mod  # noqa: E402
 import proxy  # noqa: E402
 
-TEST_KEY = "lf-free-demo-key-123"
+TEST_KEY = None  # minted in the seeded_db fixture via db.generate_key
 
 # Three audit events with explicit timestamps so range queries are deterministic.
 ALLOW_TS = "2026-05-01T10:00:00+00:00"
@@ -52,9 +52,10 @@ def run(coro):
 
 @pytest.fixture(scope="module", autouse=True)
 def seeded_db():
+    global TEST_KEY
     db.DB_PATH = TEST_DB
     db.init_db()
-    db.seed_legacy_keys()
+    TEST_KEY = db.generate_key("free", label="test-receipt")["raw_key"]
 
     ids = {}
     ids["out"] = db.log_mcp_audit_event(

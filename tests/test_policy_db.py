@@ -62,13 +62,21 @@ try:
     assert result is None, f"Expected None for key with no DB policy, got {result}"
     print("  OK — None returned")
 
-    print("Test 5: seeded legacy keys store custom policies in the DB ...")
-    db.seed_legacy_keys()
-    legacy = db.lookup_key("lf-dev-key-456")
-    assert legacy is not None, "Expected seeded developer legacy key"
-    assert legacy.get("custom_policy"), "Expected legacy custom_policy to live in DB"
-    result = policy_scan("this mentions confidential roadmap details", "lf-dev-key-456")
-    assert result is not None, "Expected DB-seeded legacy policy to block confidential"
+    print("Test 5: a key's DB-stored custom policy is enforced by policy_scan ...")
+    issued = db.generate_key(
+        "developer",
+        label="policy-db-test",
+        custom_policy={
+            "blocked_keywords": ["competitor", "lawsuit", "confidential"],
+            "max_prompt_length": 2000,
+        },
+    )
+    raw_key = issued["raw_key"]
+    stored = db.lookup_key(raw_key)
+    assert stored is not None, "Expected freshly minted key in DB"
+    assert stored.get("custom_policy"), "Expected custom_policy to live in DB"
+    result = policy_scan("this mentions confidential roadmap details", raw_key)
+    assert result is not None, "Expected DB-stored custom policy to block confidential"
     assert "confidential" in result.reason
     print(f"  OK — {result.reason}")
 

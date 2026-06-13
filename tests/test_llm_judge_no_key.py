@@ -19,7 +19,7 @@ os.environ["FIREWALL_DB_PATH"] = tempfile.mktemp(suffix="_no_key_test.db")
 import core.db as db
 db.DB_PATH = os.environ["FIREWALL_DB_PATH"]
 db.init_db()
-db.seed_legacy_keys()
+_test_key = db.generate_key("developer", label="judge-no-key-test")["raw_key"]
 
 # Other pytest modules may import core.llm_judge after setting a dummy key.
 # Reload config + judge after clearing the env so this regression stays isolated.
@@ -31,7 +31,7 @@ assert judge.client is None, "Groq client should be disabled when GROQ_API_KEY i
 
 result = judge.llm_judge_scan(
     "plain local startup test",
-    api_key="lf-dev-key-456",
+    api_key=_test_key,
     prior_layers_safe=True,
 )
 

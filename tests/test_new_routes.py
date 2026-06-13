@@ -34,13 +34,14 @@ import routes.scan as scan_routes
 scan_routes.ASYNC_SCAN_PERSISTENCE = False
 
 
-TEST_KEY = "lf-free-demo-key-123"
+TEST_KEY = None  # minted in the seeded_db fixture via db.generate_key
 
 
 @pytest.fixture(scope="module", autouse=True)
 def seeded_db():
+    global TEST_KEY
     db.init_db()
-    db.seed_legacy_keys()
+    TEST_KEY = db.generate_key("free", label="test-new-routes")["raw_key"]
     yield
 
     for path in (TEST_DB, TEST_DB + "-wal", TEST_DB + "-shm"):
@@ -383,8 +384,15 @@ def test_usage_rejects_missing_key():
     assert exc.value.status_code == 401
 
 
+_WS_DEFAULT_KEY = object()  # sentinel so the default resolves TEST_KEY at call time
+
+
 class FakeWebSocket:
-    def __init__(self, api_key=TEST_KEY):
+    def __init__(self, api_key=_WS_DEFAULT_KEY):
+        # TEST_KEY is minted in the seeded_db fixture, so it is None at import
+        # time when default args bind. Resolve it here instead of as a default.
+        if api_key is _WS_DEFAULT_KEY:
+            api_key = TEST_KEY
         self.accepted = False
         self.closed = None
         self.query_params = {"api_key": api_key} if api_key else {}

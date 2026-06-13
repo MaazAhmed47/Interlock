@@ -178,22 +178,24 @@ assert db.usage_this_month(999_999) == 0
 print("  OK")
 
 
-# ── seed_legacy_keys ───────────────────────────────────────────────────────────
+# ── seed_legacy_keys (now an intentional no-op) ─────────────────────────────────
 
-print("Test 21: seed_legacy_keys inserts the three hard-coded legacy keys ...")
+print("Test 21: seed_legacy_keys does NOT create the three public demo keys ...")
 db.seed_legacy_keys()
 for raw in ("lf-free-demo-key-123", "lf-dev-key-456", "lf-startup-key-789"):
-    assert db.lookup_key(raw) is not None, f"Legacy key {raw[:12]}... not found after seed"
+    assert db.lookup_key(raw) is None, \
+        f"Public demo key {raw[:12]}... must not be seeded (it is known-compromised)"
 print("  OK")
 
-print("Test 22: seed_legacy_keys is idempotent — calling twice keeps exactly 3 legacy rows ...")
+print("Test 22: seed_legacy_keys is idempotent and creates no legacy rows ...")
+db.seed_legacy_keys()
 db.seed_legacy_keys()
 legacy_rows = [
     r for r in db.list_keys(include_inactive=True)
     if r["label"] in ("Legacy free demo", "Legacy developer", "Legacy startup")
 ]
-assert len(legacy_rows) == 3, \
-    f"Expected exactly 3 legacy rows, got {len(legacy_rows)}: {[r['label'] for r in legacy_rows]}"
+assert len(legacy_rows) == 0, \
+    f"Expected no legacy rows after no-op seed, got {len(legacy_rows)}: {[r['label'] for r in legacy_rows]}"
 print("  OK")
 
 

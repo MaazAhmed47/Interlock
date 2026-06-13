@@ -16,7 +16,7 @@ os.environ["FIREWALL_DB_PATH"] = _tmp_db
 from core import db
 import proxy
 
-TEST_KEY = "lf-free-demo-key-123"
+TEST_KEY = None  # minted below via db.generate_key after init_db
 
 
 def cleanup():
@@ -72,7 +72,7 @@ def seed_drifted_tool():
 
 try:
     db.init_db()
-    db.seed_legacy_keys()
+    TEST_KEY = db.generate_key("free", label="test-mcp-review")["raw_key"]
     db.seed_mcp_servers()
     seed_drifted_tool()
 

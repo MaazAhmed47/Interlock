@@ -1130,64 +1130,18 @@ def usage_this_month(key_id: int) -> int:
 # ── Bootstrap / seed ─────────────────────────────────────────────────────────
 def seed_legacy_keys() -> None:
     """
-    Idempotent migration: insert the three hardcoded keys from proxy.py if they
-    don't exist yet. Lets you flip the proxy over with zero customer disruption.
+    Intentional no-op. Historically this seeded three hardcoded demo API keys
+    (lf-free-demo-key-123, lf-dev-key-456, lf-startup-key-789) into api_keys on
+    startup. Those keys are publicly known (published across the repo, docs, and
+    demos) and have been revoked on live systems, so they are NO LONGER seeded —
+    seeding them would auto-recreate known-compromised credentials on a fresh or
+    wiped database.
+
+    Kept as a documented no-op because the symbol is still called from the
+    startup lifespan (proxy.py) and from tests; removing it would break those
+    callers. Issue keys via generate_key() / POST /admin/keys instead.
     """
-    legacy = [
-        (
-            "lf-free-demo-key-123",
-            "free",
-            "Legacy free demo",
-            {"blocked_keywords": [], "max_prompt_length": 4000},
-        ),
-        (
-            "lf-dev-key-456",
-            "developer",
-            "Legacy developer",
-            {
-                "blocked_keywords": ["competitor", "lawsuit", "confidential"],
-                "max_prompt_length": 2000,
-            },
-        ),
-        (
-            "lf-startup-key-789",
-            "startup",
-            "Legacy startup",
-            {
-                "blocked_keywords": ["hack", "crack", "pirate", "warez"],
-                "max_prompt_length": 3000,
-            },
-        ),
-    ]
-    for raw, plan, label, custom_policy in legacy:
-        existing = lookup_key(raw)
-        if existing:
-            if not existing.get("custom_policy"):
-                update_key(existing["key_prefix"], custom_policy=custom_policy)
-            continue
-        defaults = PLAN_DEFAULTS[plan]
-        with _db_lock, get_conn() as conn:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO api_keys
-                  (key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
-                   fail_mode, custom_policy, is_active, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    _hash_key(raw),
-                    raw[:12],
-                    label,
-                    plan,
-                    defaults["monthly_limit"],
-                    defaults["rate_per_min"],
-                    defaults["fail_mode"],
-                    json.dumps(custom_policy),
-                    True,
-                    datetime.now(timezone.utc).isoformat(),
-                ),
-            )
-        logger.info("Seeded legacy key: %s (%s)", raw[:12], plan)
+    return
 
 
 # ── Retention policy ─────────────────────────────────────────────────────────

@@ -23,13 +23,14 @@ from core.limits import clamp_limit
 from core.siem import send_to_siem
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
 
-TEST_KEY = "lf-free-demo-key-123"
+TEST_KEY = None  # minted in the seeded_db fixture via db.generate_key
 
 
 @pytest.fixture(scope="module", autouse=True)
 def seeded_db():
+    global TEST_KEY
     db.init_db()
-    db.seed_legacy_keys()
+    TEST_KEY = db.generate_key("free", label="test-hosted-safety")["raw_key"]
     yield
     for path in (TEST_DB, TEST_DB + "-wal", TEST_DB + "-shm"):
         try:
