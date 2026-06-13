@@ -496,35 +496,39 @@ def _constraint_widenings(
             if prev_max is not None:
                 if "maximum" not in curr_p:
                     moderate.append(f"'{name}' maximum bound removed")
-                elif _num(curr_p.get("maximum")) is not None and _num(
-                    curr_p["maximum"]
-                ) > prev_max:
+                elif (
+                    _num(curr_p.get("maximum")) is not None
+                    and _num(curr_p["maximum"]) > prev_max
+                ):
                     moderate.append(f"'{name}' maximum bound raised")
 
             prev_min = _num(prev_p.get("minimum"))
             if prev_min is not None:
                 if "minimum" not in curr_p:
                     moderate.append(f"'{name}' minimum bound removed")
-                elif _num(curr_p.get("minimum")) is not None and _num(
-                    curr_p["minimum"]
-                ) < prev_min:
+                elif (
+                    _num(curr_p.get("minimum")) is not None
+                    and _num(curr_p["minimum"]) < prev_min
+                ):
                     moderate.append(f"'{name}' minimum bound lowered")
 
             prev_ml = _num(prev_p.get("maxLength"))
             if prev_ml is not None:
                 if "maxLength" not in curr_p:
                     moderate.append(f"'{name}' maxLength removed")
-                elif _num(curr_p.get("maxLength")) is not None and _num(
-                    curr_p["maxLength"]
-                ) > prev_ml:
+                elif (
+                    _num(curr_p.get("maxLength")) is not None
+                    and _num(curr_p["maxLength"]) > prev_ml
+                ):
                     moderate.append(f"'{name}' maxLength raised")
 
             if prev_p.get("pattern") and curr_p.get("pattern") != prev_p.get("pattern"):
                 moderate.append(f"'{name}' pattern relaxed or removed")
 
-            if prev_p.get("additionalProperties") is False and curr_p.get(
-                "additionalProperties"
-            ) is not False:
+            if (
+                prev_p.get("additionalProperties") is False
+                and curr_p.get("additionalProperties") is not False
+            ):
                 moderate.append(f"'{name}' additionalProperties opened")
 
             if high:
@@ -533,12 +537,15 @@ def _constraint_widenings(
                 )
             elif moderate:
                 findings.append(
-                    _finding("constraint_relaxed", "moderate", "; ".join(moderate) + ".")
+                    _finding(
+                        "constraint_relaxed", "moderate", "; ".join(moderate) + "."
+                    )
                 )
 
-    if prev_schema.get("additionalProperties") is False and curr_schema.get(
-        "additionalProperties"
-    ) is not False:
+    if (
+        prev_schema.get("additionalProperties") is False
+        and curr_schema.get("additionalProperties") is not False
+    ):
         findings.append(
             _finding(
                 "constraint_relaxed",

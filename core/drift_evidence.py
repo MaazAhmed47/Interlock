@@ -245,7 +245,9 @@ def build_drift_record_from_audit_row(row: Dict[str, Any]) -> Optional[Dict[str,
     )
 
 
-def build_evidence_ref(record: Dict[str, Any], ref: Optional[str] = None) -> Dict[str, Any]:
+def build_evidence_ref(
+    record: Dict[str, Any], ref: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Build the evidenceRef envelope for a drift record.
 
