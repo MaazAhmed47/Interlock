@@ -3,7 +3,7 @@
 # Interlock
 
 [![CI](https://github.com/MaazAhmed47/Interlock/actions/workflows/tests.yml/badge.svg)](https://github.com/MaazAhmed47/Interlock/actions)
-[![Tests](https://img.shields.io/badge/tests-234%20passing-green)](https://github.com/MaazAhmed47/Interlock/actions)
+[![Tests](https://img.shields.io/badge/tests-291%20passing-green)](https://github.com/MaazAhmed47/Interlock/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 Interlock is a self-hosted MCP runtime trust layer for AI agents.
@@ -47,7 +47,7 @@ Interlock focuses on post-approval tool and capability drift: the changes that h
 ## Verified Status
 | Check | Status |
 |-------|--------|
-| Backend tests | 234 passing |
+| Backend tests | 291 passed / 6 xfailed |
 | Code quality | ruff · black · mypy (core/routes) |
 | Docker build | passing |
 | Live demo | getinterlock.dev |
@@ -151,8 +151,11 @@ It records MCP tool baselines and detects risky changes such as:
 - External reach increasing from internal-only to external
 - Required parameters changing after approval
 - Tools being added, removed, or modified unexpectedly
+- A tool description rewritten to exfiltrate — added description text that combines sensitive-resource access, an egress verb, and an external destination is escalated and blocked
 
-When drift crosses a risk threshold, Interlock quarantines the tool until an operator reviews the new schema. Every decision is written to a tamper-evident audit log with hash-chain integrity verification via the /audit/verify endpoint.
+Description-exfiltration detection is deterministic pattern-matching over the *added* description text: it fires only when sensitive-resource access, an egress verb, and an external destination co-occur. It is not a semantic model — a paraphrase that avoids the known egress verbs, or a scheme-less host, can evade it.
+
+When drift crosses a risk threshold, Interlock quarantines the tool until an operator reviews the new schema. Every decision is written to a tamper-evident audit log with hash-chain integrity verification via the /admin/audit/verify endpoint.
 
 This makes Interlock different from local-only sidecars and one-time admission checks: it focuses on what changes after trust is granted.
 
@@ -210,7 +213,7 @@ Interlock/
 ├── models/
 │   └── schemas.py            # Shared Pydantic schemas — ScanResult, ThreatLevel, ResponseScanResult
 ├── interlock-web/            # React dashboard — Vite + TypeScript, drift review and operational views
-├── tests/                    # 234 tests covering drift, MCP gateway, RBAC, provenance, response scan, and more
+├── tests/                    # 291 passing tests covering drift, MCP gateway, RBAC, provenance, response scan, and more
 ├── helm/                     # Kubernetes Helm chart — HPA, PDB, NetworkPolicy, ServiceMonitor
 ├── demo/                     # Runnable demos (mcp-drift-quarantine-demo.py requires no LLM keys)
 ├── docs/                     # Architecture docs, OWASP MCP coverage, threat model, and evaluation guides
@@ -614,7 +617,7 @@ Interlock is not uniquely strong everywhere: static-policy gateways also enforce
 
 | Function | Purpose | Current Behavior |
 |---|---|---|
-| `scan_injection()` | MCP06 | Checks 20 prompt-injection patterns with confidence scoring; blocks matched tool responses. |
+| `scan_injection()` | MCP06 | Checks 26 prompt-injection patterns with confidence scoring; blocks matched tool responses. |
 | `scan_pii_and_volume()` | MCP10 | Applies 12 PII/secret redaction rules and flags byte-count or array-size volume anomalies. |
 
 
@@ -636,6 +639,20 @@ Interlock is not uniquely strong everywhere: static-policy gateways also enforce
 10. Write audit records for the decision.
 
 Prompt scanning still exists at `POST /scan`, but the product moat is the MCP gateway and agent RBAC path.
+
+---
+
+## Drift evidence records
+
+When Interlock detects drift, it emits a content-addressed, recomputable drift-evidence record aligned with the current MCP trust-annotations draft (2026-06-10); independent interoperability pending. The record commits to the approved and current tool-surface hashes (sha256 over the canonical JSON of `{name, description, inputSchema}`) plus the finding types, severity, and decision, canonicalized with RFC 8785 (JCS). Because every field is a string or list of strings, an independent party can re-derive the digest from the record bytes without trusting Interlock.
+
+| Route | Purpose |
+|---|---|
+| `GET /audit/receipt/export` | Export a batch of Security Receipts for a time range as a download. |
+| `GET /audit/receipt/{audit_id}` | One tamper-evident Security Receipt for a single audit event. |
+| `GET /audit/evidence/surface/{surface_hash}` | Resolve a drift-evidence surface hash to the canonical tool-surface bytes for client-side recomputation. |
+
+Record schema: [`drift-record.v1.json`](interlock-web/public/schemas/drift-record.v1.json).
 
 ---
 
@@ -769,6 +786,7 @@ Expected: risky metadata/effect warnings and a validation decision.
 | `POST /mcp/tools/{server_id}/{tool_name}/approve` | Approve current tool definition as baseline. |
 | `POST /mcp/tools/{server_id}/{tool_name}/quarantine` | Keep or mark a tool quarantined. |
 | `GET /mcp/audit` | List recent MCP audit events. |
+| `GET /admin/audit/verify` | Verify audit-log hash-chain integrity (admin token). |
 | `POST /mcp/call` | Proxy an MCP tool call through Interlock. |
 | `GET /admin/mcp/provenance-policy` | Read provenance policy. |
 | `PUT /admin/mcp/provenance-policy` | Update provenance policy. |
@@ -815,7 +833,7 @@ Verified in the latest local run:
 
 | Command | Result |
 |---|---:|
-| `python3 -m pytest tests -q -s` | 234 passed |
+| `python3 -m pytest tests -q -s` | 291 passed, 6 xfailed |
 
 Selected suite counts from the current project state:
 
