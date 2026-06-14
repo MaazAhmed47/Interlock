@@ -360,10 +360,11 @@ def test_tp6_declared_effect_escalation_still_quarantines():
     assert "effect_escalated" in d["types"], d
 
 
-def test_fp4_optional_field_added_is_monitor_not_block():
+def test_fp4_optional_field_added_is_minor_not_block():
     """Adding an ordinary optional field (request_id) is the most common benign
-    evolution. Monitor is acceptable; blocking would not be. Asserts the
-    tolerable outcome — documents this as expected noise, not a bug."""
+    evolution and is backward-compatible. FIXED: a new OPTIONAL, non-sensitive
+    field is now minor (not moderate). A new REQUIRED field still escalates via
+    required_field_added, and a sensitive name via sensitive_field_added."""
     curr = {**BASE_TOOL, "inputSchema": {
         "type": "object",
         "properties": {"path": {"type": "string"},
@@ -371,7 +372,7 @@ def test_fp4_optional_field_added_is_monitor_not_block():
         "required": ["path"]}}
     d = drift(BASE_TOOL, curr, BASE_META, BASE_META)
     assert d["action"] == "monitor", d
-    assert d["severity"] == "moderate", d
+    assert d["severity"] == "minor", d
 
 
 def test_fp5_required_field_rename_is_monitor_not_deny():
@@ -413,12 +414,10 @@ def test_hm1_added_required_safety_field_should_not_deny():
     assert d["action"] != "deny", d
 
 
-@pytest.mark.xfail(strict=True, reason="FINDING HM-2: large cosmetic reword "
-                   "crosses the 0.30 char-diff threshold and is scored moderate. "
-                   "POSITION: meaning-preserving rewording is minor.")
 def test_hm2_cosmetic_reword_should_stay_minor():
-    """A meaning-preserving full reword. POSITION: minor (cosmetic). The 30%
-    lexical threshold pushes it to moderate."""
+    """A meaning-preserving full reword. POSITION: minor (cosmetic). FIXED:
+    description_changed is now minor by default (no edit-distance threshold);
+    danger is judged by the CONTENT of the added text, not its size."""
     curr = dict(BASE_TOOL)
     curr["description"] = ("Fetches the text contents of a workspace document "
                            "and hands them back to the caller.")

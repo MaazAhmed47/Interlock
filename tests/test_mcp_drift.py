@@ -53,7 +53,7 @@ assert drift["action"] == "monitor"
 assert "description_changed" in drift["types"]
 print("  OK")
 
-print("Test 3: optional schema field addition is moderate and monitored ...")
+print("Test 3: optional schema field addition is minor and monitored ...")
 new_tool = {
     **BASE_TOOL,
     "inputSchema": {
@@ -66,7 +66,7 @@ new_tool = {
     },
 }
 drift = classify(new_tool, BASE_METADATA)
-assert drift["severity"] == "moderate"
+assert drift["severity"] == "minor"
 assert drift["action"] == "monitor"
 assert "schema_field_added" in drift["types"]
 print("  OK")

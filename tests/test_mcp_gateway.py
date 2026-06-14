@@ -585,7 +585,7 @@ def test_quarantined_tool_denied():
         db.unregister_mcp_server("_test_quarantine_server")
 
 
-def test_moderate_drift_monitored_and_allowed():
+def test_minor_drift_monitored_and_allowed():
     db.register_mcp_server("_test_drift_monitor_server", {
         "url": "http://localhost:9997/mcp",
         "description": "Moderate drift test server",
@@ -643,11 +643,11 @@ def test_moderate_drift_monitored_and_allowed():
         assert out["ok"] is True
         assert out["policy_decision"]["action"] == "monitor"
         assert out["policy_decision"]["matched_rule"] == "tool_metadata_drift"
-        assert out["drift"]["severity"] == "moderate"
+        assert out["drift"]["severity"] == "minor"
         logs = db.list_mcp_audit_logs(limit=1)
         assert logs[0]["action"] == "monitor"
         assert logs[0]["matched_rule"] == "tool_metadata_drift"
-        assert logs[0]["drift_severity"] == "moderate"
+        assert logs[0]["drift_severity"] == "minor"
         assert "schema_field_added" in logs[0]["drift_types"]
     finally:
         db.unregister_mcp_server("_test_drift_monitor_server")

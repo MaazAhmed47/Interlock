@@ -67,6 +67,7 @@ _TYPE_TO_CLASSIFICATION = {
     "metadata_downgraded": "capability",
     "sensitive_field_added": "data-exposure",
     "data_class_escalated": "data-exposure",
+    "description_exfiltration": "data-exposure",
     "scope_escalated": "auth-scope",
     "identity_mode_escalated": "auth-scope",
     "externality_escalated": "external-reach",

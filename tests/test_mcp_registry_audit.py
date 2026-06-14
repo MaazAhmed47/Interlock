@@ -76,14 +76,14 @@ try:
     changed = db.upsert_mcp_tool_metadata("trusted-filesystem", changed_tool, metadata)
     assert changed["changed"] is True
     assert changed["status"] == "changed"
-    assert changed["drift_severity"] == "moderate"
+    assert changed["drift_severity"] == "minor"
     assert changed["drift_action"] == "monitor"
     assert "schema_field_added" in changed["drift_types"]
     assert changed["previous_schema_hash"] != changed["tool_schema_hash"]
 
     loaded = db.lookup_mcp_tool_metadata("trusted-filesystem", "share_file")
     assert loaded["status"] == "changed"
-    assert loaded["drift_severity"] == "moderate"
+    assert loaded["drift_severity"] == "minor"
     assert loaded["drift_action"] == "monitor"
     assert "schema_field_added" in loaded["drift_types"]
     assert loaded["last_changed"] is not None

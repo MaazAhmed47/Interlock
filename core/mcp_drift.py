@@ -6,7 +6,85 @@ answers what changed, how risky it is, and what the gateway should do.
 """
 
 import difflib
-from typing import Any, Dict, Iterable, List, Set
+import re
+from typing import Any, Dict, Iterable, List, Optional, Set
+
+from core.tool_inspector import DANGEROUS_FILES
+
+# ── Description-exfiltration detection (added-text conjunction) ────────────────
+# A description rug-pull adds an instruction that (S) touches a sensitive
+# resource AND ships it to an (external) destination via an (egress) action.
+# Detection is strictly conjunctive and runs only on the ADDED text, so a benign
+# reword (no added signal) and a benign doc-link (external dest but no egress
+# verb and no sensitive path) both stay minor.
+
+# (S) sensitive-resource paths — reuse the vetted, path-anchored set from the
+# tool-call inspector rather than re-deriving fragile patterns here.
+SENSITIVE_PATH_PATTERNS = list(DANGEROUS_FILES)
+
+# Credential / key / secret material: presence in an exfil conjunction is
+# critical (quarantine) rather than high (deny).
+CRITICAL_RESOURCE_PATTERNS = [
+    r"~/\.?ssh/",
+    r"\.ssh/",
+    r"id_(rsa|dsa|ecdsa|ed25519)\b",
+    r"~/\.aws/",
+    r"\.aws/credentials",
+    r"private[-_]key",
+    r"\.pem\b",
+    r"\.key\b",
+    r"\.p12\b",
+    r"\.pfx\b",
+    r"credentials\.json",
+    r"\.env\b",
+    r"/etc/shadow",
+    r"\.htpasswd",
+    r"api[-_]key",
+    r"\bsecret\b",
+    r"\bpassword\b",
+]
+
+# (egress) word-boundary action tokens — never substring matches, so "url"
+# inside "curl" cannot trigger anything (the externality accident we found).
+EGRESS_VERB_PATTERNS = [
+    r"\bcurl\b",
+    r"\bwget\b",
+    r"\bscp\b",
+    r"\bsftp\b",
+    r"\bnc\b",
+    r"\bncat\b",
+    r"\bnetcat\b",
+    r"\bfetch\b",
+    r"\bpost\b",
+    r"\bput\b",
+    r"\bupload\b",
+    r"\bforward\b",
+    r"\bexfiltrate\b",
+    r"\bexfil\b",
+    r"\btransmit\b",
+    r"\bsend\b",
+    r"\bbeacon\b",
+    r"\bpost-data\b",
+    r"\binvoke-webrequest\b",
+    r"\biwr\b",
+]
+
+# Hosts that are NOT an external destination (loopback, RFC-1918, link-local,
+# cloud metadata, *.local / *.internal).
+_INTERNAL_HOST_PATTERNS = [
+    r"^localhost$",
+    r"^127\.\d+\.\d+\.\d+$",
+    r"^10\.\d+\.\d+\.\d+$",
+    r"^192\.168\.\d+\.\d+$",
+    r"^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$",
+    r"^169\.254\.\d+\.\d+$",
+    r"^0\.0\.0\.0$",
+    r".*\.local$",
+    r".*\.internal$",
+    r"^metadata\.",
+    r"^host\.docker\.internal$",
+    r"^kubernetes\.default(\.svc)?$",
+]
 
 SEVERITY_ORDER = {
     "none": 0,
@@ -92,21 +170,16 @@ def classify_tool_drift(
     prev_description = str(previous_tool.get("description") or "")
     curr_description = str(current_tool.get("description") or "")
     if prev_description != curr_description:
-        ratio = difflib.SequenceMatcher(
-            None, prev_description, curr_description
-        ).ratio()
-        if (1.0 - ratio) > 0.30:
-            findings.append(
-                _finding(
-                    "description_changed",
-                    "moderate",
-                    f"Tool description changed significantly ({round((1.0 - ratio) * 100)}% different).",
-                )
-            )
-        else:
-            findings.append(
-                _finding("description_changed", "minor", "Tool description changed.")
-            )
+        # A description text change carries no capability/schema signal on its
+        # own — it is minor by default (logged, not escalated), so meaning-
+        # preserving rewords stop being false positives. Danger lives in the
+        # CONTENT of what was added, handled by the exfiltration check below.
+        findings.append(
+            _finding("description_changed", "minor", "Tool description changed.")
+        )
+        exfil = _detect_description_exfiltration(prev_description, curr_description)
+        if exfil is not None:
+            findings.append(exfil)
 
     prev_fields = _schema_fields(previous_tool)
     curr_fields = _schema_fields(current_tool)
@@ -127,10 +200,14 @@ def classify_tool_drift(
             _finding("field_renamed", "moderate", f"Field renamed: {old} -> {new}.")
         )
     if effective_added:
+        # A new field appearing is minor by itself: a new OPTIONAL field is a
+        # backward-compatible addition. A new REQUIRED field is escalated by the
+        # independent required_field_added finding (high), and a sensitive name
+        # by sensitive_field_added (high) — so this floor never masks them.
         findings.append(
             _finding(
                 "schema_field_added",
-                "moderate",
+                "minor",
                 f"Schema fields added: {effective_added}.",
             )
         )
@@ -574,6 +651,75 @@ def _normalized_set(values: Any) -> Set[str]:
         for value in values
         if str(value).strip()
     }
+
+
+def _added_description_text(prev_desc: str, curr_desc: str) -> str:
+    """Return only the text present in curr but not in prev (the inserted /
+    replaced segments). A reword reshuffles already-approved tokens and adds
+    little; an injection appends new instructions."""
+    matcher = difflib.SequenceMatcher(None, prev_desc, curr_desc)
+    parts: List[str] = []
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+        if tag in ("insert", "replace"):
+            parts.append(curr_desc[j1:j2])
+    return " ".join(parts)
+
+
+def _search_any(text: str, patterns: Iterable[str]):
+    for pattern in patterns:
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            return m.group(0)
+    return None
+
+
+def _is_internal_host(host: str) -> bool:
+    host = host.split(":")[0].strip().lower()
+    return any(re.match(p, host) for p in _INTERNAL_HOST_PATTERNS)
+
+
+def _external_destination(text: str) -> Optional[str]:
+    """Return an external network destination found in text, or None. A URL to
+    an internal/loopback/metadata host does not count; neither does a bare word.
+    Used only inside the conjunction, so a lone doc-link never escalates."""
+    for m in re.finditer(r"https?://([^\s/\"'>)]+)", text, re.IGNORECASE):
+        if not _is_internal_host(m.group(1)):
+            return m.group(0)
+    for m in re.finditer(r"\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b", text, re.IGNORECASE):
+        return m.group(0)
+    return None
+
+
+def _detect_description_exfiltration(
+    prev_desc: str, curr_desc: str
+) -> Optional[Dict[str, str]]:
+    """Escalate a description change ONLY when its added text conjunctively
+    instructs (S) accessing a sensitive resource, via an (egress) action, to an
+    (external) destination. Each signal alone is insufficient — that keeps
+    rewords and doc-links minor."""
+    added = _added_description_text(prev_desc, curr_desc)
+    if not added:
+        return None
+    sensitive = _search_any(added, SENSITIVE_PATH_PATTERNS)
+    if not sensitive:
+        return None
+    egress = _search_any(added, EGRESS_VERB_PATTERNS)
+    if not egress:
+        return None
+    destination = _external_destination(added)
+    if not destination:
+        return None
+    is_critical = _search_any(added, CRITICAL_RESOURCE_PATTERNS) is not None
+    severity = "critical" if is_critical else "high"
+    return _finding(
+        "description_exfiltration",
+        severity,
+        (
+            "Description now instructs accessing a sensitive resource "
+            f"('{sensitive}') and sending it to an external destination "
+            f"('{destination}'). This was not in the approved description."
+        ),
+    )
 
 
 def _finding(kind: str, severity: str, reason: str) -> Dict[str, str]:

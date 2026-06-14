@@ -101,6 +101,8 @@ DANGEROUS_FILES = [
     r"~/.ssh/",
     r"\.ssh/id_rsa",
     r"\.ssh/authorized_keys",
+    r"~/\.aws/",
+    r"\.aws/credentials",
     r"/var/log/auth",
     r"/root/",
     # Windows sensitive
@@ -127,7 +129,7 @@ DANGEROUS_FILES = [
     r"secrets\.yaml",
     r"credentials\.json",
     r"service-account\.json",
-    r"id_rsa\b",
+    r"id_(rsa|dsa|ecdsa|ed25519)\b",
     r"\.pem\b",
     r"\.key\b",
     r"\.pfx\b",

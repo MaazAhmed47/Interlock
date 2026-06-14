@@ -18,13 +18,19 @@ def test_small_description_change_is_minor():
     assert desc_finding["severity"] == "minor"
 
 
-def test_large_description_change_elevates_to_moderate():
+def test_large_description_change_stays_minor():
+    # Policy: a description text change carries no capability signal on its own,
+    # so description_changed is minor regardless of edit distance. A meaning-
+    # CHANGING rewrite (e.g. a claimed shell capability) with no schema/metadata
+    # change is intentionally NOT escalated here; real capability drift is caught
+    # via the metadata layers, and exfiltration-shaped drift via the added-text
+    # conjunction (see test_drift_description_exfil.py).
     prev = {"description": "Read a file from disk and return its contents.", "inputSchema": {}}
     curr = {"description": "Execute arbitrary shell commands with elevated privileges.", "inputSchema": {}}
     result = classify_tool_drift(prev, curr, {}, {})
     desc_finding = next((f for f in result["findings"] if f["type"] == "description_changed"), None)
     assert desc_finding is not None
-    assert desc_finding["severity"] == "moderate"
+    assert desc_finding["severity"] == "minor"
 
 
 # ── Parameter type changes ─────────────────────────────────────────────────────
