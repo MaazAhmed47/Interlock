@@ -284,7 +284,7 @@ def run_scan(
     # Layers 1 & 2 returned SAFE if we got here. Pass that context into the judge
     # so fail_open_safe can decide whether bypassing is acceptable on Groq outage.
     result = llm_judge_scan(prompt, api_key=api_key, prior_layers_safe=True)
-    result = _finalize_scan_result(result, start, "Layer 3 - LLM Judge")
+    result = _finalize_scan_result(result, start, "Layer 3 — LLM Judge")
     learn_from_result(prompt, result)
     return result
 
@@ -294,7 +294,11 @@ def trigger_all_alerts(result, api_key, key_record=None):
     trigger_webhook(api_key, result)
     siem_configs = (key_record or {}).get("siem_configs") or []
     if siem_configs and any(
-        c.get("webhook_url") or c.get("api_key") or c.get("integration_key")
+        c.get("webhook_url")
+        or c.get("api_key")
+        or c.get("integration_key")
+        or (c.get("provider") == "splunk_hec" and c.get("token"))
+        or (c.get("provider") == "webhook" and c.get("url"))
         for c in siem_configs
     ):
         trigger_siem_dispatch(result, api_key, siem_configs)

@@ -2291,7 +2291,7 @@ svg text {
     <div class="pipeline-step">
       <div class="step-num">L0</div>
       <div class="step-name">Learned Memory</div>
-      <div class="step-desc">Fingerprint match against known threat patterns from prior sessions</div>
+      <div class="step-desc">Fingerprint matching against known threat patterns</div>
       <div class="step-tag tag-cyan">0–2ms</div>
     </div>
     <div class="pipeline-step">
@@ -2310,12 +2310,13 @@ svg text {
       <div class="step-num">L3</div>
       <div class="step-name">LLM Judge</div>
       <div class="step-desc">Groq-powered semantic analysis for novel and sophisticated attacks</div>
+      <div class="step-desc">Drift quarantine and deny decisions are deterministic and recomputable. The L3 LLM layer applies to prompt-scan and proxy traffic, not to drift enforcement.</div>
       <div class="step-tag tag-red">AI LAYER</div>
     </div>
     <div class="pipeline-step">
       <div class="step-num">CP</div>
       <div class="step-name">Custom Policy</div>
-      <div class="step-desc">Per-API-key rules, role-based enforcement, ALLOW / BLOCK / MONITOR / QUARANTINE</div>
+      <div class="step-desc">Per-API-key rules, role-based enforcement, ALLOW / MONITOR / DENY / QUARANTINE</div>
       <div class="step-tag tag-lime">ENFORCE</div>
     </div>
   </div>
@@ -2517,7 +2518,7 @@ svg text {
     <div style="position:relative;z-index:1;">
       <div class="split-label">PRE-EXECUTION POLICY</div>
       <div class="split-title">Policy Enforcement<br>Before Execution</div>
-      <p class="split-body">Interlock intercepts every tool call before it fires. Role-based policies determine whether to allow, monitor, quarantine, or block — based on the request content, user role, and tool sensitivity.</p>
+      <p class="split-body">Interlock intercepts every tool call before it fires. Role-based policies determine whether to allow, monitor, deny, or quarantine — based on the request content, user role, and tool sensitivity.</p>
       <a href="https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664" target="_blank" class="btn-outline">READ MORE</a>
     </div>
   </div>
@@ -2623,8 +2624,8 @@ svg text {
   <div class="split-left" style="background: linear-gradient(135deg, #001a14, #003328, #006650);">
     <div style="position:relative;z-index:1;">
       <div class="split-label">OBSERVABILITY</div>
-      <div class="split-title">Every Decision,<br>Fully Auditable</div>
-      <p class="split-body">Complete feed of every allow, block, monitor, and quarantine decision. Full decision context stored. Export to Datadog, Splunk, Elastic, Slack, PagerDuty, or webhook. Built for teams that need clear evidence for security review, compliance workflows, and incident response.</p>
+      <div class="split-title">Scan Alerts,<br>Fully Auditable</div>
+      <p class="split-body">Audit logs capture allow, deny, monitor, and quarantine decisions with decision context stored for review. Scan alerts can be routed to Datadog, Splunk, Elastic, Slack, PagerDuty, or webhook. Broader audit-event routing for MCP decisions is roadmap.</p>
       <a href="https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664" target="_blank" class="btn-outline">READ MORE</a>
     </div>
   </div>
@@ -2650,7 +2651,7 @@ svg text {
   <div class="cs-block cs-purple">
     <div class="cs-icon"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></div>
     <h3>Configurable Fail Mode</h3>
-    <p>Choose fail-open, fail-closed, or fail-open-safe per environment. If Interlock is unreachable, requests follow your configured policy instead of an implicit default.</p>
+    <p>Choose fail-open, fail-closed, or fail-open-safe per API key. If Interlock is unreachable, requests follow your configured policy instead of an implicit default.</p>
   </div>
 </div>
 
@@ -2683,7 +2684,7 @@ svg text {
       <div class="enterprise-proof-card">
         <div class="enterprise-proof-step">04 / Audit</div>
         <strong>Evidence for security review</strong>
-        <p>Show allow, block, monitor, and quarantine decisions with reason, severity, role, target, scan time, and export-ready context.</p>
+        <p>Show allow, deny, monitor, and quarantine decisions with reason, severity, role, target, scan time, and export-ready context.</p>
       </div>
     </div>
     <div class="enterprise-proof-footer">
@@ -2703,8 +2704,8 @@ svg text {
     <div class="metric-desc">Policy evaluation and stored drift/provenance check per call</div>
   </div>
   <div class="metric-block">
-    <div class="metric-num"><span>6</span></div>
-    <div class="metric-desc">Security stages per MCP call — trust, policy, inspect, RBAC, scan, audit</div>
+    <div class="metric-num"><span>MCP</span></div>
+    <div class="metric-desc">Layered security stages per MCP call — trust/verification, metadata + drift policy, argument inspection, RBAC, param bounds, provenance, scan, audit</div>
   </div>
   <div class="metric-block">
     <div class="metric-num">80<span>+</span></div>

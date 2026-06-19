@@ -3,7 +3,7 @@
 # Interlock
 
 [![CI](https://github.com/MaazAhmed47/Interlock/actions/workflows/tests.yml/badge.svg)](https://github.com/MaazAhmed47/Interlock/actions)
-[![Tests](https://img.shields.io/badge/tests-291%20passing-green)](https://github.com/MaazAhmed47/Interlock/actions)
+[![Tests](https://img.shields.io/badge/tests-297%20test%20cases-green)](https://github.com/MaazAhmed47/Interlock/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 Interlock is a self-hosted MCP runtime trust layer for AI agents.
@@ -47,7 +47,7 @@ Interlock focuses on post-approval tool and capability drift: the changes that h
 ## Verified Status
 | Check | Status |
 |-------|--------|
-| Backend tests | 291 passed / 6 xfailed |
+| Backend tests | 297 test cases |
 | Code quality | ruff · black · mypy (core/routes) |
 | Docker build | passing |
 | Live demo | getinterlock.dev |
@@ -171,7 +171,7 @@ Interlock's wedge is MCP tool drift detection, but the gateway also includes sup
 * **API key enforcement** — protect runtime APIs and the `/ws` real-time scan feed.
 * **Tamper-evident audit logs** — record allow, deny, monitor, and quarantine decisions with hash-chain verification.
 * **Security Receipts** — preserve evidence for drift, policy, and quarantine decisions.
-* **Webhook/SIEM-ready events** — export runtime decisions to Slack, Datadog, Splunk, Elastic, PagerDuty, Sumo Logic, or generic webhooks.
+* **Webhook/SIEM-ready scan alerts** — Scan alerts can be routed to Datadog, Splunk, Elastic, Slack, PagerDuty, or webhook. Broader audit-event routing is roadmap.
 
 ---
 
@@ -213,7 +213,7 @@ Interlock/
 ├── models/
 │   └── schemas.py            # Shared Pydantic schemas — ScanResult, ThreatLevel, ResponseScanResult
 ├── interlock-web/            # React dashboard — Vite + TypeScript, drift review and operational views
-├── tests/                    # 291 passing tests covering drift, MCP gateway, RBAC, provenance, response scan, and more
+├── tests/                    # 297 test cases covering drift, MCP gateway, RBAC, provenance, response scan, and more
 ├── helm/                     # Kubernetes Helm chart — HPA, PDB, NetworkPolicy, ServiceMonitor
 ├── demo/                     # Runnable demos (mcp-drift-quarantine-demo.py requires no LLM keys)
 ├── docs/                     # Architecture docs, OWASP MCP coverage, threat model, and evaluation guides
@@ -501,9 +501,9 @@ What to verify before production:
 - Follow [Production Readiness](docs/production-readiness.md) before a paid pilot or broad rollout.
 - Use [Compliance Posture](docs/compliance-posture.md) for vendor-risk reviews; do not claim Interlock SOC 2, ISO, HIPAA, or GDPR certification yet.
 - `ADMIN_TOKEN` is now a bootstrap root credential; browser OIDC login is available for pilots, while SAML remains customer-driven work if a buyer requires it.
-- Decide fail mode per environment: `fail_closed`, `fail_open`, or `fail_open_safe`.
+- Decide fail mode per API key: `fail_closed`, `fail_open`, or `fail_open_safe`.
 - Connect SIEM/webhooks and set `/admin/retention` to match customer evidence-retention requirements, including admin audit retention.
-- Route one real agent workflow and one real MCP server first; prove allow/block/quarantine/audit before broad rollout.
+- Route one real agent workflow and one real MCP server first; prove allow/deny/quarantine/audit before broad rollout.
 
 ---
 
@@ -833,7 +833,7 @@ Verified in the latest local run:
 
 | Command | Result |
 |---|---:|
-| `python3 -m pytest tests -q -s` | 291 passed, 6 xfailed |
+| `python3 -m pytest tests -q -s` | 297 test cases |
 
 Selected suite counts from the current project state:
 
