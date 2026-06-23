@@ -1845,10 +1845,10 @@ def mark_mcp_tool_removed(
             return {"ok": False, "error": "not_found"}
 
         current = _mcp_tool_metadata_row_to_dict(row)
-        drift_types = _unique_list([*(current.get("drift_types") or []), "tool_removed"])
-        drift_reasons = _unique_list(
-            [*(current.get("drift_reasons") or []), reason]
+        drift_types = _unique_list(
+            [*(current.get("drift_types") or []), "tool_removed"]
         )
+        drift_reasons = _unique_list([*(current.get("drift_reasons") or []), reason])
         conn.execute(
             """
             UPDATE mcp_tool_metadata

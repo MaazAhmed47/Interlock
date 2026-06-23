@@ -499,7 +499,9 @@ def _is_non_mutating_context(name: str, description: str) -> bool:
 
 
 def _has_financial_context(text: str) -> bool:
-    if _contains_any(text, ["ledger", "transaction", "invoice", "payment", "bank", "financial"]):
+    if _contains_any(
+        text, ["ledger", "transaction", "invoice", "payment", "bank", "financial"]
+    ):
         return True
     return bool(
         re.search(
