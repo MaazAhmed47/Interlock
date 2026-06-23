@@ -128,7 +128,11 @@ def _mcp_post_kwargs(
 # ── MCP Tool Definition Validation ────────────────────────────────────────────
 SUSPICIOUS_TOOL_NAMES = [
     r"^(execute|eval|run)_?\w*$",
-    r"^(delete|drop|truncate|wipe)_?\w*$",
+    # Ordinary destructive CRUD tools are handled by metadata policy/RBAC.
+    (
+        r"^(delete|drop|truncate|wipe|remove|destroy)_?"
+        r"(all|everything|database|db|production|prod|system)(?:_?\w*)?$"
+    ),
     r"^(shell|bash|cmd|powershell)_?\w*$",
     r"^(admin|root|sudo|superuser)_?\w*$",
     r"^(backdoor|reverse_shell|exploit)_?\w*$",

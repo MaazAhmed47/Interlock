@@ -44,6 +44,88 @@ SOURCE_MCP = "mcp_annotations"
 SOURCE_HEURISTIC = "heuristic"
 SOURCE_UNKNOWN = "unknown"
 
+READ_ACTIONS = {"read", "list", "get", "fetch", "search", "query", "lookup", "show"}
+CREATE_ACTIONS = {"create", "add", "new", "upload"}
+UPDATE_ACTIONS = {"update", "modify", "patch", "edit", "write", "set"}
+DELETE_ACTIONS = {"delete", "drop", "wipe", "truncate", "remove", "destroy"}
+SHARE_ACTIONS = {"share", "invite", "permission", "grant"}
+EXPORT_ACTIONS = {"export", "download", "extract", "dump"}
+MESSAGE_ACTIONS = {"send", "email", "message", "notify", "sms"}
+EXECUTE_ACTIONS = {
+    "execute",
+    "run",
+    "bash",
+    "shell",
+    "command",
+    "script",
+    "deploy",
+    "restart",
+}
+
+ACTION_TO_EFFECT = {
+    **{term: "read" for term in READ_ACTIONS},
+    **{term: "create" for term in CREATE_ACTIONS},
+    **{term: "update" for term in UPDATE_ACTIONS},
+    **{term: "delete" for term in DELETE_ACTIONS},
+    **{term: "share" for term in SHARE_ACTIONS},
+    **{term: "export" for term in EXPORT_ACTIONS},
+    **{term: "message" for term in MESSAGE_ACTIONS},
+    **{term: "execute" for term in EXECUTE_ACTIONS},
+}
+
+ACTION_ALIASES = {
+    "reads": "read",
+    "lists": "list",
+    "gets": "get",
+    "fetches": "fetch",
+    "searches": "search",
+    "queries": "query",
+    "looks": "lookup",
+    "shows": "show",
+    "creates": "create",
+    "adds": "add",
+    "uploads": "upload",
+    "updates": "update",
+    "modifies": "modify",
+    "patches": "patch",
+    "edits": "edit",
+    "writes": "write",
+    "sets": "set",
+    "deletes": "delete",
+    "drops": "drop",
+    "wipes": "wipe",
+    "truncates": "truncate",
+    "removes": "remove",
+    "destroys": "destroy",
+    "shares": "share",
+    "invites": "invite",
+    "grants": "grant",
+    "exports": "export",
+    "downloads": "download",
+    "extracts": "extract",
+    "dumps": "dump",
+    "sends": "send",
+    "emails": "email",
+    "messages": "message",
+    "notifies": "notify",
+    "executes": "execute",
+    "runs": "run",
+    "deploys": "deploy",
+    "restarts": "restart",
+}
+
+MUTATING_STATUS_ACTIONS = CREATE_ACTIONS | UPDATE_ACTIONS | {"write"}
+NON_MUTATING_CONTEXT_TERMS = {
+    "policy",
+    "policies",
+    "status",
+    "state",
+    "enabled",
+    "whether",
+    "setting",
+    "settings",
+}
+
 
 @dataclass
 class ToolMetadata:
@@ -242,36 +324,19 @@ def _parse_meta_block(tool: dict, namespace: str) -> Dict[str, Any]:
 
 
 def _infer_from_tool_shape(tool: dict) -> Dict[str, Any]:
-    name = str(tool.get("name") or "").lower()
+    raw_name = str(tool.get("name") or "")
+    name = raw_name.lower()
     description = str(tool.get("description") or "").lower()
     schema = tool.get("inputSchema", {}) or tool.get("input_schema", {}) or {}
     field_names = _schema_field_names(schema)
     raw_haystack = " ".join([name, description, " ".join(sorted(field_names))])
     haystack = " ".join([raw_haystack, raw_haystack.replace("_", " ")])
     effects: List[str] = []
-    if _contains_any(
-        haystack, ["read", "list", "get", "fetch", "search", "query", "lookup"]
-    ):
+    if _is_non_mutating_context(raw_name, description):
         effects.append("read")
-    if _contains_any(haystack, ["create", "add", "new", "upload", "write_file"]):
-        effects.append("create")
-    if _contains_any(haystack, ["update", "modify", "patch", "edit", "write"]):
-        effects.append("update")
-    if _contains_any(
-        haystack, ["delete", "drop", "wipe", "truncate", "remove", "destroy"]
-    ):
-        effects.append("delete")
-    if _contains_any(haystack, ["share", "invite", "permission", "grant", "recipient"]):
-        effects.append("share")
-    if _contains_any(haystack, ["export", "download", "extract", "dump"]):
-        effects.append("export")
-    if _contains_any(haystack, ["send", "email", "message", "notify", "sms"]):
-        effects.append("message")
-    if _contains_any(
-        haystack,
-        ["execute", "run", "bash", "shell", "command", "script", "deploy", "restart"],
-    ):
-        effects.append("execute")
+    else:
+        effects.extend(_effects_from_tool_name(raw_name))
+        effects.extend(_effects_from_description(description))
 
     data_classes: List[str] = []
     if _contains_any(
@@ -297,12 +362,11 @@ def _infer_from_tool_shape(tool: dict) -> Dict[str, Any]:
             "api_key",
             "apikey",
             "token",
-            "secret",
             "password",
             "credential",
             "private_key",
         ],
-    ):
+    ) or _has_credential_secret_context(haystack):
         data_classes.append("secrets")
     if _contains_any(
         haystack,
@@ -353,6 +417,103 @@ def _infer_from_tool_shape(tool: dict) -> Dict[str, Any]:
         "externality": externality,
         "warnings": warnings,
     }
+
+
+def _name_tokens(name: str) -> List[str]:
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(name or ""))
+    return [token for token in re.split(r"[^A-Za-z0-9]+", spaced.lower()) if token]
+
+
+def _normalize_action(token: str) -> Optional[str]:
+    token = ACTION_ALIASES.get(token, token)
+    return token if token in ACTION_TO_EFFECT else None
+
+
+def _effect_for_action(action: str) -> Optional[str]:
+    return ACTION_TO_EFFECT.get(action)
+
+
+def _effects_from_tool_name(name: str) -> List[str]:
+    tokens = _name_tokens(name)
+    if not tokens:
+        return []
+
+    effects: List[str] = []
+    first = _normalize_action(tokens[0])
+    if first:
+        effect = _effect_for_action(first)
+        if effect:
+            effects.append(effect)
+
+    if len(tokens) >= 2 and tokens[0] == "write" and tokens[1] == "file":
+        effects.append("create")
+    return _ordered_unique(effects)
+
+
+def _effects_from_description(description: str) -> List[str]:
+    text = str(description or "").strip().lower()
+    if not text:
+        return []
+
+    effects: List[str] = []
+    m = re.match(r"^(?:this tool\s+)?([a-z]+)\b", text)
+    if m:
+        action = _normalize_action(m.group(1))
+        effect = _effect_for_action(action) if action else None
+        if effect:
+            effects.append(effect)
+
+    for pattern in (
+        r"\b(?:can|may|will|must|able to)\s+([a-z]+)\b",
+        r"\band\s+([a-z]+)\b",
+    ):
+        for match in re.finditer(pattern, text):
+            action = _normalize_action(match.group(1))
+            effect = _effect_for_action(action) if action else None
+            if effect:
+                effects.append(effect)
+    return _ordered_unique(effects)
+
+
+def _is_non_mutating_context(name: str, description: str) -> bool:
+    tokens = _name_tokens(name)
+    text = f"{name} {description}".lower().replace("_", " ")
+    description_text = str(description or "").lower()
+
+    if re.search(r"\bread[-\s]?only\b", text):
+        return True
+
+    if tokens and tokens[-1] in NON_MUTATING_CONTEXT_TERMS:
+        first = _normalize_action(tokens[0])
+        return first not in MUTATING_STATUS_ACTIONS
+
+    if (
+        tokens
+        and tokens[0] in READ_ACTIONS
+        and any(token in NON_MUTATING_CONTEXT_TERMS for token in tokens[1:])
+    ):
+        return True
+
+    if re.match(
+        r"^\s*(show|shows|return|returns|read|reads|list|lists|get|gets)\b",
+        description_text,
+    ):
+        return any(term in text for term in NON_MUTATING_CONTEXT_TERMS)
+
+    return False
+
+
+def _has_credential_secret_context(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:secret|secrets)[\s_-]*(?:key|token|password|credential)\b",
+            text,
+        )
+        or re.search(
+            r"\b(?:key|token|password|credential)[\s_-]*(?:secret|secrets)\b",
+            text,
+        )
+    )
 
 
 def _detect_conflicts(
