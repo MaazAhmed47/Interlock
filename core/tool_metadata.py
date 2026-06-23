@@ -1,3 +1,5 @@
+import re
+
 """
 Normalize MCP tool metadata into Interlock's internal policy vocabulary.
 
@@ -5,7 +7,7 @@ Official MCP annotations are useful hints, but they are not security contracts.
 This module preserves that distinction by recording source, verification level,
 confidence, and warnings whenever metadata is inferred or inconsistent.
 """
-
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Set
 
@@ -245,7 +247,7 @@ def _infer_from_tool_shape(tool: dict) -> Dict[str, Any]:
     description = str(tool.get("description") or "").lower()
     schema = tool.get("inputSchema", {}) or tool.get("input_schema", {}) or {}
     field_names = _schema_field_names(schema)
-    haystack = " ".join([name, description, " ".join(sorted(field_names))])
+    haystack = " ".join([name, " ".join(sorted(field_names))])
 
     effects: List[str] = []
     if _contains_any(
@@ -502,7 +504,7 @@ def _schema_field_names(schema: Any) -> Set[str]:
 
 
 def _contains_any(text: str, terms: Iterable[str]) -> bool:
-    return any(term in text for term in terms)
+    return any(re.search(rf"\b{re.escape(term)}\b", text) for term in terms)
 
 
 def _first_present(block: dict, *keys: str) -> Any:
