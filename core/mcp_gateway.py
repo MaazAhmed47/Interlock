@@ -161,6 +161,70 @@ DANGEROUS_SCHEMA_FIELDS = [
     "script_content",
 ]
 
+BULK_DESTRUCTIVE_SCHEMA_VALUE_RE = re.compile(
+    r"^(delete|drop|truncate|wipe|remove|destroy|purge)_?"
+    r"(all|everything|database|db|production|prod|system|records?)$",
+    re.IGNORECASE,
+)
+
+
+def _malformed_tool_result(tool: Any, reason: str) -> ScanResult:
+    return ScanResult(
+        is_threat=True,
+        threat_level=ThreatLevel.HIGH,
+        threat_type="MCP_MALFORMED_TOOL_DEFINITION",
+        reason=reason,
+        original_prompt=f"Tool definition: {json.dumps(tool, default=str)[:300]}",
+        safe_to_proceed=False,
+        confidence=0.95,
+        layer_caught="MCP Gateway - Tool Validator",
+        tool_metadata=normalize_tool_metadata({}),
+    )
+
+
+def _schema_nodes(schema: Any):
+    if not isinstance(schema, dict):
+        return
+    yield schema
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for child in properties.values():
+            yield from _schema_nodes(child)
+    for key in ("items", "oneOf", "anyOf", "allOf"):
+        child = schema.get(key)
+        if isinstance(child, dict):
+            yield from _schema_nodes(child)
+        elif isinstance(child, list):
+            for item in child:
+                yield from _schema_nodes(item)
+
+
+def _find_dangerous_schema_field(schema: dict) -> Optional[str]:
+    dangerous = {field.lower() for field in DANGEROUS_SCHEMA_FIELDS}
+    for node in _schema_nodes(schema):
+        properties = node.get("properties")
+        if not isinstance(properties, dict):
+            continue
+        for field in properties:
+            if str(field).lower() in dangerous:
+                return str(field)
+    return None
+
+
+def _find_bulk_destructive_enum_value(schema: dict) -> Optional[str]:
+    for node in _schema_nodes(schema):
+        values = []
+        enum = node.get("enum")
+        if isinstance(enum, list):
+            values.extend(enum)
+        if "const" in node:
+            values.append(node["const"])
+        for value in values:
+            normalized = str(value).strip().replace("-", "_")
+            if BULK_DESTRUCTIVE_SCHEMA_VALUE_RE.match(normalized):
+                return str(value)
+    return None
+
 
 # ── Tool Definition Scanner ───────────────────────────────────────────────────
 def validate_mcp_tool_definition(tool: dict) -> ScanResult:
@@ -172,10 +236,23 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
     - Dangerous schema fields (raw command inputs)
     - Hidden instructions in descriptions
     """
+    if not isinstance(tool, dict):
+        return _malformed_tool_result(
+            tool, "MCP tool definition must be a JSON object."
+        )
+
     metadata = normalize_tool_metadata(tool)
-    name = tool.get("name", "").lower()
-    description = tool.get("description", "").lower()
-    schema = tool.get("inputSchema", {}) or tool.get("input_schema", {})
+    raw_name = tool.get("name")
+    if not isinstance(raw_name, str) or not raw_name.strip():
+        return _malformed_tool_result(
+            tool, "MCP tool definition must include a non-empty string name."
+        )
+
+    name = raw_name.strip().lower()
+    raw_description = tool.get("description", "")
+    description = "" if raw_description is None else str(raw_description).lower()
+    raw_schema = tool.get("inputSchema", {}) or tool.get("input_schema", {})
+    schema = raw_schema if isinstance(raw_schema, dict) else {}
 
     # 1. Check for malicious tool names
     for pattern in SUSPICIOUS_TOOL_NAMES:
@@ -230,6 +307,34 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
             )
 
     # 4. Check schema for dangerous parameter fields
+    dangerous_field = _find_dangerous_schema_field(schema)
+    if dangerous_field:
+        return ScanResult(
+            is_threat=True,
+            threat_level=ThreatLevel.HIGH,
+            threat_type="MCP_DANGEROUS_SCHEMA",
+            reason=f"Tool '{name}' accepts dangerous parameter '{dangerous_field}'. Allows arbitrary command/code execution.",
+            original_prompt=f"Tool: {name} | Schema: {json.dumps(schema)[:200]}",
+            safe_to_proceed=False,
+            confidence=0.92,
+            layer_caught="MCP Gateway - Tool Validator",
+            tool_metadata=metadata,
+        )
+
+    destructive_value = _find_bulk_destructive_enum_value(schema)
+    if destructive_value:
+        return ScanResult(
+            is_threat=True,
+            threat_level=ThreatLevel.HIGH,
+            threat_type="MCP_DANGEROUS_SCHEMA",
+            reason=f"Tool '{name}' exposes bulk-destructive schema value '{destructive_value}'.",
+            original_prompt=f"Tool: {name} | Schema: {json.dumps(schema)[:200]}",
+            safe_to_proceed=False,
+            confidence=0.9,
+            layer_caught="MCP Gateway - Tool Validator",
+            tool_metadata=metadata,
+        )
+
     properties = schema.get("properties", {})
     for field in DANGEROUS_SCHEMA_FIELDS:
         if field in properties:
@@ -298,9 +403,52 @@ async def discover_mcp_tools(
         async with httpx.AsyncClient(timeout=timeout) as client:
             payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
             resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
+            resp.raise_for_status()
             data = resp.json()
+            if not isinstance(data, dict):
+                return {
+                    "ok": False,
+                    "error": "mcp_discovery_error",
+                    "message": "MCP server returned a non-object JSON-RPC response.",
+                    "server_url": server_url,
+                }
+            if data.get("error"):
+                return {
+                    "ok": False,
+                    "error": "mcp_discovery_error",
+                    "message": str(data["error"])[:200],
+                    "server_url": server_url,
+                }
 
-            tools = data.get("result", {}).get("tools", [])
+            result = data.get("result") or {}
+            tools = result.get("tools", []) if isinstance(result, dict) else []
+            if not isinstance(tools, list):
+                return {
+                    "ok": False,
+                    "error": "mcp_discovery_error",
+                    "message": "MCP tools/list result.tools must be a list.",
+                    "server_url": server_url,
+                }
+
+            seen_tool_names = set()
+            duplicate_tool_names = set()
+            for candidate in tools:
+                if not isinstance(candidate, dict):
+                    continue
+                candidate_name = candidate.get("name")
+                if not isinstance(candidate_name, str) or not candidate_name.strip():
+                    continue
+                normalized_name = candidate_name.strip()
+                if normalized_name in seen_tool_names:
+                    duplicate_tool_names.add(normalized_name)
+                seen_tool_names.add(normalized_name)
+            if duplicate_tool_names:
+                return {
+                    "ok": False,
+                    "error": "duplicate_tool_names",
+                    "message": f"MCP discovery returned duplicate tool names: {sorted(duplicate_tool_names)}.",
+                    "server_url": server_url,
+                }
 
             # Validate every tool
             validation_results = []
@@ -310,13 +458,25 @@ async def discover_mcp_tools(
             # ── Server-level drift check (tool additions / removals) ──────────
             # Must run BEFORE upsert so previous_names still reflects prior state.
             if registry_server_id:
-                current_names = {t.get("name", "") for t in tools if t.get("name")}
+                current_names = {
+                    t.get("name", "").strip()
+                    for t in tools
+                    if isinstance(t, dict)
+                    and isinstance(t.get("name"), str)
+                    and t.get("name", "").strip()
+                }
                 previous_names = db.get_known_tool_names(registry_server_id)
                 if previous_names:
                     server_findings = classify_server_drift(
                         registry_server_id, previous_names, current_names
                     )
                     for finding in server_findings:
+                        if finding["type"] == "tool_removed":
+                            db.mark_mcp_tool_removed(
+                                registry_server_id,
+                                finding["tool_name"],
+                                finding["reason"],
+                            )
                         db.log_mcp_audit_event(
                             {
                                 "server_id": registry_server_id,
@@ -354,7 +514,9 @@ async def discover_mcp_tools(
                     registry["persisted"] = True
                 validation_results.append(
                     {
-                        "tool_name": tool.get("name"),
+                        "tool_name": (
+                            tool.get("name") if isinstance(tool, dict) else None
+                        ),
                         "is_safe": not validation.is_threat,
                         "validation": (
                             validation.model_dump()
@@ -526,7 +688,10 @@ async def proxy_mcp_tool_call(
     )
     _attach_drift_context(policy_decision, drift_context)
 
-    if drift_context and drift_context["action"] == "quarantine":
+    if drift_context and (
+        drift_context["severity"] == "critical"
+        or drift_context["action"] == "quarantine"
+    ):
         reason = _drift_reason(
             drift_context,
             "Stored MCP tool metadata drift is critical; the tool is quarantined until reviewed.",
@@ -541,7 +706,9 @@ async def proxy_mcp_tool_call(
             "policy_decision": policy_decision,
         }
 
-    if drift_context and drift_context["action"] == "deny":
+    if drift_context and (
+        drift_context["severity"] == "high" or drift_context["action"] == "deny"
+    ):
         reason = _drift_reason(
             drift_context,
             "Stored MCP tool metadata drift is high risk; blocking execution until reviewed.",
@@ -792,6 +959,14 @@ def _stored_tool_drift_context(
     status = stored_tool.get("status") or "active"
     severity = stored_tool.get("drift_severity") or "none"
     action = stored_tool.get("drift_action") or "allow"
+    if severity == "critical":
+        status = "quarantined"
+        action = "quarantine"
+    elif severity == "high" and action == "allow":
+        action = "deny"
+    elif severity in {"minor", "moderate"} and action == "allow":
+        action = "monitor"
+
     if status == "quarantined":
         action = "quarantine"
         if severity == "none":
