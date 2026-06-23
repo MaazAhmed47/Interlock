@@ -1591,6 +1591,11 @@ def upsert_mcp_tool_metadata(
         raise ValueError("tool name is required")
 
     schema = tool.get("inputSchema", {}) or tool.get("input_schema", {}) or {}
+    current_output_schema = (
+        tool.get("outputSchema", {}) or tool.get("output_schema", {}) or {}
+    )
+    if not isinstance(current_output_schema, dict):
+        current_output_schema = {}
     tool_schema_hash = _hash_json(schema)
     description_hash = _hash_text(tool.get("description", ""))
     raw_annotations = tool.get("annotations") or {}
@@ -1627,12 +1632,20 @@ def upsert_mcp_tool_metadata(
             previous_description_hash = existing_d["description_hash"]
             previous_metadata = existing_d.get("normalized_metadata") or {}
             previous_tool_definition = existing_d.get("raw_tool_definition") or {}
+            previous_output_schema = (
+                previous_tool_definition.get("outputSchema", {})
+                or previous_tool_definition.get("output_schema", {})
+                or {}
+            )
+            if not isinstance(previous_output_schema, dict):
+                previous_output_schema = {}
             first_seen = existing_d["first_seen"]
             last_changed = existing_d.get("last_changed")
             changed = (
                 previous_schema_hash != tool_schema_hash
                 or previous_description_hash != description_hash
                 or previous_metadata != (normalized_metadata or {})
+                or previous_output_schema != current_output_schema
             )
             if changed:
                 drift = classify_tool_drift(
@@ -1809,6 +1822,55 @@ def get_known_tool_names(server_id: str) -> set:
             (server_id,),
         ).fetchall()
     return {row_value(r, "tool_name", 0) for r in rows if row_value(r, "tool_name", 0)}
+
+
+def mark_mcp_tool_removed(
+    server_id: str, tool_name: str, reason: str = ""
+) -> Dict[str, Any]:
+    """Mark a missing rediscovered tool as quarantined pending operator review."""
+    reason = reason or (
+        f"Tool '{tool_name}' disappeared from server '{server_id}' during discovery."
+    )
+    now = datetime.now(timezone.utc).isoformat()
+
+    with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_tool_metadata
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": "not_found"}
+
+        current = _mcp_tool_metadata_row_to_dict(row)
+        drift_types = _unique_list([*(current.get("drift_types") or []), "tool_removed"])
+        drift_reasons = _unique_list(
+            [*(current.get("drift_reasons") or []), reason]
+        )
+        conn.execute(
+            """
+            UPDATE mcp_tool_metadata
+               SET status = 'quarantined',
+                   drift_severity = 'critical',
+                   drift_action = 'quarantine',
+                   drift_types = ?,
+                   drift_reasons = ?,
+                   last_changed = COALESCE(last_changed, ?)
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (
+                json.dumps(drift_types),
+                json.dumps(drift_reasons),
+                now,
+                server_id,
+                tool_name,
+            ),
+        )
+
+    updated = lookup_mcp_tool_metadata(server_id, tool_name) or {}
+    return {"ok": True, **updated}
 
 
 def list_drifted_mcp_tools(

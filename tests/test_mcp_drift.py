@@ -205,4 +205,101 @@ assert drift["action"] == "deny"
 assert "scope_escalated" in drift["types"]
 print("  OK")
 
-print("\nAll MCP drift tests passed. (13/13)")
+print("Test 14: nested enum widening is high risk ...")
+prev_tool = {
+    **BASE_TOOL,
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "request": {
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "enum": ["read"]},
+                },
+                "required": ["mode"],
+            },
+        },
+        "required": ["request"],
+    },
+}
+new_tool = {
+    **prev_tool,
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "request": {
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "enum": ["read", "delete_all"]},
+                },
+                "required": ["mode"],
+            },
+        },
+        "required": ["request"],
+    },
+}
+drift = classify_tool_drift(prev_tool, new_tool, BASE_METADATA, BASE_METADATA)
+assert drift["severity"] == "high"
+assert drift["action"] == "deny"
+assert "constraint_relaxed" in drift["types"]
+print("  OK")
+
+print("Test 15: nested required and type changes are detected ...")
+prev_tool = {
+    **BASE_TOOL,
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "request": {
+                "type": "object",
+                "properties": {"limit": {"type": "string"}},
+                "required": [],
+            },
+        },
+    },
+}
+new_tool = {
+    **prev_tool,
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "request": {
+                "type": "object",
+                "properties": {"limit": {"type": "integer"}},
+                "required": ["limit"],
+            },
+        },
+    },
+}
+drift = classify_tool_drift(prev_tool, new_tool, BASE_METADATA, BASE_METADATA)
+assert drift["severity"] == "high"
+assert drift["action"] == "deny"
+assert "param_type_changed" in drift["types"]
+assert "required_field_added" in drift["types"]
+print("  OK")
+
+print("Test 16: sensitive output schema additions are high risk ...")
+prev_tool = {
+    **BASE_TOOL,
+    "outputSchema": {
+        "type": "object",
+        "properties": {"summary": {"type": "string"}},
+    },
+}
+new_tool = {
+    **prev_tool,
+    "outputSchema": {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "ssn": {"type": "string"},
+        },
+    },
+}
+drift = classify_tool_drift(prev_tool, new_tool, BASE_METADATA, BASE_METADATA)
+assert drift["severity"] == "high"
+assert drift["action"] == "deny"
+assert "sensitive_field_added" in drift["types"]
+print("  OK")
+
+print("\nAll MCP drift tests passed. (16/16)")

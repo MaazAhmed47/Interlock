@@ -347,10 +347,7 @@ def _infer_from_tool_shape(tool: dict) -> Dict[str, Any]:
         haystack, ["patient", "diagnosis", "medical", "clinical", "health", "phi"]
     ):
         data_classes.append("phi")
-    if _contains_any(
-        haystack,
-        ["account", "ledger", "transaction", "invoice", "payment", "bank", "financial"],
-    ):
+    if _has_financial_context(haystack):
         data_classes.append("financial")
     if _contains_any(
         haystack, ["contract", "matter", "claim", "patent", "legal", "privileged"]
@@ -361,8 +358,6 @@ def _infer_from_tool_shape(tool: dict) -> Dict[str, Any]:
         [
             "api_key",
             "apikey",
-            "token",
-            "password",
             "credential",
             "private_key",
         ],
@@ -503,6 +498,21 @@ def _is_non_mutating_context(name: str, description: str) -> bool:
     return False
 
 
+def _has_financial_context(text: str) -> bool:
+    if _contains_any(text, ["ledger", "transaction", "invoice", "payment", "bank", "financial"]):
+        return True
+    return bool(
+        re.search(
+            r"\baccount\b.{0,30}\b(billing|invoice|payment|bank|ledger|transaction|financial)\b",
+            text,
+        )
+        or re.search(
+            r"\b(billing|invoice|payment|bank|ledger|transaction|financial)\b.{0,30}\baccount\b",
+            text,
+        )
+    )
+
+
 def _has_credential_secret_context(text: str) -> bool:
     return bool(
         re.search(
@@ -511,6 +521,14 @@ def _has_credential_secret_context(text: str) -> bool:
         )
         or re.search(
             r"\b(?:key|token|password|credential)[\s_-]*(?:secret|secrets)\b",
+            text,
+        )
+        or re.search(
+            r"\b(?:api|access|auth|bearer|refresh|session|secret|private)[\s_-]*(?:token|password)\b",
+            text,
+        )
+        or re.search(
+            r"\b(?:token|password)[\s_-]*(?:key|secret|credential|hash|value)\b",
             text,
         )
     )

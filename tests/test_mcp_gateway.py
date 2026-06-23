@@ -279,6 +279,77 @@ def test_description_at_boundary_passes():
     assert not result.is_threat
 
 
+def test_malformed_tool_definition_requires_object():
+    result = validate_mcp_tool_definition(None)
+    assert result.is_threat
+    assert result.threat_type == "MCP_MALFORMED_TOOL_DEFINITION"
+
+
+def test_malformed_tool_definition_requires_non_empty_name():
+    result = validate_mcp_tool_definition(
+        {"description": "Nameless tool.", "inputSchema": {}}
+    )
+    assert result.is_threat
+    assert result.threat_type == "MCP_MALFORMED_TOOL_DEFINITION"
+
+
+def test_null_description_is_coerced_and_safe_read_tool_passes():
+    result = validate_mcp_tool_definition(
+        {
+            "name": "read_profile",
+            "description": None,
+            "inputSchema": {
+                "type": "object",
+                "properties": {"profile_id": {"type": "string"}},
+            },
+        }
+    )
+    assert not result.is_threat
+    assert result.tool_metadata["side_effect"] == "read_only"
+
+
+def test_nested_command_parameter_flagged_as_dangerous_schema():
+    result = validate_mcp_tool_definition(
+        {
+            "name": "maintenance_task",
+            "description": "A helpful maintenance utility.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "options": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                    }
+                },
+            },
+        }
+    )
+    assert result.is_threat
+    assert result.threat_type == "MCP_DANGEROUS_SCHEMA"
+    assert "command" in result.reason
+
+
+def test_bulk_destructive_enum_value_flagged_as_dangerous_schema():
+    result = validate_mcp_tool_definition(
+        {
+            "name": "maintenance_task",
+            "description": "A helpful maintenance utility.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["status", "purge_all"],
+                    }
+                },
+            },
+        }
+    )
+    assert result.is_threat
+    assert result.threat_type == "MCP_DANGEROUS_SCHEMA"
+    assert "purge_all" in result.reason
+
+
 def test_discovery_metadata_and_persistence():
     db.register_mcp_server(
         "_test_discovery_persist",
@@ -374,6 +445,111 @@ def test_discovery_sends_bearer_upstream_auth_from_env(monkeypatch):
         assert "secret-bearer-token" not in json.dumps(discovery)
     finally:
         db.unregister_mcp_server("_test_discovery_bearer")
+
+
+def test_discovery_jsonrpc_error_fails_closed():
+    mock_discovery_resp = MagicMock()
+    mock_discovery_resp.raise_for_status.return_value = None
+    mock_discovery_resp.json.return_value = {
+        "error": {"code": 401, "message": "unauthorized"}
+    }
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_discovery_resp)
+
+    with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
+        discovery = asyncio.run(discover_mcp_tools("http://auth.example/mcp"))
+
+    assert discovery["ok"] is False
+    assert discovery["error"] == "mcp_discovery_error"
+    assert "unauthorized" in discovery["message"]
+
+
+def test_discovery_duplicate_tool_names_fails_closed():
+    duplicate = {
+        "name": "read_profile",
+        "description": "Read a profile.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"profile_id": {"type": "string"}},
+        },
+    }
+    mock_discovery_resp = MagicMock()
+    mock_discovery_resp.raise_for_status.return_value = None
+    mock_discovery_resp.json.return_value = {
+        "result": {"tools": [duplicate, dict(duplicate)]}
+    }
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_discovery_resp)
+
+    with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
+        discovery = asyncio.run(discover_mcp_tools("http://example.test/mcp"))
+
+    assert discovery["ok"] is False
+    assert discovery["error"] == "duplicate_tool_names"
+
+
+def test_discovery_removed_tool_is_quarantined():
+    server_id = "_test_removed_tool_quarantine"
+    db.register_mcp_server(
+        server_id,
+        {
+            "url": "http://example.test/mcp",
+            "description": "Removal drift test server",
+            "allowed_tools": ["read_profile"],
+            "blocked_tools": [],
+            "rate_limit": 10,
+        },
+    )
+    db.verify_mcp_server(server_id)
+    db.upsert_mcp_tool_metadata(
+        server_id,
+        {
+            "name": "read_profile",
+            "description": "Read a profile.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"profile_id": {"type": "string"}},
+            },
+        },
+        {
+            "effects": ["read"],
+            "side_effect": "read_only",
+            "data_classes": ["user_content"],
+            "externality": "internal",
+            "verification_level": "interlock_meta",
+            "confidence": 0.95,
+            "warnings": [],
+        },
+    )
+
+    mock_discovery_resp = MagicMock()
+    mock_discovery_resp.raise_for_status.return_value = None
+    mock_discovery_resp.json.return_value = {"result": {"tools": []}}
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_discovery_resp)
+
+    try:
+        with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
+            discovery = asyncio.run(
+                discover_mcp_tools(
+                    "http://example.test/mcp",
+                    server_id=server_id,
+                )
+            )
+        assert discovery["ok"] is True
+        stored = db.lookup_mcp_tool_metadata(server_id, "read_profile")
+        assert stored["status"] == "quarantined"
+        assert stored["drift_severity"] == "critical"
+        assert stored["drift_action"] == "quarantine"
+        assert "tool_removed" in stored["drift_types"]
+    finally:
+        db.unregister_mcp_server(server_id)
 
 
 def test_call_sends_x_api_key_upstream_auth_and_does_not_log_token(monkeypatch):
@@ -735,6 +911,69 @@ def test_quarantined_tool_denied():
         assert "effect_escalated" in logs[0]["drift_types"]
     finally:
         db.unregister_mcp_server("_test_quarantine_server")
+
+
+def test_critical_drift_severity_quarantines_even_if_action_allow():
+    server_id = "_test_critical_severity_server"
+    db.register_mcp_server(
+        server_id,
+        {
+            "url": "http://localhost:9998/mcp",
+            "description": "Critical severity enforcement test server",
+            "allowed_tools": ["read_profile"],
+            "blocked_tools": [],
+            "rate_limit": 10,
+        },
+    )
+    db.verify_mcp_server(server_id)
+    db.upsert_mcp_tool_metadata(
+        server_id,
+        {
+            "name": "read_profile",
+            "description": "Read a profile.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"profile_id": {"type": "string"}},
+            },
+        },
+        {
+            "effects": ["read"],
+            "side_effect": "read_only",
+            "data_classes": ["user_content"],
+            "externality": "internal",
+            "verification_level": "interlock_meta",
+            "confidence": 0.95,
+            "warnings": [],
+        },
+    )
+    with db.get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE mcp_tool_metadata
+               SET status = 'active',
+                   drift_severity = 'critical',
+                   drift_action = 'allow',
+                   drift_types = '["effect_escalated"]',
+                   drift_reasons = '["forced critical drift for regression"]'
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, "read_profile"),
+        )
+    try:
+        out = asyncio.run(
+            proxy_mcp_tool_call(
+                server_id,
+                "read_profile",
+                {"profile_id": "p1"},
+                role="admin_agent",
+            )
+        )
+        assert out["ok"] is False
+        assert out["error"] == "tool_quarantined"
+        assert out["drift"]["severity"] == "critical"
+        assert out["drift"]["action"] == "quarantine"
+    finally:
+        db.unregister_mcp_server(server_id)
 
 
 def test_minor_drift_monitored_and_allowed():

@@ -69,6 +69,15 @@ EGRESS_VERB_PATTERNS = [
     r"\biwr\b",
 ]
 
+DELIVERY_CONTEXT_PATTERNS = [
+    r"\bpayload\b",
+    r"\brequest body\b",
+    r"\bcopy\b",
+    r"\bdiagnostics?\b",
+    r"\bbackup\b",
+    r"\barchive\b",
+]
+
 # Hosts that are NOT an external destination (loopback, RFC-1918, link-local,
 # cloud metadata, *.local / *.internal).
 _INTERNAL_HOST_PATTERNS = [
@@ -445,50 +454,149 @@ def classify_server_drift(
 
 
 def _schema(tool: dict) -> dict:
-    schema = tool.get("inputSchema", {}) or tool.get("input_schema", {}) or {}
+    """Return the input schema for backward-compatible callers."""
+    schema = _schema_from_keys(tool, ("inputSchema", "input_schema"))
     return schema if isinstance(schema, dict) else {}
 
 
+def _schema_from_keys(tool: dict, keys: Iterable[str]) -> dict:
+    if not isinstance(tool, dict):
+        return {}
+    for key in keys:
+        schema = tool.get(key)
+        if isinstance(schema, dict):
+            return schema
+    return {}
+
+
+def _schema_sections(tool: dict) -> Dict[str, dict]:
+    sections = {"input": _schema(tool)}
+    output = _schema_from_keys(tool, ("outputSchema", "output_schema"))
+    if output:
+        sections["output"] = output
+    return sections
+
+
 def _schema_fields(tool: dict) -> Set[str]:
-    return _schema_field_names(_schema(tool))
+    names: Set[str] = set()
+    for label, schema in _schema_sections(tool).items():
+        names.update(_schema_field_names(schema, label))
+    return names
 
 
 def _schema_required(tool: dict) -> Set[str]:
-    required = _schema(tool).get("required", [])
-    if not isinstance(required, list):
-        return set()
-    return {str(value).lower() for value in required}
+    required: Set[str] = set()
+    for label, schema in _schema_sections(tool).items():
+        required.update(_schema_required_names(schema, label))
+    return required
 
 
 def _schema_field_types(tool: dict) -> Dict[str, str]:
-    schema = _schema(tool)
-    properties = schema.get("properties") or {}
-    if not isinstance(properties, dict):
-        return {}
-    return {
-        str(name).lower(): str(prop.get("type", ""))
-        for name, prop in properties.items()
-        if isinstance(prop, dict) and prop.get("type")
-    }
+    types: Dict[str, str] = {}
+    for label, schema in _schema_sections(tool).items():
+        types.update(_schema_field_types_from_schema(schema, label))
+    return types
 
 
-def _schema_field_names(schema: Any) -> Set[str]:
+def _join_schema_path(prefix: str, name: str) -> str:
+    return f"{prefix}.{name}" if prefix else name
+
+
+def _schema_field_names(schema: Any, prefix: str = "") -> Set[str]:
     names: Set[str] = set()
     if not isinstance(schema, dict):
         return names
     properties = schema.get("properties")
     if isinstance(properties, dict):
         for name, child in properties.items():
-            names.add(str(name).lower())
-            names.update(_schema_field_names(child))
+            path = _join_schema_path(prefix, str(name).lower())
+            names.add(path)
+            names.update(_schema_field_names(child, path))
     for key in ("items", "oneOf", "anyOf", "allOf"):
         child = schema.get(key)
         if isinstance(child, dict):
-            names.update(_schema_field_names(child))
+            names.update(_schema_field_names(child, prefix))
         elif isinstance(child, list):
             for item in child:
-                names.update(_schema_field_names(item))
+                names.update(_schema_field_names(item, prefix))
     return names
+
+
+def _schema_required_names(schema: Any, prefix: str = "") -> Set[str]:
+    names: Set[str] = set()
+    if not isinstance(schema, dict):
+        return names
+
+    raw_required = schema.get("required", [])
+    required = (
+        {str(value).lower() for value in raw_required}
+        if isinstance(raw_required, list)
+        else set()
+    )
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for name, child in properties.items():
+            normalized = str(name).lower()
+            path = _join_schema_path(prefix, normalized)
+            if normalized in required:
+                names.add(path)
+            names.update(_schema_required_names(child, path))
+
+    for key in ("items", "oneOf", "anyOf", "allOf"):
+        child = schema.get(key)
+        if isinstance(child, dict):
+            names.update(_schema_required_names(child, prefix))
+        elif isinstance(child, list):
+            for item in child:
+                names.update(_schema_required_names(item, prefix))
+    return names
+
+
+def _schema_field_types_from_schema(schema: Any, prefix: str = "") -> Dict[str, str]:
+    types: Dict[str, str] = {}
+    if not isinstance(schema, dict):
+        return types
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for name, child in properties.items():
+            path = _join_schema_path(prefix, str(name).lower())
+            if isinstance(child, dict):
+                if child.get("type"):
+                    types[path] = str(child.get("type"))
+                types.update(_schema_field_types_from_schema(child, path))
+
+    for key in ("items", "oneOf", "anyOf", "allOf"):
+        child = schema.get(key)
+        if isinstance(child, dict):
+            types.update(_schema_field_types_from_schema(child, prefix))
+        elif isinstance(child, list):
+            for item in child:
+                types.update(_schema_field_types_from_schema(item, prefix))
+    return types
+
+
+def _schema_properties(schema: Any, prefix: str = "") -> Dict[str, dict]:
+    props: Dict[str, dict] = {}
+    if not isinstance(schema, dict):
+        return props
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        for name, child in properties.items():
+            path = _join_schema_path(prefix, str(name).lower())
+            if isinstance(child, dict):
+                props[path] = child
+                props.update(_schema_properties(child, path))
+
+    for key in ("items", "oneOf", "anyOf", "allOf"):
+        child = schema.get(key)
+        if isinstance(child, dict):
+            props.update(_schema_properties(child, prefix))
+        elif isinstance(child, list):
+            for item in child:
+                props.update(_schema_properties(item, prefix))
+    return props
 
 
 def _detect_renames(
@@ -545,10 +653,14 @@ def _constraint_widenings(
     """Detect constraint RELAXATION on shared top-level properties: enum/const
     widening (high — expands the allowed operations), and looser numeric/length
     bounds, dropped pattern, or opened additionalProperties (moderate)."""
-    prev_schema = _schema(previous_tool)
-    curr_schema = _schema(current_tool)
-    prev_props = prev_schema.get("properties") or {}
-    curr_props = curr_schema.get("properties") or {}
+    prev_sections = _schema_sections(previous_tool)
+    curr_sections = _schema_sections(current_tool)
+    prev_props: Dict[str, dict] = {}
+    curr_props: Dict[str, dict] = {}
+    for label, schema in prev_sections.items():
+        prev_props.update(_schema_properties(schema, label))
+    for label, schema in curr_sections.items():
+        curr_props.update(_schema_properties(schema, label))
     findings: List[Dict[str, str]] = []
 
     if isinstance(prev_props, dict) and isinstance(curr_props, dict):
@@ -619,17 +731,20 @@ def _constraint_widenings(
                     )
                 )
 
-    if (
-        prev_schema.get("additionalProperties") is False
-        and curr_schema.get("additionalProperties") is not False
-    ):
-        findings.append(
-            _finding(
-                "constraint_relaxed",
-                "moderate",
-                "Root additionalProperties opened to accept arbitrary fields.",
+    for label in sorted(set(prev_sections) & set(curr_sections)):
+        prev_schema = prev_sections[label]
+        curr_schema = curr_sections[label]
+        if (
+            prev_schema.get("additionalProperties") is False
+            and curr_schema.get("additionalProperties") is not False
+        ):
+            findings.append(
+                _finding(
+                    "constraint_relaxed",
+                    "moderate",
+                    f"{label} schema additionalProperties opened to accept arbitrary fields.",
+                )
             )
-        )
     return findings
 
 
@@ -704,6 +819,8 @@ def _detect_description_exfiltration(
     if not sensitive:
         return None
     egress = _search_any(added, EGRESS_VERB_PATTERNS)
+    if not egress:
+        egress = _search_any(added, DELIVERY_CONTEXT_PATTERNS)
     if not egress:
         return None
     destination = _external_destination(added)

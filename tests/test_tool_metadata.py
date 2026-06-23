@@ -236,4 +236,43 @@ metadata = normalize_tool_metadata(
 assert "secrets" not in metadata["data_classes"]
 print("  OK")
 
-print("\nAll tool metadata tests passed. (10/10)")
+print("Test 11: benign password and token prose does not infer secrets ...")
+for tool in (
+    {
+        "name": "list_password_requirements",
+        "description": "List password policy requirements for onboarding.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"workspace_id": {"type": "string"}},
+        },
+    },
+    {
+        "name": "get_token_usage",
+        "description": "Read monthly token usage for billing analytics.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"workspace_id": {"type": "string"}},
+        },
+    },
+):
+    metadata = normalize_tool_metadata(tool)
+    assert "secrets" not in metadata["data_classes"], metadata
+print("  OK")
+
+print("Test 12: account settings alone does not infer financial data ...")
+metadata = normalize_tool_metadata(
+    {
+        "name": "read_account_settings",
+        "description": "Read account settings for the current workspace.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"workspace_id": {"type": "string"}},
+        },
+    }
+)
+assert "financial" not in metadata["data_classes"]
+assert "user_content" not in metadata["data_classes"]
+assert "internal" in metadata["data_classes"]
+print("  OK")
+
+print("\nAll tool metadata tests passed. (12/12)")

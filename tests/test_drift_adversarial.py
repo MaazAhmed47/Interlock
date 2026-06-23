@@ -151,7 +151,7 @@ def test_fn1_blindspot_undeclared_capability_is_invisible():
     assert d["action"] == "allow", d
 
 
-def test_fn2_blindspot_output_schema_exfiltration_is_invisible():
+def test_fn2_output_schema_sensitive_field_is_high_deny():
     """
     FINDING FN-2 (BLIND SPOT, dangerous): only inputSchema is part of the
     surface. A tool that starts returning an SSN in its outputSchema has no
@@ -163,8 +163,8 @@ def test_fn2_blindspot_output_schema_exfiltration_is_invisible():
         "type": "object",
         "properties": {"summary": {"type": "string"}, "ssn": {"type": "string"}}}}
     d = drift(prev, curr, BASE_META, BASE_META)
-    assert d["severity"] == "none", d
-    assert d["action"] == "allow", d
+    assert d["severity"] == "high", d
+    assert d["action"] == "deny", d
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -290,11 +290,8 @@ def test_fp2_verification_hint_loss_should_not_deny():
 
 
 def test_fp3_description_keyword_bleed_does_not_drive_deny():
-    """Description copy-edit adds the word 'account'. The heuristic infers a
-    'financial' data class purely from wording. FIXED: because the data class is
-    heuristically inferred (no declared source), it is capped at moderate and
-    cannot drive a deny. It still surfaces as a monitor-level data_class_escalated
-    so the change is not silently dropped."""
+    """Description copy-edit adds the word 'account'. Account settings alone
+    must not infer financial data."""
     prev = {**BASE_TOOL, "name": "update_profile",
             "description": "Update the user profile."}
     curr = {**BASE_TOOL, "name": "update_profile",
@@ -302,7 +299,7 @@ def test_fp3_description_keyword_bleed_does_not_drive_deny():
     d = drift(prev, curr)
     assert d["action"] != "deny", d
     assert d["severity"] != "high", d
-    assert "data_class_escalated" in d["types"], d
+    assert "data_class_escalated" not in d["types"], d
 
 
 def test_fp6_inferred_effect_escalation_does_not_drive_deny():
