@@ -1,4 +1,4 @@
-import re
+
 
 """
 Normalize MCP tool metadata into Interlock's internal policy vocabulary.
