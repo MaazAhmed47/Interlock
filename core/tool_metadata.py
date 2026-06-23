@@ -246,7 +246,8 @@ def _infer_from_tool_shape(tool: dict) -> Dict[str, Any]:
     description = str(tool.get("description") or "").lower()
     schema = tool.get("inputSchema", {}) or tool.get("input_schema", {}) or {}
     field_names = _schema_field_names(schema)
-    haystack = " ".join([name, description, " ".join(sorted(field_names))])
+    raw_haystack = " ".join([name, description, " ".join(sorted(field_names))])
+    haystack = " ".join([raw_haystack, raw_haystack.replace("_", " ")])
     effects: List[str] = []
     if _contains_any(
         haystack, ["read", "list", "get", "fetch", "search", "query", "lookup"]
