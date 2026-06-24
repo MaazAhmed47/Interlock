@@ -554,7 +554,10 @@ async def discover_mcp_tools(
                         # response matches the registry status + call-time
                         # enforcement instead of leaving it in safe_tools.
                         quarantined_by_drift = True
-                        _reasons = registry.get("drift_reasons") or []
+                        _raw_reasons = registry.get("drift_reasons")
+                        _reasons = (
+                            _raw_reasons if isinstance(_raw_reasons, list) else []
+                        )
                         drift_block_reason = (
                             "; ".join(str(r) for r in _reasons[:3])
                             or f"Tool '{tool_name}' quarantined by capability drift."

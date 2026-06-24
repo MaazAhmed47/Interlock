@@ -153,7 +153,7 @@ def evaluate_effective_permission_probe(
     if observed_outcome not in OBSERVED_OUTCOMES:
         observed_outcome = "unknown"
 
-    base = {
+    base: Dict[str, Any] = {
         "probe_id": str(probe.get("probe_id") or ""),
         "server_id": str(probe.get("server_id") or ""),
         "tool_name": str(probe.get("tool_name") or ""),
@@ -259,6 +259,9 @@ async def run_effective_permission_probe(
     preflight_error = _preflight_probe_target(server, server_id, probe["tool_name"])
     if preflight_error:
         return preflight_error
+    # _preflight_probe_target returns an error for a missing server, so reaching
+    # this point guarantees a non-None server record — narrow it for the checker.
+    assert server is not None
 
     stored_probe = db.upsert_mcp_permission_probe(probe)
     observed = await _call_upstream_for_observation(server, probe)
@@ -372,7 +375,7 @@ async def _call_upstream_for_observation(
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
-            body: Dict[str, Any] = {}
+            body: Optional[Dict[str, Any]] = {}
             try:
                 candidate = resp.json()
                 if isinstance(candidate, dict):

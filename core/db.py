@@ -1463,9 +1463,12 @@ def _mcp_permission_probe_row_to_dict(row) -> Dict[str, Any]:
     if raw in (None, ""):
         d["last_finding_types"] = []
         return d
-    try:
-        d["last_finding_types"] = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+    if isinstance(raw, (str, bytes, bytearray)):
+        try:
+            d["last_finding_types"] = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            d["last_finding_types"] = []
+    else:
         d["last_finding_types"] = []
     return d
 
