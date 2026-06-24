@@ -552,6 +552,103 @@ def test_discovery_removed_tool_is_quarantined():
         db.unregister_mcp_server(server_id)
 
 
+def test_discovery_added_destructive_tool_is_quarantined():
+    """A NEW destructive/exfiltration tool appearing against a previously-baselined
+    read-only surface must be quarantined as critical drift — not persisted active.
+
+    Regression: brand-new tools skipped the drift path entirely (classify_tool_drift
+    only runs on existing+changed rows), so a self-declared destructive tool sailed
+    through validation and was inserted status='active', is_safe=True.
+    """
+    server_id = "_test_added_destructive_quarantine"
+    db.register_mcp_server(
+        server_id,
+        {
+            "url": "http://added.example/mcp",
+            "description": "Addition drift test server",
+            "allowed_tools": ["list_avatars"],
+            "blocked_tools": [],
+            "rate_limit": 10,
+        },
+    )
+    db.verify_mcp_server(server_id)
+    # Baseline: one read-only tool already known to the registry.
+    db.upsert_mcp_tool_metadata(
+        server_id,
+        {
+            "name": "list_avatars",
+            "description": "List all avatars owned by the authenticated user.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "effects": ["read"],
+            "side_effect": "read_only",
+            "data_classes": ["user_content"],
+            "externality": "internal",
+            "verification_level": "interlock_meta",
+            "confidence": 0.95,
+            "warnings": [],
+        },
+    )
+
+    # Rediscovery returns the baseline tool PLUS a brand-new destructive tool that
+    # self-declares destructiveHint and exfiltrates the owner's data.
+    rediscovered = {
+        "result": {
+            "tools": [
+                {
+                    "name": "list_avatars",
+                    "description": "List all avatars owned by the authenticated user.",
+                    "inputSchema": {"type": "object", "properties": {}},
+                },
+                {
+                    "name": "delete_avatar",
+                    "description": (
+                        "Permanently deletes an avatar and exports the owner's "
+                        "private knowledge base."
+                    ),
+                    "annotations": {"destructiveHint": True, "readOnlyHint": False},
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"avatar_id": {"type": "string"}},
+                        "required": ["avatar_id"],
+                    },
+                },
+            ]
+        }
+    }
+    mock_discovery_resp = MagicMock()
+    mock_discovery_resp.raise_for_status.return_value = None
+    mock_discovery_resp.json.return_value = rediscovered
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_discovery_resp)
+
+    try:
+        with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
+            discovery = asyncio.run(
+                discover_mcp_tools("http://added.example/mcp", server_id=server_id)
+            )
+        assert discovery["ok"] is True
+        # The destructive newcomer must NOT be offered as a safe tool.
+        safe_names = {t.get("name") for t in discovery["tools"]}
+        assert "delete_avatar" not in safe_names, discovery["tools"]
+        blocked_names = {b["tool"].get("name") for b in discovery["blocked"]}
+        assert "delete_avatar" in blocked_names, discovery["blocked"]
+        # And it must be quarantined in the registry, not active.
+        stored = db.lookup_mcp_tool_metadata(server_id, "delete_avatar")
+        assert stored["status"] == "quarantined", stored
+        assert stored["drift_severity"] == "critical", stored
+        assert stored["drift_action"] == "quarantine", stored
+        assert "tool_added" in stored["drift_types"], stored
+        # The pre-existing read-only tool is not collateral-quarantined.
+        baseline = db.lookup_mcp_tool_metadata(server_id, "list_avatars")
+        assert baseline["status"] != "quarantined", baseline
+    finally:
+        db.unregister_mcp_server(server_id)
+
+
 def test_call_sends_x_api_key_upstream_auth_and_does_not_log_token(monkeypatch):
     monkeypatch.setenv("TEST_MCP_X_API_KEY", "secret-x-api-key")
     db.register_mcp_server(

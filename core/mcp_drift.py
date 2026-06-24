@@ -10,6 +10,7 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 from core.tool_inspector import DANGEROUS_FILES
+from core.tool_metadata import normalize_tool_metadata
 
 # ── Description-exfiltration detection (added-text conjunction) ────────────────
 # A description rug-pull adds an instruction that (S) touches a sensitive
@@ -420,10 +421,43 @@ def classify_tool_drift(
     }
 
 
+def _added_tool_destructive_reason(tool_def: Optional[dict]) -> Optional[str]:
+    """Return a reason string when a newly-added tool carries destructive or
+    exfiltration capability, else None. The caller establishes *newness* against
+    the baseline; this judges only the capability of the new definition.
+
+    Signals (any one is sufficient):
+      - the tool self-declares ``destructiveHint`` true;
+      - the heuristic metadata verdict resolves ``side_effect`` to ``destructive``
+        from the name/description verbs — this corroborates (or stands in for) the
+        annotation, so a server cannot evade purely by omitting ``destructiveHint``;
+      - the description conjunctively instructs exfiltration of a sensitive
+        resource to an external destination.
+
+    Official MCP annotations are hints, not contracts, which is why the heuristic
+    verdict is treated as an equal, independent signal here.
+    """
+    if not isinstance(tool_def, dict):
+        return None
+    annotations = tool_def.get("annotations") or {}
+    if annotations.get("destructiveHint") is True:
+        return "self-declares destructiveHint=true"
+
+    metadata = normalize_tool_metadata(tool_def)
+    if metadata.get("side_effect") == "destructive":
+        return "its name/description resolve to a destructive side effect"
+
+    exfil = _detect_description_exfiltration("", str(tool_def.get("description") or ""))
+    if exfil is not None:
+        return exfil["reason"]
+    return None
+
+
 def classify_server_drift(
     server_id: str,
     prev_tool_names: Set[str],
     curr_tool_names: Set[str],
+    curr_tool_defs: Optional[Dict[str, dict]] = None,
 ) -> List[Dict[str, Any]]:
     findings: List[Dict[str, Any]] = []
     for tool in sorted(prev_tool_names - curr_tool_names):
@@ -438,18 +472,37 @@ def classify_server_drift(
                 ),
             }
         )
+    curr_tool_defs = curr_tool_defs or {}
     for tool in sorted(curr_tool_names - prev_tool_names):
-        findings.append(
-            {
-                "type": "tool_added",
-                "severity": "high",
-                "tool_name": tool,
-                "reason": (
-                    f"New tool '{tool}' appeared on server '{server_id}'. "
-                    "Verify against registry."
-                ),
-            }
-        )
+        # A new capability appearing on a previously-baselined server is the
+        # rug-pull case the drift engine exists to catch. Default to "high"
+        # (verify against registry); escalate to "critical" when the newcomer can
+        # destroy or exfiltrate, so it is quarantined before any agent can use it.
+        destructive_reason = _added_tool_destructive_reason(curr_tool_defs.get(tool))
+        if destructive_reason:
+            findings.append(
+                {
+                    "type": "tool_added",
+                    "severity": "critical",
+                    "tool_name": tool,
+                    "reason": (
+                        f"New tool '{tool}' appeared on server '{server_id}' and "
+                        f"{destructive_reason}. Quarantined pending operator review."
+                    ),
+                }
+            )
+        else:
+            findings.append(
+                {
+                    "type": "tool_added",
+                    "severity": "high",
+                    "tool_name": tool,
+                    "reason": (
+                        f"New tool '{tool}' appeared on server '{server_id}'. "
+                        "Verify against registry."
+                    ),
+                }
+            )
     return findings
 
 

@@ -457,18 +457,25 @@ async def discover_mcp_tools(
 
             # ── Server-level drift check (tool additions / removals) ──────────
             # Must run BEFORE upsert so previous_names still reflects prior state.
+            # Newly-added tools flagged critical here are quarantined AFTER upsert
+            # (upsert always inserts new tools active), keyed by name below.
+            quarantine_added: Dict[str, str] = {}
             if registry_server_id:
-                current_names = {
-                    t.get("name", "").strip()
+                current_tool_defs = {
+                    t.get("name", "").strip(): t
                     for t in tools
                     if isinstance(t, dict)
                     and isinstance(t.get("name"), str)
                     and t.get("name", "").strip()
                 }
+                current_names = set(current_tool_defs)
                 previous_names = db.get_known_tool_names(registry_server_id)
                 if previous_names:
                     server_findings = classify_server_drift(
-                        registry_server_id, previous_names, current_names
+                        registry_server_id,
+                        previous_names,
+                        current_names,
+                        current_tool_defs,
                     )
                     for finding in server_findings:
                         if finding["type"] == "tool_removed":
@@ -477,6 +484,11 @@ async def discover_mcp_tools(
                                 finding["tool_name"],
                                 finding["reason"],
                             )
+                        elif (
+                            finding["type"] == "tool_added"
+                            and finding["severity"] == "critical"
+                        ):
+                            quarantine_added[finding["tool_name"]] = finding["reason"]
                         db.log_mcp_audit_event(
                             {
                                 "server_id": registry_server_id,
@@ -505,6 +517,10 @@ async def discover_mcp_tools(
             for tool in tools:
                 validation = validate_mcp_tool_definition(tool)
                 registry = {"persisted": False, "reason": "server_id_not_registered"}
+                tool_name = (
+                    tool.get("name", "").strip() if isinstance(tool, dict) else ""
+                )
+                quarantined_by_drift = False
                 if registry_server_id and not validation.is_threat:
                     registry = db.upsert_mcp_tool_metadata(
                         registry_server_id,
@@ -512,12 +528,24 @@ async def discover_mcp_tools(
                         validation.tool_metadata or {},
                     )
                     registry["persisted"] = True
+                    # A new destructive/exfiltration tool passes the static
+                    # validator (ordinary CRUD is handled by RBAC at call time),
+                    # so the DRIFT path must quarantine it: it was just inserted
+                    # active, flip it to quarantined before it can be used.
+                    if tool_name and tool_name in quarantine_added:
+                        db.mark_mcp_tool_added_drift(
+                            registry_server_id,
+                            tool_name,
+                            quarantine_added[tool_name],
+                        )
+                        registry["status"] = "quarantined"
+                        quarantined_by_drift = True
                 validation_results.append(
                     {
                         "tool_name": (
                             tool.get("name") if isinstance(tool, dict) else None
                         ),
-                        "is_safe": not validation.is_threat,
+                        "is_safe": not validation.is_threat and not quarantined_by_drift,
                         "validation": (
                             validation.model_dump()
                             if hasattr(validation, "model_dump")
@@ -530,6 +558,10 @@ async def discover_mcp_tools(
 
                 if validation.is_threat:
                     blocked_tools.append({"tool": tool, "reason": validation.reason})
+                elif quarantined_by_drift:
+                    blocked_tools.append(
+                        {"tool": tool, "reason": quarantine_added[tool_name]}
+                    )
                 else:
                     safe_tools.append(tool)
 

@@ -288,6 +288,13 @@ CREATE TABLE IF NOT EXISTS mcp_audit_log (
     warnings            TEXT    NOT NULL DEFAULT '[]',
     argument_keys       TEXT    NOT NULL DEFAULT '[]',
     blocked_by          TEXT    NOT NULL DEFAULT '',
+    probe_id            TEXT    NOT NULL DEFAULT '',
+    argument_hash       TEXT    NOT NULL DEFAULT '',
+    expected_outcome    TEXT    NOT NULL DEFAULT '',
+    expected_status_code INTEGER,
+    observed_outcome    TEXT    NOT NULL DEFAULT '',
+    observed_status_code INTEGER,
+    observed_error_class TEXT   NOT NULL DEFAULT '',
     drift_status        TEXT    NOT NULL DEFAULT '',
     drift_severity      TEXT    NOT NULL DEFAULT 'none',
     drift_action        TEXT    NOT NULL DEFAULT 'allow',
@@ -310,6 +317,31 @@ CREATE TABLE IF NOT EXISTS tool_surface_snapshots (
     canonical_json TEXT NOT NULL,
     created_at     TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS mcp_permission_probes (
+    probe_id                   TEXT PRIMARY KEY,
+    server_id                  TEXT    NOT NULL,
+    tool_name                  TEXT    NOT NULL,
+    argument_hash              TEXT    NOT NULL,
+    expected_outcome           TEXT    NOT NULL,
+    expected_status_code       INTEGER,
+    expected_error_fingerprint TEXT    NOT NULL DEFAULT '',
+    non_production             INTEGER NOT NULL DEFAULT 1,
+    safety_note                TEXT    NOT NULL,
+    created_at                 TEXT    NOT NULL,
+    updated_at                 TEXT    NOT NULL,
+    last_run_at                TEXT,
+    last_observed_outcome      TEXT    NOT NULL DEFAULT '',
+    last_observed_status_code  INTEGER,
+    last_observed_error_class  TEXT    NOT NULL DEFAULT '',
+    last_decision              TEXT    NOT NULL DEFAULT '',
+    last_finding_types         TEXT    NOT NULL DEFAULT '[]',
+    last_audit_id              INTEGER,
+    FOREIGN KEY (server_id) REFERENCES mcp_servers(server_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_permission_probes_server_tool
+ON mcp_permission_probes(server_id, tool_name);
 
 CREATE TABLE IF NOT EXISTS system_config (
     key   TEXT PRIMARY KEY,
@@ -452,6 +484,24 @@ def init_db() -> None:
             conn, "mcp_audit_log", "drift_reasons", "TEXT NOT NULL DEFAULT '[]'"
         )
         _ensure_column(conn, "mcp_audit_log", "scan_time_ms", "REAL")
+        _ensure_column(conn, "mcp_audit_log", "probe_id", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(
+            conn, "mcp_audit_log", "argument_hash", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(
+            conn, "mcp_audit_log", "expected_outcome", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(conn, "mcp_audit_log", "expected_status_code", "INTEGER")
+        _ensure_column(
+            conn, "mcp_audit_log", "observed_outcome", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(conn, "mcp_audit_log", "observed_status_code", "INTEGER")
+        _ensure_column(
+            conn,
+            "mcp_audit_log",
+            "observed_error_class",
+            "TEXT NOT NULL DEFAULT ''",
+        )
         _ensure_column(conn, "api_keys", "max_response_bytes", "INTEGER DEFAULT 50000")
         _ensure_column(conn, "api_keys", "max_array_items", "INTEGER DEFAULT 500")
         _ensure_column(conn, "mcp_servers", "auth_type", "TEXT NOT NULL DEFAULT 'none'")
@@ -1404,6 +1454,22 @@ def _mcp_audit_row_to_dict(row) -> Dict[str, Any]:
     return d
 
 
+def _mcp_permission_probe_row_to_dict(row) -> Dict[str, Any]:
+    d = dict(row)
+    d["non_production"] = bool(d.get("non_production"))
+    raw = d.get("last_finding_types")
+    if isinstance(raw, list):
+        return d
+    if raw in (None, ""):
+        d["last_finding_types"] = []
+        return d
+    try:
+        d["last_finding_types"] = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        d["last_finding_types"] = []
+    return d
+
+
 def register_mcp_server(server_id: str, config: dict) -> bool:
     """Insert a new MCP server. Returns False if server_id already exists."""
     try:
@@ -1873,6 +1939,111 @@ def mark_mcp_tool_removed(
     return {"ok": True, **updated}
 
 
+def mark_mcp_tool_added_drift(
+    server_id: str, tool_name: str, reason: str = ""
+) -> Dict[str, Any]:
+    """Quarantine a newly-discovered tool that introduced destructive or
+    exfiltration capability against an existing baseline, pending operator review.
+
+    A brand-new tool is otherwise upserted status='active'; this flips it to
+    'quarantined' so the rug-pull capability cannot be used before review.
+    """
+    reason = reason or (
+        f"New high-risk tool '{tool_name}' appeared on server '{server_id}'."
+    )
+    now = datetime.now(timezone.utc).isoformat()
+
+    with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_tool_metadata
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": "not_found"}
+
+        current = _mcp_tool_metadata_row_to_dict(row)
+        drift_types = _unique_list([*(current.get("drift_types") or []), "tool_added"])
+        drift_reasons = _unique_list([*(current.get("drift_reasons") or []), reason])
+        conn.execute(
+            """
+            UPDATE mcp_tool_metadata
+               SET status = 'quarantined',
+                   drift_severity = 'critical',
+                   drift_action = 'quarantine',
+                   drift_types = ?,
+                   drift_reasons = ?,
+                   last_changed = COALESCE(last_changed, ?)
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (
+                json.dumps(drift_types),
+                json.dumps(drift_reasons),
+                now,
+                server_id,
+                tool_name,
+            ),
+        )
+
+    updated = lookup_mcp_tool_metadata(server_id, tool_name) or {}
+    return {"ok": True, **updated}
+
+
+def mark_mcp_tool_effective_permission_drift(
+    server_id: str, tool_name: str, reason: str = ""
+) -> Dict[str, Any]:
+    """Quarantine a known tool after a behavioral effective-permission drift."""
+    reason = reason or (
+        "Effective-permission probe observed broader access than expected."
+    )
+    now = datetime.now(timezone.utc).isoformat()
+
+    with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_tool_metadata
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": "not_found"}
+
+        current = _mcp_tool_metadata_row_to_dict(row)
+        drift_types = _unique_list(
+            [
+                *(current.get("drift_types") or []),
+                "effective_permission_expansion",
+                "behavioral_scope_drift",
+            ]
+        )
+        drift_reasons = _unique_list([*(current.get("drift_reasons") or []), reason])
+        conn.execute(
+            """
+            UPDATE mcp_tool_metadata
+               SET status = 'quarantined',
+                   drift_severity = 'high',
+                   drift_action = 'quarantine',
+                   drift_types = ?,
+                   drift_reasons = ?,
+                   last_changed = COALESCE(last_changed, ?)
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (
+                json.dumps(drift_types),
+                json.dumps(drift_reasons),
+                now,
+                server_id,
+                tool_name,
+            ),
+        )
+
+    updated = lookup_mcp_tool_metadata(server_id, tool_name) or {}
+    return {"ok": True, **updated}
+
+
 def list_drifted_mcp_tools(
     server_id: Optional[str] = None, limit: Optional[int] = None
 ) -> List[Dict[str, Any]]:
@@ -2104,6 +2275,131 @@ def merge_stored_and_runtime_metadata(
 # ── Tool surface snapshots (drift evidence) ──────────────────────────────────
 
 
+# -- Effective-permission probe metadata --------------------------------------
+
+
+def upsert_mcp_permission_probe(probe: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist a manual probe definition without raw arguments or secrets."""
+    probe_id = str(probe.get("probe_id") or "").strip()
+    if not probe_id:
+        probe_id = "probe_" + secrets.token_urlsafe(16)
+    server_id = str(probe.get("server_id") or "").strip()
+    tool_name = str(probe.get("tool_name") or "").strip()
+    if not server_id:
+        raise ValueError("server_id is required")
+    if not tool_name:
+        raise ValueError("tool_name is required")
+
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM mcp_permission_probes WHERE probe_id = ?",
+            (probe_id,),
+        ).fetchone()
+        existing = _mcp_permission_probe_row_to_dict(row) if row else {}
+        values = (
+            server_id,
+            tool_name,
+            probe.get("argument_hash") or "",
+            probe.get("expected_outcome") or "",
+            probe.get("expected_status_code"),
+            probe.get("expected_error_fingerprint") or "",
+            1 if probe.get("non_production") else 0,
+            probe.get("safety_note") or "",
+            now,
+            probe_id,
+        )
+        if existing:
+            conn.execute(
+                """
+                UPDATE mcp_permission_probes
+                   SET server_id = ?,
+                       tool_name = ?,
+                       argument_hash = ?,
+                       expected_outcome = ?,
+                       expected_status_code = ?,
+                       expected_error_fingerprint = ?,
+                       non_production = ?,
+                       safety_note = ?,
+                       updated_at = ?
+                 WHERE probe_id = ?
+                """,
+                values,
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO mcp_permission_probes
+                  (server_id, tool_name, argument_hash, expected_outcome,
+                   expected_status_code, expected_error_fingerprint,
+                   non_production, safety_note, updated_at, probe_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (*values, now),
+            )
+
+    saved = lookup_mcp_permission_probe(probe_id)
+    if saved:
+        return saved
+    return {
+        "probe_id": probe_id,
+        "server_id": server_id,
+        "tool_name": tool_name,
+        "argument_hash": probe.get("argument_hash") or "",
+        "expected_outcome": probe.get("expected_outcome") or "",
+        "expected_status_code": probe.get("expected_status_code"),
+        "expected_error_fingerprint": probe.get("expected_error_fingerprint") or "",
+        "non_production": bool(probe.get("non_production")),
+        "safety_note": probe.get("safety_note") or "",
+        "created_at": existing.get("created_at") or now,
+        "updated_at": now,
+    }
+
+
+def lookup_mcp_permission_probe(probe_id: str) -> Optional[Dict[str, Any]]:
+    """Return a stored probe definition by id, without raw arguments."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM mcp_permission_probes WHERE probe_id = ?",
+            (probe_id,),
+        ).fetchone()
+    return _mcp_permission_probe_row_to_dict(row) if row else None
+
+
+def update_mcp_permission_probe_result(
+    probe_id: str, evaluation: Dict[str, Any], audit_id: int
+) -> bool:
+    """Attach the latest sanitized probe outcome to the stored probe."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_lock, get_conn() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE mcp_permission_probes
+               SET last_run_at = ?,
+                   last_observed_outcome = ?,
+                   last_observed_status_code = ?,
+                   last_observed_error_class = ?,
+                   last_decision = ?,
+                   last_finding_types = ?,
+                   last_audit_id = ?,
+                   updated_at = ?
+             WHERE probe_id = ?
+            """,
+            (
+                now,
+                evaluation.get("observed_outcome") or "",
+                evaluation.get("observed_status_code"),
+                evaluation.get("observed_error_class") or "",
+                evaluation.get("decision") or "",
+                json.dumps(evaluation.get("finding_types") or []),
+                audit_id,
+                now,
+                probe_id,
+            ),
+        )
+    return cursor.rowcount > 0
+
+
 def save_tool_surface_snapshot(surface_hash: str, canonical_json: str) -> bool:
     """
     Retain the canonical tool-surface bytes behind a drift-evidence hash.
@@ -2177,11 +2473,13 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
             INSERT INTO mcp_audit_log
               (ts, server_id, tool_name, role, action, matched_rule, reason,
                effects, side_effect, data_classes, externality, verification_level,
-               confidence, warnings, argument_keys, blocked_by, drift_status,
-               drift_severity, drift_action, drift_types, drift_reasons,
+               confidence, warnings, argument_keys, blocked_by, probe_id,
+               argument_hash, expected_outcome, expected_status_code,
+               observed_outcome, observed_status_code, observed_error_class,
+               drift_status, drift_severity, drift_action, drift_types, drift_reasons,
                drift_baseline_hash, drift_current_hash,
                scan_time_ms, prev_hash, integrity_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ts,
@@ -2200,6 +2498,13 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
                 json.dumps(event.get("warnings", []) or []),
                 json.dumps(event.get("argument_keys", []) or []),
                 event.get("blocked_by", "") or "",
+                event.get("probe_id", "") or "",
+                event.get("argument_hash", "") or "",
+                event.get("expected_outcome", "") or "",
+                event.get("expected_status_code"),
+                event.get("observed_outcome", "") or "",
+                event.get("observed_status_code"),
+                event.get("observed_error_class", "") or "",
                 event.get("drift_status", "") or "",
                 event.get("drift_severity", "none") or "none",
                 event.get("drift_action", "allow") or "allow",
