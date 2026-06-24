@@ -527,6 +527,7 @@ async def discover_mcp_tools(
                     tool.get("name", "").strip() if isinstance(tool, dict) else ""
                 )
                 quarantined_by_drift = False
+                drift_block_reason = ""
                 if registry_server_id and not validation.is_threat:
                     registry = db.upsert_mcp_tool_metadata(
                         registry_server_id,
@@ -546,6 +547,18 @@ async def discover_mcp_tools(
                         )
                         registry["status"] = "quarantined"
                         quarantined_by_drift = True
+                        drift_block_reason = quarantine_added[tool_name]
+                    elif registry.get("status") == "quarantined":
+                        # An EXISTING approved tool escalated capability under the
+                        # same name. Mirror the new-tool path so the discover
+                        # response matches the registry status + call-time
+                        # enforcement instead of leaving it in safe_tools.
+                        quarantined_by_drift = True
+                        _reasons = registry.get("drift_reasons") or []
+                        drift_block_reason = (
+                            "; ".join(str(r) for r in _reasons[:3])
+                            or f"Tool '{tool_name}' quarantined by capability drift."
+                        )
                     # Record DETECTION at discovery (no-op for unchanged tools):
                     # a drift_detected receipt distinct from call-time enforcement.
                     if tool_name:
@@ -570,9 +583,7 @@ async def discover_mcp_tools(
                 if validation.is_threat:
                     blocked_tools.append({"tool": tool, "reason": validation.reason})
                 elif quarantined_by_drift:
-                    blocked_tools.append(
-                        {"tool": tool, "reason": quarantine_added[tool_name]}
-                    )
+                    blocked_tools.append({"tool": tool, "reason": drift_block_reason})
                 else:
                     safe_tools.append(tool)
 
