@@ -327,7 +327,12 @@ def classify_tool_drift(
                 f"Sensitive data classes added: {sensitive_data_added}.",
             )
         )
-    elif added_data_classes:
+    elif added_data_classes and "data_classes" not in curr_inferred:
+        # Only DECLARED non-sensitive data-class additions are a real signal.
+        # A merely INFERRED non-sensitive delta (e.g. a meaning-preserving
+        # description reword that the heuristic reads differently) carries no
+        # capability signal and must not, on its own, drive an escalation —
+        # same principle as the effects branch above.
         findings.append(
             _finding(
                 "data_class_escalated",
