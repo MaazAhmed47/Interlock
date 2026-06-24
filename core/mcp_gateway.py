@@ -545,7 +545,8 @@ async def discover_mcp_tools(
                         "tool_name": (
                             tool.get("name") if isinstance(tool, dict) else None
                         ),
-                        "is_safe": not validation.is_threat and not quarantined_by_drift,
+                        "is_safe": not validation.is_threat
+                        and not quarantined_by_drift,
                         "validation": (
                             validation.model_dump()
                             if hasattr(validation, "model_dump")

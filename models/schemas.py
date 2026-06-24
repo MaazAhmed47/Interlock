@@ -72,6 +72,10 @@ class MCPDiscoverRequest(BaseModel):
     server_id: Optional[str] = None
 
 
+class MCPRebaselineRequest(BaseModel):
+    confirm_rebaseline: bool = False
+
+
 class MCPToolValidateRequest(BaseModel):
     tool_definition: dict
 
@@ -79,6 +83,17 @@ class MCPToolValidateRequest(BaseModel):
 class MCPToolReviewRequest(BaseModel):
     reviewer: Optional[str] = "operator"
     reason: Optional[str] = ""
+
+
+class MCPEffectivePermissionProbeRequest(BaseModel):
+    probe_id: Optional[str] = None
+    tool_name: str
+    arguments: dict
+    expected_outcome: Literal["denied", "allowed"]
+    expected_status_code: Optional[int] = None
+    expected_error_fingerprint: Optional[str] = None
+    non_production: bool = False
+    safety_note: str
 
 
 class ScanResult(BaseModel):

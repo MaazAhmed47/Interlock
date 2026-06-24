@@ -447,6 +447,136 @@ def test_discovery_sends_bearer_upstream_auth_from_env(monkeypatch):
         db.unregister_mcp_server("_test_discovery_bearer")
 
 
+def test_server_rebaseline_resets_tool_metadata_without_losing_auth(monkeypatch):
+    import proxy
+    from fastapi import HTTPException
+
+    server_id = "_test_rebaseline_server"
+    api_key = db.generate_key("free", label="test-rebaseline")["raw_key"]
+    monkeypatch.setenv("TEST_REBASELINE_TOKEN", "secret-rebaseline-token")
+    db.register_mcp_server(
+        server_id,
+        {
+            "url": "http://rebaseline.example/mcp",
+            "description": "Rebaseline test server",
+            "allowed_tools": ["list_avatars"],
+            "blocked_tools": [],
+            "rate_limit": 10,
+            "auth_type": "bearer",
+            "auth_token_env": "TEST_REBASELINE_TOKEN",
+        },
+    )
+    db.verify_mcp_server(server_id)
+
+    original_tool = {
+        "name": "list_avatars",
+        "description": "List avatars.",
+        "annotations": {"readOnlyHint": True},
+        "inputSchema": {"type": "object", "properties": {}},
+    }
+    polluted_current = {
+        "name": "list_avatars",
+        "description": "List avatars for a tenant.",
+        "annotations": {"readOnlyHint": True},
+        "inputSchema": {
+            "type": "object",
+            "properties": {"tenant_id": {"type": "string"}},
+            "required": ["tenant_id"],
+        },
+    }
+    changed_after_rebaseline = {
+        "name": "list_avatars",
+        "description": "List avatars for a tenant and include region.",
+        "annotations": {"readOnlyHint": True},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tenant_id": {"type": "string"},
+                "region": {"type": "string"},
+            },
+            "required": ["tenant_id", "region"],
+        },
+    }
+
+    original_validation = validate_mcp_tool_definition(original_tool)
+    db.upsert_mcp_tool_metadata(
+        server_id, original_tool, original_validation.tool_metadata
+    )
+    polluted_validation = validate_mcp_tool_definition(polluted_current)
+    polluted = db.upsert_mcp_tool_metadata(
+        server_id, polluted_current, polluted_validation.tool_metadata
+    )
+    assert polluted["drift_severity"] == "high"
+    assert polluted["drift_action"] == "deny"
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            proxy.mcp_rebaseline_server(
+                server_id,
+                request=proxy.MCPRebaselineRequest(confirm_rebaseline=False),
+                x_api_key=api_key,
+            )
+        )
+    assert exc.value.status_code == 400
+    assert (
+        db.lookup_mcp_tool_metadata(server_id, "list_avatars")["drift_action"] == "deny"
+    )
+
+    rebaseline_resp = MagicMock()
+    rebaseline_resp.raise_for_status.return_value = None
+    rebaseline_resp.json.return_value = {"result": {"tools": [polluted_current]}}
+    rediscovery_resp = MagicMock()
+    rediscovery_resp.raise_for_status.return_value = None
+    rediscovery_resp.json.return_value = {
+        "result": {"tools": [changed_after_rebaseline]}
+    }
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(side_effect=[rebaseline_resp, rediscovery_resp])
+
+    try:
+        with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
+            result = asyncio.run(
+                proxy.mcp_rebaseline_server(
+                    server_id,
+                    request=proxy.MCPRebaselineRequest(confirm_rebaseline=True),
+                    x_api_key=api_key,
+                )
+            )
+            assert result["ok"] is True
+            assert result["server_id"] == server_id
+            assert result["cleared_tools"] == 1
+
+            clean = db.lookup_mcp_tool_metadata(server_id, "list_avatars")
+            assert clean["status"] == "active"
+            assert clean["drift_severity"] == "none"
+            assert clean["drift_action"] == "allow"
+            assert clean["drift_types"] == []
+            assert (
+                db.lookup_mcp_server(server_id)["auth_token_env"]
+                == "TEST_REBASELINE_TOKEN"
+            )
+            assert mock_client.post.call_args_list[0].kwargs["headers"] == {
+                "Authorization": "Bearer secret-rebaseline-token"
+            }
+
+            changed = asyncio.run(
+                discover_mcp_tools(
+                    "http://rebaseline.example/mcp",
+                    server_id=server_id,
+                )
+            )
+
+        assert changed["ok"] is True
+        drifted = db.lookup_mcp_tool_metadata(server_id, "list_avatars")
+        assert drifted["drift_severity"] == "high"
+        assert drifted["drift_action"] == "deny"
+        assert "required_field_added" in drifted["drift_types"]
+    finally:
+        db.unregister_mcp_server(server_id)
+
+
 def test_discovery_jsonrpc_error_fails_closed():
     mock_discovery_resp = MagicMock()
     mock_discovery_resp.raise_for_status.return_value = None

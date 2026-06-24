@@ -5,6 +5,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 import proxy
 from core import db
+from core.effective_permission import run_effective_permission_probe
 from core.limits import clamp_limit
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
 from core.mcp_gateway import (
@@ -16,7 +17,9 @@ from core.mcp_gateway import (
 )
 from core.shadow_mode import calculate_risk_score
 from models.schemas import (
+    MCPEffectivePermissionProbeRequest,
     MCPDiscoverRequest,
+    MCPRebaselineRequest,
     MCPRegisterRequest,
     MCPToolCallRequest,
     MCPToolReviewRequest,
@@ -154,6 +157,38 @@ async def mcp_discover(
     return await discover_mcp_tools(request.server_url, server_id=request.server_id)
 
 
+@router.post("/mcp/servers/{server_id}/rebaseline")
+async def mcp_rebaseline_server(
+    server_id: str,
+    request: MCPRebaselineRequest,
+    x_api_key: Optional[str] = Header(None),
+):
+    """Reset a registered server's stored tool baseline and rediscover it."""
+    proxy.verify_key(x_api_key)
+    if not request.confirm_rebaseline:
+        raise HTTPException(
+            status_code=400,
+            detail="MCP server rebaseline requires confirm_rebaseline=true.",
+        )
+
+    server = db.lookup_mcp_server(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="MCP server not found.")
+    try:
+        ensure_safe_outbound_url(server["url"], context="MCP discovery")
+    except OutboundUrlRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    cleared = db.clear_mcp_tool_metadata(server_id)
+    discovery = await discover_mcp_tools(server["url"], server_id=server_id)
+    return {
+        "ok": bool(discovery.get("ok")),
+        "server_id": server_id,
+        "cleared_tools": cleared,
+        "discovery": discovery,
+    }
+
+
 @router.get("/mcp/tools")
 async def mcp_tools(
     server_id: Optional[str] = None,
@@ -220,6 +255,28 @@ async def mcp_quarantine_tool(
     tool = dict(result)
     tool.pop("ok", None)
     return {"ok": True, "tool": tool}
+
+
+@router.post("/mcp/servers/{server_id}/probes/run")
+async def mcp_run_effective_permission_probe(
+    server_id: str,
+    request: MCPEffectivePermissionProbeRequest,
+    x_api_key: Optional[str] = Header(None),
+):
+    """Run one manual non-production effective-permission probe."""
+    proxy.verify_key(x_api_key)
+    if not request.non_production:
+        raise HTTPException(
+            status_code=400,
+            detail="Effective-permission probes require non_production=true.",
+        )
+    if not (request.safety_note or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Effective-permission probes require a safety_note.",
+        )
+    payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
+    return await run_effective_permission_probe(server_id, payload)
 
 
 @router.get("/mcp/audit")
