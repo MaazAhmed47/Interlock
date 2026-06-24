@@ -478,17 +478,23 @@ async def discover_mcp_tools(
                         current_tool_defs,
                     )
                     for finding in server_findings:
+                        is_critical_added = (
+                            finding["type"] == "tool_added"
+                            and finding["severity"] == "critical"
+                        )
                         if finding["type"] == "tool_removed":
                             db.mark_mcp_tool_removed(
                                 registry_server_id,
                                 finding["tool_name"],
                                 finding["reason"],
                             )
-                        elif (
-                            finding["type"] == "tool_added"
-                            and finding["severity"] == "critical"
-                        ):
+                        elif is_critical_added:
                             quarantine_added[finding["tool_name"]] = finding["reason"]
+                        # Critical new-tool drift is recorded once, by the per-tool
+                        # drift_detected receipt below (with surface hashes); avoid a
+                        # duplicate server-level row here.
+                        if is_critical_added:
+                            continue
                         db.log_mcp_audit_event(
                             {
                                 "server_id": registry_server_id,
@@ -540,6 +546,10 @@ async def discover_mcp_tools(
                         )
                         registry["status"] = "quarantined"
                         quarantined_by_drift = True
+                    # Record DETECTION at discovery (no-op for unchanged tools):
+                    # a drift_detected receipt distinct from call-time enforcement.
+                    if tool_name:
+                        _emit_discovery_drift_receipt(registry_server_id, tool_name)
                 validation_results.append(
                     {
                         "tool_name": (
@@ -1073,6 +1083,52 @@ def _attach_drift_context(
     audit["drift_reasons"] = drift.get("reasons") or []
     audit["drift_baseline_hash"] = drift.get("baseline_surface_hash") or ""
     audit["drift_current_hash"] = drift.get("current_surface_hash") or ""
+
+
+def _emit_discovery_drift_receipt(server_id: str, tool_name: str) -> None:
+    """Emit a discovery-time ``drift_detected`` Security Receipt / audit event the
+    moment discovery detects a tool drifted — a new destructive/exfiltration tool,
+    or an existing approved tool escalating its capability under the same name.
+
+    This records that DETECTION happened at discovery (timestamp T1), distinct
+    from and prior to the call-time ``tool_quarantined`` enforcement receipt
+    (timestamp T2). It carries the drift severity/action/types/reasons plus the
+    before/after content-addressed surface hashes, hash-chain linked like every
+    other audit row. Best-effort: evidence emission must never break discovery.
+    """
+    try:
+        stored = db.lookup_mcp_tool_metadata(server_id, tool_name)
+        drift = _stored_tool_drift_context(stored)
+        if not drift:
+            return
+        db.log_mcp_audit_event(
+            {
+                "server_id": server_id,
+                "tool_name": tool_name,
+                "role": "system",
+                "action": drift["action"],
+                "matched_rule": "drift_detected",
+                "reason": _drift_reason(
+                    drift,
+                    f"Capability drift detected at discovery for '{tool_name}'.",
+                ),
+                "blocked_by": "",
+                "drift_status": drift["status"],
+                "drift_severity": drift["severity"],
+                "drift_action": drift["action"],
+                "drift_types": drift.get("types") or [],
+                "drift_reasons": drift.get("reasons") or [],
+                "drift_baseline_hash": drift.get("baseline_surface_hash") or "",
+                "drift_current_hash": drift.get("current_surface_hash") or "",
+                "scan_time_ms": _elapsed_ms(),
+            }
+        )
+    except Exception:
+        import logging as _logging
+
+        _logging.getLogger("interlock.mcp_gateway").exception(
+            "Failed to emit discovery drift receipt for %s/%s", server_id, tool_name
+        )
 
 
 def _set_policy_decision(
