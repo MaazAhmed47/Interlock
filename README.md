@@ -654,6 +654,20 @@ When Interlock detects drift, it emits a content-addressed, recomputable drift-e
 
 Record schema: [`drift-record.v1.json`](interlock-web/public/schemas/drift-record.v1.json).
 
+### Effective permission drift probes
+
+Some MCP providers expose generic tools whose manifest and schema stay stable while upstream authorization changes outside MCP, for example when an OAuth client is silently re-scoped server-side. Interlock supports an opt-in manual probe path for this case:
+
+```text
+POST /mcp/servers/{server_id}/probes/run
+```
+
+Operators provide a non-production/canary tool call, the expected outcome (`denied` or `allowed`), and a safety note. Interlock runs only that explicit probe, hashes the arguments, normalizes the observed outcome to allowed, accepted, denied, unknown, or an inconclusive class, and records sanitized audit evidence. If a probe expected to be denied is observed as allowed or accepted, Interlock classifies it as `effective_permission_expansion` / `behavioral_scope_drift`, marks severity `high`, and quarantines the known tool for review. Denials, rate limits, upstream errors, malformed responses, missing resources, and network failures do not become auth-scope expansion findings.
+
+This is not generic OAuth introspection. It detects behavior change from an operator-approved canary probe when upstream permissions are opaque to MCP. It does not run destructive probes automatically and it does not store raw auth headers, tokens, probe arguments, or full response bodies.
+
+Probe evidence schema: [`effective-permission-drift-record.v1.json`](interlock-web/public/schemas/effective-permission-drift-record.v1.json).
+
 ---
 
 ## Demo

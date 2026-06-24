@@ -38,6 +38,12 @@ SCHEMA_URL = "https://getinterlock.dev/schemas/drift-record.v1.json"
 CANONICALIZATION = "json/jcs-rfc8785"
 DIGEST_ALG = "sha256"
 EVIDENCE_TYPE = "drift"
+EFFECTIVE_PERMISSION_SCHEMA_ID = "interlock.effective-permission-drift-record"
+EFFECTIVE_PERMISSION_SCHEMA_VERSION = "1"
+EFFECTIVE_PERMISSION_SCHEMA_URL = (
+    "https://getinterlock.dev/schemas/effective-permission-drift-record.v1.json"
+)
+EFFECTIVE_PERMISSION_EVIDENCE_TYPE = "effective-permission-drift"
 
 # Classification buckets for the standardized diff_classification field, in
 # precedence order (most dangerous first). When a drift event carries several
@@ -70,6 +76,10 @@ _TYPE_TO_CLASSIFICATION = {
     "description_exfiltration": "data-exposure",
     "scope_escalated": "auth-scope",
     "identity_mode_escalated": "auth-scope",
+    "effective_permission_expansion": "auth-scope",
+    "behavioral_scope_drift": "auth-scope",
+    "effective_permission_contraction": "auth-scope",
+    "permission_regression": "auth-scope",
     "externality_escalated": "external-reach",
 }
 _DEFAULT_CLASSIFICATION = "capability"
@@ -85,6 +95,26 @@ _RECORD_FIELDS = (
     "finding_types",
     "severity",
     "decision",
+)
+
+_EFFECTIVE_PERMISSION_RECORD_FIELDS = (
+    "record_type",
+    "schema_version",
+    "probe_id",
+    "server_id",
+    "tool_name",
+    "argument_hash",
+    "expected_outcome",
+    "expected_status_code",
+    "observed_outcome",
+    "observed_status_code",
+    "observed_error_class",
+    "finding_type",
+    "diff_classification",
+    "finding_types",
+    "severity",
+    "decision",
+    "created_at",
 )
 
 
@@ -266,6 +296,124 @@ def build_evidence_ref(
     if ref:
         evidence_ref["ref"] = ref
     return evidence_ref
+
+
+def build_effective_permission_record(
+    probe_id: str,
+    server_id: str,
+    tool_name: str,
+    argument_hash: str,
+    expected_outcome: str,
+    expected_status_code: Any,
+    observed_outcome: str,
+    observed_status_code: Any,
+    observed_error_class: str,
+    finding_types: List[str],
+    severity: str,
+    decision: str,
+    created_at: str = "",
+) -> Dict[str, Any]:
+    """Build canonical behavioral scope-drift evidence."""
+    finding_types = [str(t) for t in (finding_types or []) if str(t)]
+    finding_type = finding_types[0] if finding_types else ""
+    return {
+        "record_type": EFFECTIVE_PERMISSION_SCHEMA_ID,
+        "schema_version": EFFECTIVE_PERMISSION_SCHEMA_VERSION,
+        "probe_id": str(probe_id or ""),
+        "server_id": str(server_id or ""),
+        "tool_name": str(tool_name or ""),
+        "argument_hash": str(argument_hash or ""),
+        "expected_outcome": str(expected_outcome or ""),
+        "expected_status_code": (
+            "" if expected_status_code is None else str(expected_status_code)
+        ),
+        "observed_outcome": str(observed_outcome or ""),
+        "observed_status_code": (
+            "" if observed_status_code is None else str(observed_status_code)
+        ),
+        "observed_error_class": str(observed_error_class or ""),
+        "finding_type": finding_type,
+        "diff_classification": classify_finding_types(finding_types),
+        "finding_types": finding_types,
+        "severity": str(severity or "none"),
+        "decision": str(decision or "allow"),
+        "created_at": str(created_at or ""),
+    }
+
+
+def build_effective_permission_record_from_audit_row(
+    row: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """Build probe evidence from an audit row when it carries probe data."""
+    if not row.get("probe_id"):
+        return None
+    severity = str(row.get("drift_severity") or "none").lower()
+    if severity in ("", "none"):
+        return None
+    finding_types = row.get("drift_types") or []
+    if isinstance(finding_types, str):
+        try:
+            finding_types = json.loads(finding_types)
+        except (json.JSONDecodeError, TypeError):
+            finding_types = []
+    return build_effective_permission_record(
+        probe_id=row.get("probe_id") or "",
+        server_id=row.get("server_id") or "",
+        tool_name=row.get("tool_name") or "",
+        argument_hash=row.get("argument_hash") or "",
+        expected_outcome=row.get("expected_outcome") or "",
+        expected_status_code=row.get("expected_status_code"),
+        observed_outcome=row.get("observed_outcome") or "",
+        observed_status_code=row.get("observed_status_code"),
+        observed_error_class=row.get("observed_error_class") or "",
+        finding_types=list(finding_types),
+        severity=severity,
+        decision=row.get("drift_action") or row.get("action") or "allow",
+        created_at=row.get("ts") or "",
+    )
+
+
+def build_effective_permission_evidence_ref(
+    record: Dict[str, Any], ref: Optional[str] = None
+) -> Dict[str, Any]:
+    evidence_ref = {
+        "type": EFFECTIVE_PERMISSION_EVIDENCE_TYPE,
+        "digest": compute_digest(record),
+        "canonicalization": CANONICALIZATION,
+        "schema": EFFECTIVE_PERMISSION_SCHEMA_URL,
+    }
+    if ref:
+        evidence_ref["ref"] = ref
+    return evidence_ref
+
+
+def verify_effective_permission_record(
+    record: Dict[str, Any], claimed_digest: str
+) -> Dict[str, Any]:
+    """Verify a canonical effective-permission drift evidence record."""
+    if not isinstance(record, dict):
+        return {
+            "verified": False,
+            "computed_digest": "",
+            "reason": "record_not_an_object",
+        }
+    missing = [f for f in _EFFECTIVE_PERMISSION_RECORD_FIELDS if f not in record]
+    if missing:
+        return {
+            "verified": False,
+            "computed_digest": "",
+            "reason": f"missing_fields:{','.join(missing)}",
+        }
+    try:
+        computed = compute_digest(record)
+    except CanonicalizationError as exc:
+        return {"verified": False, "computed_digest": "", "reason": str(exc)}
+    verified = computed == str(claimed_digest or "")
+    return {
+        "verified": verified,
+        "computed_digest": computed,
+        "reason": "verified" if verified else "digest_mismatch",
+    }
 
 
 def verify_drift_record(record: Dict[str, Any], claimed_digest: str) -> Dict[str, Any]:

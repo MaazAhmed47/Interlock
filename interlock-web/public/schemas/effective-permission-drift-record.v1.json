@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getinterlock.dev/schemas/effective-permission-drift-record.v1.json",
+  "title": "Interlock Effective Permission Drift Evidence Record (v1)",
+  "description": "Canonical evidence for an opt-in manual behavioral probe where effective upstream permissions changed without a visible MCP manifest or schema change. The evidenceRef digest is sha256 over this record's canonical JSON bytes using json/jcs-rfc8785. The record stores hashes and normalized outcomes only; it does not store raw arguments, auth headers, tokens, or response bodies.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_type",
+    "schema_version",
+    "probe_id",
+    "server_id",
+    "tool_name",
+    "argument_hash",
+    "expected_outcome",
+    "expected_status_code",
+    "observed_outcome",
+    "observed_status_code",
+    "observed_error_class",
+    "finding_type",
+    "diff_classification",
+    "finding_types",
+    "severity",
+    "decision",
+    "created_at"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "interlock.effective-permission-drift-record"
+    },
+    "schema_version": {
+      "const": "1"
+    },
+    "probe_id": {
+      "type": "string"
+    },
+    "server_id": {
+      "type": "string"
+    },
+    "tool_name": {
+      "type": "string"
+    },
+    "argument_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "expected_outcome": {
+      "type": "string",
+      "enum": ["denied", "allowed"]
+    },
+    "observed_outcome": {
+      "type": "string",
+      "enum": [
+        "allowed",
+        "accepted",
+        "denied",
+        "unknown",
+        "inconclusive",
+        "inconclusive_rate_limited",
+        "inconclusive_upstream_error",
+        "inconclusive_probe_error"
+      ]
+    },
+    "expected_status_code": {
+      "type": "string"
+    },
+    "observed_status_code": {
+      "type": "string"
+    },
+    "observed_error_class": {
+      "type": "string"
+    },
+    "finding_type": {
+      "type": "string"
+    },
+    "diff_classification": {
+      "const": "auth-scope"
+    },
+    "finding_types": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["none", "minor", "moderate", "high", "critical"]
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["allow", "monitor", "deny", "quarantine"]
+    },
+    "created_at": {
+      "type": "string"
+    }
+  }
+}

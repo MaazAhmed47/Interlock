@@ -168,6 +168,19 @@ Partners that do not need the full object can start with this subset:
 - The object is not a replacement for MCP server RBAC, OAuth scopes, or host-level consent.
 - Drift decisions are strongest when tools expose stable metadata and schemas.
 
+## Effective Permission Drift Probes
+
+Effective permission drift probes cover cases where a tool manifest and schema
+do not change, but upstream behavior does. They do not introspect OAuth
+providers and do not infer scopes from tokens. They compare expected behavior
+against observed behavior from a safe, opt-in, non-production/canary probe when
+upstream permissions are opaque to MCP.
+
+Only an expected-denied probe that becomes allowed or accepted is classified as
+high-severity effective permission expansion. Denials, rate limits, upstream
+errors, malformed responses, missing resources, and network failures are not
+classified as auth-scope expansion.
+
 ## Related Docs
 
 - [MCP Security Receipt Draft](mcp-security-receipt-draft.md)

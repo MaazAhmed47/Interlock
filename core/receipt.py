@@ -204,10 +204,21 @@ def derive_drift_evidence(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     the trust-annotations-shaped reference an external consumer verifies by
     recomputation (see core/drift_evidence.py).
     """
+    ref = f"audit://interlock/{row.get('id')}" if row.get("id") is not None else None
+    probe_record = drift_evidence_mod.build_effective_permission_record_from_audit_row(
+        row
+    )
+    if probe_record is not None:
+        return {
+            "record": probe_record,
+            "evidence_ref": drift_evidence_mod.build_effective_permission_evidence_ref(
+                probe_record, ref=ref
+            ),
+        }
+
     record = drift_evidence_mod.build_drift_record_from_audit_row(row)
     if record is None:
         return None
-    ref = f"audit://interlock/{row.get('id')}" if row.get("id") is not None else None
     return {
         "record": record,
         "evidence_ref": drift_evidence_mod.build_evidence_ref(record, ref=ref),

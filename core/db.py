@@ -1573,6 +1573,16 @@ def unregister_mcp_server(server_id: str) -> bool:
     return cursor.rowcount > 0
 
 
+def clear_mcp_tool_metadata(server_id: str) -> int:
+    """Delete only stored tool baselines for an MCP server."""
+    with _db_lock, get_conn() as conn:
+        cursor = conn.execute(
+            "DELETE FROM mcp_tool_metadata WHERE server_id = ?",
+            (server_id,),
+        )
+    return int(cursor.rowcount or 0)
+
+
 def verify_mcp_server(server_id: str) -> bool:
     """Mark a server as verified. Returns False if server_id not found."""
     with _db_lock, get_conn() as conn:
