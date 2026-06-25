@@ -272,6 +272,31 @@ section[id]{scroll-margin-top:80px}
 .field-list li b{color:var(--ink);font-weight:600}
 .field-list svg{flex:none;margin-top:3px;color:var(--ink-faint)}
 
+/* ── sample drift report (real capture) ── */
+.capture{display:grid;grid-template-columns:1.05fr .95fr;gap:34px;align-items:start;margin-top:38px}
+.capture>*{min-width:0}
+.cap-report{border:1px solid var(--line);border-radius:12px;background:var(--surface-2);overflow:hidden}
+.cap-head{padding:15px 18px;border-bottom:1px solid var(--line)}
+.cap-tool{font-family:var(--mono);font-size:13.5px;font-weight:500;color:#fff}
+.cap-approved{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11.5px;color:var(--ink-faint);margin-top:6px}
+.cap-approved .pip{flex:none;width:7px;height:7px;border-radius:2px;background:var(--green)}
+.cap-rows{padding:4px 18px}
+.cap-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;align-items:baseline;padding:9px 0;border-bottom:1px solid var(--line-soft);font-family:var(--mono);font-size:12.5px}
+.cap-row:last-child{border-bottom:none}
+.cap-k{color:var(--ink-faint);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
+.cap-change{display:flex;flex-wrap:wrap;align-items:baseline;gap:7px;min-width:0}
+.cap-was{color:var(--ink-faint)}
+.cap-arr{flex:none;color:var(--ink-faint)}
+.cap-now{color:var(--red);font-weight:500;word-break:break-word}
+.cap-verdict{display:flex;flex-wrap:wrap;align-items:center;gap:9px 12px;padding:13px 18px;border-top:1px solid var(--line);background:var(--red-dim);font-family:var(--mono);font-size:12px;color:var(--ink-dim)}
+.cap-controls{display:flex;align-items:flex-start;gap:9px;padding:12px 18px;border-top:1px solid var(--line-soft);background:var(--green-dim);font-family:var(--mono);font-size:11.5px;color:var(--ink-dim)}
+.cap-controls .pip{flex:none;width:7px;height:7px;border-radius:2px;background:var(--green);margin-top:4px}
+.cap-controls b{color:var(--green);font-weight:500}
+.cap-badge{margin-left:auto;font-size:10.5px;letter-spacing:.04em}
+.cap-caption{font-family:var(--mono);font-size:11.5px;color:var(--ink-faint);margin-top:18px}
+#sample-drift .code-bar{flex-wrap:wrap;row-gap:6px}
+@media (max-width:940px){.capture{grid-template-columns:1fr;gap:26px}}
+
 /* ── use cases ── */
 .uc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(232px,1fr));gap:14px;margin-top:38px}
 .uc{border:1px solid var(--line);border-radius:11px;background:var(--surface);padding:18px;transition:border-color .18s}
@@ -411,7 +436,7 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
         <div class="hero-label">MCP Runtime Trust Layer</div>
         <div class="hero-cta">
           <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" class="btn btn-primary">Book a Pilot</a>
-          <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20MCP%20Tool%20Schema%20Review" class="btn btn-ghost">Review One MCP Tool Schema</a>
+          <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20MCP%20Tool%20Schema%20Review" class="btn btn-ghost">Get a Non-Production Drift Report</a>
         </div>
         <div class="hero-links">
           <a href="https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664" target="_blank" rel="noopener">Docs →</a>
@@ -555,6 +580,52 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
         </ul>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- 2b. SAMPLE DRIFT REPORT (real capture) -->
+<section class="section" id="sample-drift">
+  <div class="wrap">
+    <div class="eyebrow">Live capture</div>
+    <h2 class="s-title">A real drift, caught.</h2>
+    <p class="s-lead">An approved read-only tool silently gained write, export, and PII access under the same name. Interlock held it before execution.</p>
+
+    <div class="capture">
+      <div class="cap-report" role="img" aria-label="Drift report: the approved read-only tool query_customers escalated to destructive with read, execute and export effects, PII data, and external reach; decision quarantine, critical, held before execution. Controls get_schema and list_tables stayed allowed.">
+        <div class="cap-head">
+          <div class="cap-tool">query_customers</div>
+          <div class="cap-approved"><span class="pip"></span>approved as read-only &mdash; SELECT against customer database</div>
+        </div>
+        <div class="cap-rows">
+          <div class="cap-row"><span class="cap-k">side effect</span><span class="cap-change"><span class="cap-was">read-only</span><span class="cap-arr">&rarr;</span><span class="cap-now">destructive</span></span></div>
+          <div class="cap-row"><span class="cap-k">effects</span><span class="cap-change"><span class="cap-was">read</span><span class="cap-arr">&rarr;</span><span class="cap-now">read, execute, export</span></span></div>
+          <div class="cap-row"><span class="cap-k">data classes</span><span class="cap-change"><span class="cap-was">none</span><span class="cap-arr">&rarr;</span><span class="cap-now">PII</span></span></div>
+          <div class="cap-row"><span class="cap-k">externality</span><span class="cap-change"><span class="cap-was">internal</span><span class="cap-arr">&rarr;</span><span class="cap-now">external</span></span></div>
+          <div class="cap-row"><span class="cap-k">schema</span><span class="cap-change"><span class="cap-now">+ email</span><span class="cap-was">(external recipient),</span><span class="cap-now">+ allow_write</span></span></div>
+        </div>
+        <div class="cap-verdict"><span class="verdict-tag">QUARANTINE</span><span>critical &middot; held before execution</span></div>
+        <div class="cap-controls"><span class="pip"></span><span><b>get_schema, list_tables</b> &mdash; unchanged, stayed allowed (zero false positives)</span></div>
+      </div>
+
+      <div class="code" aria-label="Security Receipt drift record, JSON">
+        <div class="code-bar"><span class="code-dots"><i></i><i></i><i></i></span><span class="code-title">drift-record.json</span><span class="chain-ok cap-badge"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>hash-chained &middot; verified</span></div>
+        <pre><span class="c-pun">{</span>
+  <span class="c-key">"record_type"</span><span class="c-pun">:</span> <span class="c-str">"interlock.drift-record"</span><span class="c-pun">,</span>
+  <span class="c-key">"decision"</span><span class="c-pun">:</span> <span class="c-quar">"quarantine"</span><span class="c-pun">,</span>
+  <span class="c-key">"severity"</span><span class="c-pun">:</span> <span class="c-str">"critical"</span><span class="c-pun">,</span>
+  <span class="c-key">"finding_types"</span><span class="c-pun">: [</span>
+    <span class="c-str">"side_effect_escalated"</span><span class="c-pun">,</span> <span class="c-str">"effect_escalated"</span><span class="c-pun">,</span>
+    <span class="c-str">"data_class_escalated"</span><span class="c-pun">,</span> <span class="c-str">"externality_escalated"</span><span class="c-pun">,</span>
+    <span class="c-str">"schema_field_added"</span><span class="c-pun">,</span> <span class="c-str">"sensitive_field_added"</span>
+  <span class="c-pun">],</span>
+  <span class="c-key">"approved_surface_hash"</span><span class="c-pun">:</span> <span class="c-str">"sha256:38188a27..."</span><span class="c-pun">,</span>
+  <span class="c-key">"current_surface_hash"</span><span class="c-pun">:</span>  <span class="c-str">"sha256:32b6b2fd..."</span><span class="c-pun">,</span>
+  <span class="c-key">"chain_verified"</span><span class="c-pun">:</span> <span class="c-flag">true</span>
+<span class="c-pun">}</span></pre>
+      </div>
+    </div>
+
+    <p class="cap-caption">Tested live against a reachable MCP server using a controlled escalation scenario.</p>
   </div>
 </section>
 
