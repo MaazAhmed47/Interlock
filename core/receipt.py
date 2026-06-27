@@ -13,7 +13,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
+from core import chain_drift as chain_drift_mod
 from core import drift_evidence as drift_evidence_mod
+from core import effect_drift as effect_drift_mod
+from core import effect_readback as effect_readback_mod
+from core import external_reach as external_reach_mod
+from core import response_drift as response_drift_mod
 
 # Decisions a receipt can present. Any block variant the audit log records
 # collapses to "deny".
@@ -151,7 +156,18 @@ def derive_detections(row: Dict[str, Any]) -> List[str]:
         add("pii")
 
     if _drift_detected(row):
-        add("tool_definition_drift")
+        drift_types = [
+            str(kind).strip()
+            for kind in _as_list(row.get("drift_types"))
+            if str(kind).strip()
+        ]
+        if drift_types:
+            for kind in drift_types:
+                add(kind)
+        elif str(row.get("matched_rule") or "") == "effective_permission_probe":
+            add("effective_permission_drift")
+        else:
+            add("tool_definition_drift")
 
     return detections
 
@@ -205,6 +221,26 @@ def derive_drift_evidence(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     recomputation (see core/drift_evidence.py).
     """
     ref = f"audit://interlock/{row.get('id')}" if row.get("id") is not None else None
+    chain_record = chain_drift_mod.build_chain_drift_record_from_audit_row(row)
+    if chain_record is not None:
+        return {
+            "record": chain_record,
+            "evidence_ref": chain_drift_mod.build_chain_drift_evidence_ref(
+                chain_record, ref=ref
+            ),
+        }
+
+    readback_record = (
+        effect_readback_mod.build_readback_effect_drift_record_from_audit_row(row)
+    )
+    if readback_record is not None:
+        return {
+            "record": readback_record,
+            "evidence_ref": effect_readback_mod.build_readback_effect_drift_evidence_ref(
+                readback_record, ref=ref
+            ),
+        }
+
     probe_record = drift_evidence_mod.build_effective_permission_record_from_audit_row(
         row
     )
@@ -213,6 +249,35 @@ def derive_drift_evidence(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "record": probe_record,
             "evidence_ref": drift_evidence_mod.build_effective_permission_evidence_ref(
                 probe_record, ref=ref
+            ),
+        }
+
+    external_record = (
+        external_reach_mod.build_external_reach_drift_record_from_audit_row(row)
+    )
+    if external_record is not None:
+        return {
+            "record": external_record,
+            "evidence_ref": external_reach_mod.build_external_reach_drift_evidence_ref(
+                external_record, ref=ref
+            ),
+        }
+
+    effect_record = effect_drift_mod.build_effect_drift_record_from_audit_row(row)
+    if effect_record is not None:
+        return {
+            "record": effect_record,
+            "evidence_ref": effect_drift_mod.build_effect_drift_evidence_ref(
+                effect_record, ref=ref
+            ),
+        }
+
+    response_record = response_drift_mod.build_response_drift_record_from_audit_row(row)
+    if response_record is not None:
+        return {
+            "record": response_record,
+            "evidence_ref": response_drift_mod.build_response_drift_evidence_ref(
+                response_record, ref=ref
             ),
         }
 

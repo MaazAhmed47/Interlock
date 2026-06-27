@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getinterlock.dev/schemas/readback-effect-drift-record.v1.json",
+  "title": "Interlock Readback Effect Drift Record v1",
+  "description": "A tamper-evident Interlock record for provider readback effect drift. It proves a manual non-production canary observed external/provider state before and after a target MCP call and detected a material hidden side effect by comparing evidence-safe state profile hashes. It does not claim OAuth introspection and does not store raw provider state, raw arguments, tokens, headers, or response bodies.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_type",
+    "schema_version",
+    "server_id",
+    "tool_name",
+    "baseline_profile_hash",
+    "current_profile_hash",
+    "diff_classification",
+    "finding_types",
+    "severity",
+    "decision"
+  ],
+  "properties": {
+    "record_type": { "const": "interlock.readback-effect-drift-record" },
+    "schema_version": { "const": "1" },
+    "server_id": { "type": "string", "minLength": 1 },
+    "tool_name": { "type": "string", "minLength": 1 },
+    "baseline_profile_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "current_profile_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "diff_classification": { "const": "effect" },
+    "finding_types": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "severity": { "enum": ["none", "minor", "moderate", "high", "critical"] },
+    "decision": { "enum": ["allow", "monitor", "deny", "quarantine"] }
+  }
+}

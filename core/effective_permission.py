@@ -281,10 +281,17 @@ async def run_effective_permission_probe(
         evaluation=evaluation,
         scan_time_ms=round((time.perf_counter() - start) * 1000, 2),
     )
+    audit_id = int(audit.get("id") or 0)
+    if not audit_id:
+        persisted_audit = db.lookup_latest_mcp_audit_log_by_probe_id(probe["probe_id"])
+        if persisted_audit:
+            audit_id = int(persisted_audit.get("id") or 0)
+            audit = persisted_audit
+
     db.update_mcp_permission_probe_result(
         probe_id=probe["probe_id"],
         evaluation=evaluation,
-        audit_id=audit["id"],
+        audit_id=audit_id,
     )
 
     return {
@@ -292,7 +299,7 @@ async def run_effective_permission_probe(
         "probe": _public_probe(stored_probe),
         "evaluation": evaluation,
         "evidence": {
-            "audit_id": audit["id"],
+            "audit_id": audit_id,
             "argument_hash": stored_probe["argument_hash"],
         },
         "quarantine_applied": quarantine_applied,

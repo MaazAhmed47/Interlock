@@ -26,6 +26,8 @@ from models.schemas import (  # noqa: F401
     ChatMessage,
     ChatRequest,
     MCPEffectivePermissionProbeRequest,
+    MCPEffectReadbackProbeRequest,
+    MCPChainAnalyzeRequest,
     MCPDiscoverRequest,
     MCPRebaselineRequest,
     MCPRegisterRequest,
@@ -378,6 +380,8 @@ mcp_drifted_tools = mcp_routes.mcp_drifted_tools  # type: ignore[has-type]
 mcp_approve_tool_baseline = mcp_routes.mcp_approve_tool_baseline  # type: ignore[has-type]
 mcp_quarantine_tool = mcp_routes.mcp_quarantine_tool  # type: ignore[has-type]
 mcp_run_effective_permission_probe = mcp_routes.mcp_run_effective_permission_probe  # type: ignore[has-type]
+mcp_run_effect_readback_observer = mcp_routes.mcp_run_effect_readback_observer  # type: ignore[has-type]
+mcp_analyze_chain = mcp_routes.mcp_analyze_chain  # type: ignore[has-type]
 mcp_audit = mcp_routes.mcp_audit  # type: ignore[has-type]
 mcp_validate = mcp_routes.mcp_validate  # type: ignore[has-type]
 mcp_call = mcp_routes.mcp_call  # type: ignore[has-type]

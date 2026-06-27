@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getinterlock.dev/schemas/effect-drift-record.v1.json",
+  "title": "Interlock Effect Drift Evidence Record (v1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_type",
+    "schema_version",
+    "server_id",
+    "tool_name",
+    "baseline_profile_hash",
+    "current_profile_hash",
+    "diff_classification",
+    "finding_types",
+    "severity",
+    "decision"
+  ],
+  "properties": {
+    "record_type": {
+      "type": "string",
+      "const": "interlock.effect-drift-record"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "1"
+    },
+    "server_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tool_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "baseline_profile_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "current_profile_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "diff_classification": {
+      "type": "string",
+      "const": "effect"
+    },
+    "finding_types": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["none", "minor", "moderate", "high", "critical"]
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["allow", "monitor", "deny", "quarantine"]
+    }
+  }
+}

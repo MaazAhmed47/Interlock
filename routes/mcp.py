@@ -5,7 +5,9 @@ from fastapi import APIRouter, Header, HTTPException
 
 import proxy
 from core import db
+from core.chain_drift import run_chain_analysis
 from core.effective_permission import run_effective_permission_probe
+from core.effect_readback import run_effect_readback_observer
 from core.limits import clamp_limit
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
 from core.mcp_gateway import (
@@ -18,6 +20,8 @@ from core.mcp_gateway import (
 from core.shadow_mode import calculate_risk_score
 from models.schemas import (
     MCPEffectivePermissionProbeRequest,
+    MCPEffectReadbackProbeRequest,
+    MCPChainAnalyzeRequest,
     MCPDiscoverRequest,
     MCPRebaselineRequest,
     MCPRegisterRequest,
@@ -277,6 +281,44 @@ async def mcp_run_effective_permission_probe(
         )
     payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
     return await run_effective_permission_probe(server_id, payload)
+
+
+@router.post("/mcp/servers/{server_id}/effects/readback/run")
+async def mcp_run_effect_readback_observer(
+    server_id: str,
+    request: MCPEffectReadbackProbeRequest,
+    x_api_key: Optional[str] = Header(None),
+):
+    """Run one manual non-production provider-readback effect probe."""
+    proxy.verify_key(x_api_key)
+    if not request.non_production:
+        raise HTTPException(
+            status_code=400,
+            detail="Readback effect probes require non_production=true.",
+        )
+    if not (request.safety_note or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Readback effect probes require a safety_note.",
+        )
+    payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
+    return await run_effect_readback_observer(server_id, payload)
+
+
+@router.post("/mcp/chains/analyze")
+async def mcp_analyze_chain(
+    request: MCPChainAnalyzeRequest,
+    x_api_key: Optional[str] = Header(None),
+):
+    """Analyze a planned multi-step MCP tool chain before execution."""
+    proxy.verify_key(x_api_key)
+    if not (request.safety_note or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Chain analysis requires a safety_note.",
+        )
+    payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
+    return run_chain_analysis(payload)
 
 
 @router.get("/mcp/audit")

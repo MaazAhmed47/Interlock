@@ -951,6 +951,13 @@ textarea.form-input { resize: vertical; min-height: 100px; font-family: var(--fo
 .receipt-grid b { font-size: 13px; font-weight: 600; word-break: break-all; }
 
 .receipt-section { margin-top: 16px; }
+.receipt-probe-outcome { margin-top: 16px; padding: 14px 16px; border: 1px solid rgba(255, 107, 53, .34); background: rgba(255, 107, 53, .07); }
+.receipt-probe-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: stretch; }
+.receipt-probe-box { border: 1px solid rgba(245, 240, 232, .1); background: rgba(6, 6, 8, .38); padding: 10px 12px; }
+.receipt-probe-box span { display: block; font-family: var(--font-mono); font-size: 9px; letter-spacing: 1.3px; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+.receipt-probe-box strong { display: block; font-family: var(--font-mono); font-size: 15px; line-height: 1.25; color: var(--white); }
+.receipt-probe-box.observed strong { color: var(--orange); }
+.receipt-probe-arrow { display: grid; place-items: center; color: var(--orange); font-size: 20px; font-weight: 700; }
 .receipt-reason { font-size: 13px; line-height: 1.55; color: rgba(245,240,232,.85); }
 .receipt-none { font-size: 12px; }
 
@@ -979,7 +986,8 @@ textarea.form-input { resize: vertical; min-height: 100px; font-family: var(--fo
 .receipt-actions { display: flex; gap: 8px; justify-content: flex-end; }
 
 @media (max-width: 640px) {
-  .receipt-grid, .receipt-cols { grid-template-columns: 1fr; }
+  .receipt-grid, .receipt-cols, .receipt-probe-grid { grid-template-columns: 1fr; }
+  .receipt-probe-arrow { display: none; }
 }
 
 /* Print: isolate the receipt document, light theme for paper/PDF.

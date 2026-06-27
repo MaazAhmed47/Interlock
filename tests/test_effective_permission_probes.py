@@ -140,9 +140,10 @@ def evaluate_status(status_code, expected="denied", body=None, headers=None):
 
 def validate_against_effective_permission_schema(record):
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-    if jsonschema is not None:
-        jsonschema.Draft202012Validator.check_schema(schema)
-        jsonschema.Draft202012Validator(schema).validate(record)
+    validator = getattr(jsonschema, "Draft202012Validator", None)
+    if validator is not None:
+        validator.check_schema(schema)
+        validator(schema).validate(record)
         return
 
     assert set(record) == set(schema["properties"])
@@ -210,7 +211,9 @@ def test_expected_denied_observed_200_is_behavioral_scope_drift():
 
 @pytest.mark.parametrize("initial_denial_status", [401, 403])
 def test_expected_denied_to_200_is_auth_scope_drift(initial_denial_status):
-    probe = probe_contract(expected="denied", expected_status_code=initial_denial_status)
+    probe = probe_contract(
+        expected="denied", expected_status_code=initial_denial_status
+    )
     observed = normalize_observed_result(
         status_code=200,
         json_body={"result": {"id": "call-created"}},
@@ -375,6 +378,9 @@ def test_probe_drift_run_writes_receipt_evidence(isolated_db):
     receipt = receipt_mod.build_receipt(row, chain_verified=True)
     assert receipt["integrity_hash"] == row["integrity_hash"]
     assert receipt["chain_verified"] is True
+    assert "effective_permission_expansion" in receipt["detections"]
+    assert "behavioral_scope_drift" in receipt["detections"]
+    assert "tool_definition_drift" not in receipt["detections"]
     evidence = receipt["drift_evidence"]
     assert evidence is not None
     assert evidence["evidence_ref"]["type"] == "effective-permission-drift"
@@ -398,6 +404,59 @@ def test_probe_drift_run_writes_receipt_evidence(isolated_db):
     assert verified["verified"] is True
 
     validate_against_effective_permission_schema(evidence["record"])
+
+
+def test_probe_response_returns_real_persisted_audit_id_when_adapter_reports_zero(
+    isolated_db, monkeypatch
+):
+    server_id = seed_probe_server("_probe_zero_adapter_id")
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"result": {"id": "call-created"}}
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    original_log = db.log_mcp_audit_event
+
+    def postgres_style_zero_id(event):
+        row = original_log(event)
+        returned = dict(row)
+        returned["id"] = 0
+        return returned
+
+    monkeypatch.setattr(db, "log_mcp_audit_event", postgres_style_zero_id)
+
+    request = proxy.MCPEffectivePermissionProbeRequest(
+        probe_id="probe-zero-adapter-id",
+        tool_name="call_genesys_api",
+        arguments=PROBE_ARGS,
+        expected_outcome="denied",
+        expected_status_code=403,
+        non_production=True,
+        safety_note="Canary-only run against synthetic data.",
+    )
+
+    with patch("core.effective_permission.httpx.AsyncClient", return_value=mock_client):
+        result = asyncio.run(
+            proxy.mcp_run_effective_permission_probe(
+                server_id,
+                request=request,
+                x_api_key=isolated_db,
+            )
+        )
+
+    persisted = [
+        row
+        for row in db.list_mcp_audit_logs(limit=10)
+        if row["probe_id"] == "probe-zero-adapter-id"
+    ][0]
+
+    assert persisted["id"] > 0
+    assert result["evidence"]["audit_id"] == persisted["id"]
+    stored_probe = db.lookup_mcp_permission_probe("probe-zero-adapter-id")
+    assert stored_probe["last_audit_id"] == persisted["id"]
 
 
 def test_probe_storage_excludes_tokens_headers_arguments_and_response_body(isolated_db):

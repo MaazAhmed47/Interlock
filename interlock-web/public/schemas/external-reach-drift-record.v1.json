@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getinterlock.dev/schemas/external-reach-drift-record.v1.json",
+  "title": "Interlock External Reach Drift Evidence Record (v1)",
+  "description": "Canonical evidence for destination-aware external reach drift: a tool-call destination profile expanded beyond its approved baseline to include a new public URL host, email domain, or opaque destination hash. The record stores profile hashes and finding labels only; it does not store full URLs, email local-parts, raw channels, buckets, paths, or payload values.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_type",
+    "schema_version",
+    "server_id",
+    "tool_name",
+    "baseline_profile_hash",
+    "current_profile_hash",
+    "diff_classification",
+    "finding_types",
+    "severity",
+    "decision"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "interlock.external-reach-drift-record"
+    },
+    "schema_version": {
+      "const": "1"
+    },
+    "server_id": {
+      "type": "string"
+    },
+    "tool_name": {
+      "type": "string"
+    },
+    "baseline_profile_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "current_profile_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "diff_classification": {
+      "const": "external-reach"
+    },
+    "finding_types": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "none",
+        "minor",
+        "moderate",
+        "high",
+        "critical"
+      ]
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "monitor",
+        "deny",
+        "quarantine"
+      ]
+    }
+  }
+}

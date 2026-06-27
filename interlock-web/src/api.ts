@@ -242,6 +242,26 @@ export interface ReceiptDrift {
   changes: string[];
 }
 
+export interface ReceiptEvidenceRecord {
+  record_type?: string;
+  finding_type?: string;
+  diff_classification?: string;
+  expected_outcome?: string;
+  expected_status_code?: string;
+  observed_outcome?: string;
+  observed_status_code?: string;
+  [key: string]: unknown;
+}
+
+export interface ReceiptEvidence {
+  record?: ReceiptEvidenceRecord;
+  evidence_ref?: {
+    type?: string;
+    digest?: string;
+    [key: string]: unknown;
+  };
+}
+
 export interface SecurityReceipt {
   receipt_id: string;
   audit_id?: number;
@@ -257,6 +277,7 @@ export interface SecurityReceipt {
   detections: string[];
   redactions: string[];
   drift: ReceiptDrift;
+  drift_evidence?: ReceiptEvidence | null;
   integrity_hash: string;
   prev_hash: string;
   chain_verified: boolean;

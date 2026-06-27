@@ -620,6 +620,93 @@ Interlock is not uniquely strong everywhere: static-policy gateways also enforce
 | `scan_injection()` | MCP06 | Checks 26 prompt-injection patterns with confidence scoring; blocks matched tool responses. |
 | `scan_pii_and_volume()` | MCP10 | Applies 12 PII/secret redaction rules and flags byte-count or array-size volume anomalies. |
 
+`core/response_drift.py` adds response/data-exposure drift detection for known MCP tools. Interlock stores an evidence-safe approved response profile from category labels, field names, counts, volume signals, and hashes only — not raw response bodies or raw values — then compares current responses against that baseline during `/mcp/call`. Current coverage detects new PII/financial/secret classes and material response-volume expansion. High-risk response drift is blocked before the model receives the expanded response; critical secret exposure drift quarantines the tool for review.
+
+Response drift evidence schema: [`response-drift-record.v1.json`](interlock-web/public/schemas/response-drift-record.v1.json).
+
+### External reach drift
+
+`core/external_reach.py` adds destination-aware external reach drift detection for known MCP tools before upstream execution. Interlock stores an evidence-safe approved destination profile from URL hosts, email domains, destination key names, and hashed opaque destinations such as channels, buckets, topics, or queues. It does not store full URL paths, query strings, email local-parts, raw channel names, tokens, or payload values.
+
+When a known tool later tries to send, publish, export, or route data to a new external destination outside the approved profile, Interlock classifies the expansion as `external_destination_added` with severity `high` and denies before the MCP server is called. If the new destination appears with sensitive payload indicators such as secrets, tokens, credentials, PII, or similar markers, Interlock classifies `external_secret_destination_added` as `critical` and quarantines the tool for review. Internal-only destination changes are treated as clean by this drift layer, while separate SSRF/tool-call guards can still block dangerous localhost/private-network arguments.
+
+External reach drift evidence schema: [`external-reach-drift-record.v1.json`](interlock-web/public/schemas/external-reach-drift-record.v1.json).
+
+### Outcome / effect drift
+
+`core/effect_drift.py` adds evidence-safe outcome/effect drift detection for known MCP tools. Interlock stores an approved effect profile from result-side effect labels such as dry-run, preview, plan, applied, sent, published, deleted, deployed, executed, or money movement. The profile keeps effect classes, safe field names, counts, and hashes only; it does not store raw response values, resource IDs, tokens, provider payloads, or full bodies.
+
+This is post-execution observation, not a guarantee that the first side effect can be prevented. If a tool approved as preview/dry-run later reports mutation, send/publish, deployment, deletion, execution, money movement, or scheduled/deferred future action, Interlock blocks the drifted response from continuing, quarantines the known tool for review, and emits an effect-drift receipt. Unknown or inconclusive effect observations do not become drift findings.
+
+Temporal effects are handled as first-class effect drift. A result such as `scheduled_for`, `send_at`, `deploy_at`, `delete_at`, `execute_at`, or `charge_at` after an approved preview/dry-run baseline is classified with temporal finding types such as `effect_temporal_external_after_preview`, `effect_temporal_deploy_after_preview`, `effect_temporal_destructive_after_preview`, `effect_temporal_execution_after_preview`, or `effect_temporal_money_movement_after_preview`.
+
+Effect drift evidence schema: [`effect-drift-record.v1.json`](interlock-web/public/schemas/effect-drift-record.v1.json).
+
+### Provider readback / hidden side-effect drift
+
+`core/effect_readback.py` adds a manual provider-readback observer for non-production canaries. Operators configure a safe readback tool, a target tool, the expected effect boundary (`no_change` or `change_allowed`), and a safety note. Interlock reads external/provider state before the target call, runs the target once, reads the provider state again, and compares evidence-safe state profile hashes. The profile commits to raw provider state through hashes only; it stores shape, field paths, counts, and hashes, not raw provider objects, arguments, tokens, headers, or response bodies.
+
+This covers the hidden side-effect case that result-side effect drift alone cannot prove: a tool response claims `dry_run` or preview, but provider readback shows the external object changed anyway. When a no-change canary produces a changed readback profile, Interlock classifies `readback_state_changed_after_no_effect_expected` / `silent_side_effect_drift` as `critical`, quarantines the known target tool, and emits a readback-effect drift receipt. Inconclusive readback failures, 5xxs, timeouts, malformed responses, or missing readback evidence do not become drift findings.
+
+This is a canary/proof path, not magic rollback. The target canary call has already executed in the non-production environment by the time readback proves the hidden effect. The prevention value is blocking rollout or continued use of that tool before the same drift reaches production.
+
+Readback effect evidence schema: [`readback-effect-drift-record.v1.json`](interlock-web/public/schemas/readback-effect-drift-record.v1.json).
+
+### Multi-step chain drift
+
+`core/chain_drift.py` adds pre-execution analysis for planned MCP tool chains. This catches risks that no single tool call reveals alone: sensitive read -> external send, secret read -> shell execution, Terraform plan -> apply/destroy, or preview -> deploy/charge later in the same workflow. The analyzer does not call providers or execute tools. It hashes every step's arguments, builds an evidence-safe chain profile, and logs a chain-drift Security Receipt when the planned sequence crosses a material boundary.
+
+Critical chain findings are denied before execution with types such as `chain_sensitive_read_to_external_effect`, `chain_secret_to_execution`, `chain_preview_to_deploy`, `chain_preview_to_destructive`, and `chain_preview_to_money_movement`. Read-only chains remain allowed. This is a prevention point for orchestrators that can submit a planned sequence before running it; it is not a claim that Interlock can infer every future agent step without seeing the plan.
+
+Chain drift evidence schema: [`chain-drift-record.v1.json`](interlock-web/public/schemas/chain-drift-record.v1.json).
+
+### Provider proof packs
+
+Interlock includes local provider proof packs that exercise the real drift classifiers and Security Receipt paths without production credentials. These are demos/proofs, not hidden claims of live provider certification. The buyer-facing overview is [`docs/interlock-drift-proof-report.md`](docs/interlock-drift-proof-report.md), with hard-limit handling in [`docs/interlock-enterprise-boundary-controls.md`](docs/interlock-enterprise-boundary-controls.md).
+
+Run the full proof-suite summary:
+
+```bash
+python3 demo/run_interlock_proof_suite.py
+```
+
+Run individual packs:
+
+```bash
+python3 demo/run_terraform_proof_pack.py
+python3 demo/run_terraform_cli_proof_pack.py --terraform-bin /path/to/terraform
+python3 demo/run_email_proof_pack.py
+python3 demo/run_email_smtp_proof_pack.py
+python3 demo/run_email_live_proof_pack.py
+python3 demo/run_database_admin_proof_pack.py
+python3 demo/run_database_docker_proof_pack.py
+python3 demo/run_database_mysql_docker_proof_pack.py
+python3 demo/run_kubernetes_proof_pack.py
+python3 demo/run_kubernetes_live_proof_pack.py
+python3 demo/run_app_store_proof_pack.py
+python3 demo/run_payments_proof_pack.py
+python3 demo/run_payments_live_proof_pack.py
+```
+
+Current proof-pack coverage:
+- Terraform mock/sandbox plus real local Terraform CLI plan/apply/destroy using local state only.
+- Email/messaging mock/sandbox covering preview->send, scheduled send, recipient/domain expansion, hidden send readback, and inbox->external-message chain drift.
+- Real local SMTP sandbox proving provider-readback hidden-send detection through an actual SMTP protocol boundary on `127.0.0.1`.
+- Credential-gated live-provider harnesses for Gmail, IMAP/SMTP providers such as iCloud/Fastmail, and Slack. These safely skip unless sandbox credentials and `INTERLOCK_ALLOW_LIVE_PROVIDER_PROOFS=1` are present.
+- Verified live Slack and Gmail sandbox provider-readback runs (2026-06-27): hidden send/post side effects were detected as `critical` / `quarantine`, while preview/no-send and expected-send controls stayed allowed.
+- Database/admin-SaaS local SQLite sandbox covering SELECT no-change, read-only -> UPDATE, read-only -> DROP/delete, scheduled privilege change, hidden DB write readback, expected DB write allowed, customer-data -> external export chain drift, DB secret -> shell execution chain drift, and admin-directory -> disable-user chain drift.
+- Credential-gated Docker Postgres sandbox harness covering real before/after SQL readback for SELECT no-change, hidden INSERT, expected UPDATE, hidden DROP, hidden role grant, customer-data -> external export chain drift, and DB secret -> shell execution chain drift. It safely skips unless `INTERLOCK_ALLOW_DOCKER_DB_PROOFS=1` and a local `postgres:*` image are available.
+- Verified live local Docker Postgres proof (2026-06-27): hidden INSERT, DROP, and role-grant side effects were detected as `critical` / `quarantine`, SELECT and expected UPDATE controls stayed allowed, and customer-export / secret-exec chains were denied.
+- Credential-gated Docker MySQL sandbox harness covering real before/after SQL readback for SELECT no-change, hidden INSERT, expected UPDATE, hidden DROP, hidden admin-user grant, customer-data -> external export chain drift, and DB secret -> shell execution chain drift. It safely skips unless `INTERLOCK_ALLOW_DOCKER_MYSQL_PROOFS=1` and a local `mysql:*` image are available.
+- Verified live local Docker MySQL proof (2026-06-27): hidden INSERT, DROP, and admin-user grant side effects were detected as `critical` / `quarantine`, SELECT and expected UPDATE controls stayed allowed, and customer-export / secret-exec chains were denied.
+- Kubernetes-shaped local mock/sandbox covering read-only inventory, dry-run -> apply/delete, hidden apply readback, secret -> exec chain drift, and inventory -> namespace-delete chain drift.
+- Credential-gated Kubernetes/kubectl sandbox harness covering real before/after readback for server dry-run, hidden apply, expected apply, hidden delete, and chain analysis. It safely skips unless `INTERLOCK_ALLOW_LIVE_KUBERNETES_PROOFS=1`, an explicit context, and an `interlock-` namespace are configured.
+- Verified live local Kubernetes/kubectl proof (Docker Desktop, 2026-06-27): hidden apply/delete side effects were detected as `critical` / `quarantine`, inventory and server-side dry-run controls stayed allowed, and secret -> exec / inventory -> namespace-delete chains were denied.
+- App Store / release automation local mock/sandbox covering metadata preview controls, preview -> submit, scheduled release, hidden release readback, expected release allowed, metadata/pricing -> submit chain drift, and tester PII -> external invite chain drift.
+- Payments local mock/sandbox covering quote/preview controls, preview -> charge, scheduled refund, hidden charge readback, expected charge allowed, payment-method -> charge chain drift, and quote -> transfer chain drift.
+- Credential-gated Stripe test-mode harness covering quote no-change, hidden charge/refund readback, expected charge allowed, and payment-chain analysis. It safely skips unless `INTERLOCK_ALLOW_LIVE_PAYMENTS_PROOFS=1` and a Stripe test-mode key are configured; live-mode keys are rejected.
+
+The non-live local/mock packs do not contact AWS/GCP/Azure, Terraform Cloud, Kubernetes clusters, kubectl, kind, Gmail, iCloud, Fastmail, Slack, remote databases, MySQL, Postgres, Snowflake, NetBox, Zabbix, Microsoft 365 tenants, App Store Connect, Apple APIs, TestFlight, Stripe, banks, card networks, or production MCP servers. The live email/messaging, Docker Postgres/MySQL, Kubernetes, and payments harnesses can contact configured sandbox providers, local containers, or clusters only when explicitly enabled. All packs produce evidence-safe output and receipts with hashes rather than raw resource identifiers, message bodies, auth tokens, channel names, object names, manifests, payment object IDs, card data, SQL text, row values, connection strings, app ids, build ids, tester emails, or real recipient addresses. See [`docs/interlock-provider-proof-packs.md`](docs/interlock-provider-proof-packs.md), [`docs/live-provider-readback-proof.md`](docs/live-provider-readback-proof.md), and [`docs/live-kubernetes-readback-proof.md`](docs/live-kubernetes-readback-proof.md).
 
 ---
 
@@ -634,9 +721,13 @@ Interlock is not uniquely strong everywhere: static-policy gateways also enforce
 5. Re-evaluate provenance policy and provenance drift.
 6. Inspect tool-call arguments.
 7. Apply role-aware RBAC and metadata policy.
-8. Forward allowed calls to the MCP server.
-9. Scan the MCP response for injection, PII, secrets, and volume anomalies.
-10. Write audit records for the decision.
+8. Compare destination-aware external reach against the approved profile for known tools.
+9. Forward allowed calls to the MCP server.
+10. Scan the MCP response for injection, PII, secrets, and volume anomalies.
+11. Compare observed outcome/effect against the approved effect profile for known tools.
+12. Write audit records for the decision.
+
+For planned multi-step workflows, `POST /mcp/chains/analyze` runs a separate pre-execution chain analysis path before any provider call is made.
 
 Prompt scanning still exists at `POST /scan`, but the product moat is the MCP gateway and agent RBAC path.
 
@@ -667,6 +758,30 @@ Operators provide a non-production/canary tool call, the expected outcome (`deni
 This is not generic OAuth introspection. It detects behavior change from an operator-approved canary probe when upstream permissions are opaque to MCP. It does not run destructive probes automatically and it does not store raw auth headers, tokens, probe arguments, or full response bodies.
 
 Probe evidence schema: [`effective-permission-drift-record.v1.json`](interlock-web/public/schemas/effective-permission-drift-record.v1.json).
+
+### Provider readback probes
+
+For hidden side effects, Interlock also exposes an explicit canary route:
+
+```text
+POST /mcp/servers/{server_id}/effects/readback/run
+```
+
+Operators provide a readback call and a target call. Interlock hashes both argument sets, runs readback -> target -> readback, then compares the before/after state hashes. If `expected_effect` is `no_change` and provider state changes, the target tool is quarantined with readback-effect evidence. This route requires `non_production=true` and a `safety_note`, and it is intentionally not scheduled or automatic.
+
+Readback evidence schema: [`readback-effect-drift-record.v1.json`](interlock-web/public/schemas/readback-effect-drift-record.v1.json).
+
+### Chain drift analysis
+
+For planned multi-step workflows, Interlock exposes a pre-execution analyzer:
+
+```text
+POST /mcp/chains/analyze
+```
+
+Operators or orchestrators provide a planned sequence of tool calls with evidence-safe metadata (`effects`, `data_classes`, `externality`) and a safety note. Interlock hashes all arguments, analyzes the sequence, writes an audit decision, and emits a chain-drift receipt for material chain findings. It does not execute the chain.
+
+Chain evidence schema: [`chain-drift-record.v1.json`](interlock-web/public/schemas/chain-drift-record.v1.json).
 
 ---
 

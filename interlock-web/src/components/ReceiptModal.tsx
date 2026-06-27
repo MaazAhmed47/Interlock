@@ -39,7 +39,37 @@ function decisionPastTense(decision: string): string {
   return DECISION_PAST_TENSE[decision.toLowerCase()] ?? decision
 }
 
+type ProbeOutcome = {
+  expected: string
+  observed: string
+}
+
+function formatProbeOutcome(outcome?: unknown, status?: unknown): string {
+  const outcomeText = String(outcome ?? '').trim()
+  const statusText = String(status ?? '').trim()
+  return [outcomeText, statusText].filter(Boolean).join(' / ')
+}
+
+function effectivePermissionProbeOutcome(receipt: SecurityReceipt): ProbeOutcome | null {
+  const evidence = receipt.drift_evidence
+  const record = evidence?.record
+  const refType = String(evidence?.evidence_ref?.type ?? '')
+  const recordType = String(record?.record_type ?? '')
+  const isEffectivePermission =
+    refType === 'effective-permission-drift' ||
+    recordType === 'interlock.effective-permission-drift'
+
+  if (!record || !isEffectivePermission) return null
+
+  const expected = formatProbeOutcome(record.expected_outcome, record.expected_status_code)
+  const observed = formatProbeOutcome(record.observed_outcome, record.observed_status_code)
+
+  if (!expected && !observed) return null
+  return { expected: expected || 'unknown', observed: observed || 'unknown' }
+}
+
 export default function ReceiptModal({ receipt, loading, error, onClose }: Props) {
+  const probeOutcome = receipt ? effectivePermissionProbeOutcome(receipt) : null
   // Portaled to <body> (sibling of #root) so the print block can hide #root and
   // let this overlay flow as the page — same isolation the audit print view uses.
   // Rendered inside #root, it printed blank once the audit print CSS added a
@@ -100,6 +130,23 @@ export default function ReceiptModal({ receipt, loading, error, onClose }: Props
                 <div><span className="receipt-label">Rule fired</span><b className="mono">{receipt.rule_fired || 'none'}</b></div>
               </div>
 
+              {probeOutcome && (
+                <div className="receipt-probe-outcome">
+                  <span className="receipt-label">Probe outcome</span>
+                  <div className="receipt-probe-grid">
+                    <div className="receipt-probe-box">
+                      <span>Expected</span>
+                      <strong>{probeOutcome.expected}</strong>
+                    </div>
+                    <div className="receipt-probe-arrow" aria-hidden="true">→</div>
+                    <div className="receipt-probe-box observed">
+                      <span>Observed</span>
+                      <strong>{probeOutcome.observed}</strong>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="receipt-section">
                 <span className="receipt-label">Why</span>
                 <p className="receipt-reason">{receipt.reason || 'No additional detail recorded.'}</p>
@@ -125,7 +172,7 @@ export default function ReceiptModal({ receipt, loading, error, onClose }: Props
               </div>
 
               <div className="receipt-section">
-                <span className="receipt-label">Tool definition drift</span>
+                <span className="receipt-label">Drift evidence</span>
                 {receipt.drift.detected
                   ? <div className="receipt-drift">
                       <span className="badge badge-monitor">{(receipt.drift.severity || 'detected').toUpperCase()}</span>
@@ -135,7 +182,7 @@ export default function ReceiptModal({ receipt, loading, error, onClose }: Props
                           : receipt.drift.changes.map((c, i) => <li key={i}>{c}</li>)}
                       </ul>
                     </div>
-                  : <p className="dim mono receipt-none">no drift — tool matches approved baseline</p>}
+                  : <p className="dim mono receipt-none">no drift recorded for this event</p>}
               </div>
 
               <div className={`receipt-integrity ${receipt.chain_verified ? 'is-verified' : 'is-broken'}`}>

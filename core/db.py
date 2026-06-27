@@ -318,6 +318,54 @@ CREATE TABLE IF NOT EXISTS tool_surface_snapshots (
     created_at     TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mcp_response_profiles (
+    server_id    TEXT    NOT NULL,
+    tool_name    TEXT    NOT NULL,
+    profile_hash TEXT    NOT NULL,
+    profile_json TEXT    NOT NULL,
+    first_seen   TEXT    NOT NULL,
+    last_seen    TEXT    NOT NULL,
+    updated_at   TEXT    NOT NULL,
+    status       TEXT    NOT NULL DEFAULT 'approved',
+    PRIMARY KEY (server_id, tool_name),
+    FOREIGN KEY (server_id) REFERENCES mcp_servers(server_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_response_profiles_server
+ON mcp_response_profiles(server_id);
+
+CREATE TABLE IF NOT EXISTS mcp_external_reach_profiles (
+    server_id    TEXT    NOT NULL,
+    tool_name    TEXT    NOT NULL,
+    profile_hash TEXT    NOT NULL,
+    profile_json TEXT    NOT NULL,
+    first_seen   TEXT    NOT NULL,
+    last_seen    TEXT    NOT NULL,
+    updated_at   TEXT    NOT NULL,
+    status       TEXT    NOT NULL DEFAULT 'approved',
+    PRIMARY KEY (server_id, tool_name),
+    FOREIGN KEY (server_id) REFERENCES mcp_servers(server_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_external_reach_profiles_server
+ON mcp_external_reach_profiles(server_id);
+
+CREATE TABLE IF NOT EXISTS mcp_effect_profiles (
+    server_id    TEXT    NOT NULL,
+    tool_name    TEXT    NOT NULL,
+    profile_hash TEXT    NOT NULL,
+    profile_json TEXT    NOT NULL,
+    first_seen   TEXT    NOT NULL,
+    last_seen    TEXT    NOT NULL,
+    updated_at   TEXT    NOT NULL,
+    status       TEXT    NOT NULL DEFAULT 'approved',
+    PRIMARY KEY (server_id, tool_name),
+    FOREIGN KEY (server_id) REFERENCES mcp_servers(server_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_effect_profiles_server
+ON mcp_effect_profiles(server_id);
+
 CREATE TABLE IF NOT EXISTS mcp_permission_probes (
     probe_id                   TEXT PRIMARY KEY,
     server_id                  TEXT    NOT NULL,
@@ -1431,6 +1479,48 @@ def _mcp_tool_metadata_row_to_dict(row) -> Dict[str, Any]:
     return d
 
 
+def _mcp_response_profile_row_to_dict(row) -> Dict[str, Any]:
+    d = dict(row)
+    raw = d.get("profile_json")
+    if isinstance(raw, dict):
+        d["profile"] = raw
+    else:
+        try:
+            d["profile"] = json.loads(raw or "{}")
+        except (json.JSONDecodeError, TypeError):
+            d["profile"] = {}
+    d.pop("profile_json", None)
+    return d
+
+
+def _mcp_external_reach_profile_row_to_dict(row) -> Dict[str, Any]:
+    d = dict(row)
+    raw = d.get("profile_json")
+    if isinstance(raw, dict):
+        d["profile"] = raw
+    else:
+        try:
+            d["profile"] = json.loads(raw or "{}")
+        except (json.JSONDecodeError, TypeError):
+            d["profile"] = {}
+    d.pop("profile_json", None)
+    return d
+
+
+def _mcp_effect_profile_row_to_dict(row) -> Dict[str, Any]:
+    d = dict(row)
+    raw = d.get("profile_json")
+    if isinstance(raw, dict):
+        d["profile"] = raw
+    else:
+        try:
+            d["profile"] = json.loads(raw or "{}")
+        except (json.JSONDecodeError, TypeError):
+            d["profile"] = {}
+    d.pop("profile_json", None)
+    return d
+
+
 def _mcp_audit_row_to_dict(row) -> Dict[str, Any]:
     d = dict(row)
     for col in (
@@ -2461,6 +2551,393 @@ def get_tool_surface_snapshot(surface_hash: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+def upsert_mcp_response_profile(
+    server_id: str, tool_name: str, profile: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Store the approved response exposure profile for a server/tool.
+
+    ``profile`` must already be evidence-safe: no raw response bodies or raw
+    values. The response_drift module builds this shape.
+    """
+    profile = dict(profile or {})
+    profile_hash = str(profile.get("profile_hash") or "")
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_lock, get_conn() as conn:
+        existing = conn.execute(
+            """
+            SELECT first_seen FROM mcp_response_profiles
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+        first_seen = row_value(existing, "first_seen", 0) if existing else now
+        if existing:
+            conn.execute(
+                """
+                UPDATE mcp_response_profiles
+                   SET profile_hash = ?,
+                       profile_json = ?,
+                       last_seen = ?,
+                       updated_at = ?,
+                       status = 'approved'
+                 WHERE server_id = ? AND tool_name = ?
+                """,
+                (
+                    profile_hash,
+                    json.dumps(profile, sort_keys=True),
+                    now,
+                    now,
+                    server_id,
+                    tool_name,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO mcp_response_profiles
+                  (server_id, tool_name, profile_hash, profile_json,
+                   first_seen, last_seen, updated_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'approved')
+                """,
+                (
+                    server_id,
+                    tool_name,
+                    profile_hash,
+                    json.dumps(profile, sort_keys=True),
+                    first_seen,
+                    now,
+                    now,
+                ),
+            )
+    return lookup_mcp_response_profile(server_id, tool_name) or {}
+
+
+def lookup_mcp_response_profile(
+    server_id: str, tool_name: str
+) -> Optional[Dict[str, Any]]:
+    """Return the approved response exposure profile for a server/tool."""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_response_profiles
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+    return _mcp_response_profile_row_to_dict(row) if row else None
+
+
+def upsert_mcp_external_reach_profile(
+    server_id: str, tool_name: str, profile: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Store the approved external destination profile for a server/tool.
+
+    ``profile`` must be evidence-safe: URL hosts and email domains are kept,
+    but raw URLs, paths, email local-parts, channels, buckets, and tokens are
+    never stored. The external_reach module builds this shape.
+    """
+    profile = dict(profile or {})
+    profile_hash = str(profile.get("profile_hash") or "")
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_lock, get_conn() as conn:
+        existing = conn.execute(
+            """
+            SELECT first_seen FROM mcp_external_reach_profiles
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+        first_seen = row_value(existing, "first_seen", 0) if existing else now
+        if existing:
+            conn.execute(
+                """
+                UPDATE mcp_external_reach_profiles
+                   SET profile_hash = ?,
+                       profile_json = ?,
+                       last_seen = ?,
+                       updated_at = ?,
+                       status = 'approved'
+                 WHERE server_id = ? AND tool_name = ?
+                """,
+                (
+                    profile_hash,
+                    json.dumps(profile, sort_keys=True),
+                    now,
+                    now,
+                    server_id,
+                    tool_name,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO mcp_external_reach_profiles
+                  (server_id, tool_name, profile_hash, profile_json,
+                   first_seen, last_seen, updated_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'approved')
+                """,
+                (
+                    server_id,
+                    tool_name,
+                    profile_hash,
+                    json.dumps(profile, sort_keys=True),
+                    first_seen,
+                    now,
+                    now,
+                ),
+            )
+    return lookup_mcp_external_reach_profile(server_id, tool_name) or {}
+
+
+def lookup_mcp_external_reach_profile(
+    server_id: str, tool_name: str
+) -> Optional[Dict[str, Any]]:
+    """Return the approved external destination profile for a server/tool."""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_external_reach_profiles
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+    return _mcp_external_reach_profile_row_to_dict(row) if row else None
+
+
+def mark_mcp_tool_external_reach_drift(
+    server_id: str, tool_name: str, finding_types: List[str], reason: str = ""
+) -> Dict[str, Any]:
+    """Quarantine a known tool after critical destination/reach drift."""
+    reason = reason or "External destination drift introduced critical reach expansion."
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_tool_metadata
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": "not_found"}
+
+        current = _mcp_tool_metadata_row_to_dict(row)
+        drift_types = _unique_list(
+            [*(current.get("drift_types") or []), *(finding_types or [])]
+        )
+        drift_reasons = _unique_list([*(current.get("drift_reasons") or []), reason])
+        conn.execute(
+            """
+            UPDATE mcp_tool_metadata
+               SET status = 'quarantined',
+                   drift_severity = 'critical',
+                   drift_action = 'quarantine',
+                   drift_types = ?,
+                   drift_reasons = ?,
+                   last_changed = COALESCE(last_changed, ?)
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (
+                json.dumps(drift_types),
+                json.dumps(drift_reasons),
+                now,
+                server_id,
+                tool_name,
+            ),
+        )
+
+    updated = lookup_mcp_tool_metadata(server_id, tool_name) or {}
+    return {"ok": True, **updated}
+
+
+def upsert_mcp_effect_profile(
+    server_id: str, tool_name: str, profile: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Store the approved effect/outcome profile for a server/tool.
+
+    ``profile`` must be evidence-safe: effect labels and shape only, never raw
+    resource ids, response bodies, tokens, or provider payload values.
+    """
+    profile = dict(profile or {})
+    profile_hash = str(profile.get("profile_hash") or "")
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_lock, get_conn() as conn:
+        existing = conn.execute(
+            """
+            SELECT first_seen FROM mcp_effect_profiles
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+        first_seen = row_value(existing, "first_seen", 0) if existing else now
+        if existing:
+            conn.execute(
+                """
+                UPDATE mcp_effect_profiles
+                   SET profile_hash = ?,
+                       profile_json = ?,
+                       last_seen = ?,
+                       updated_at = ?,
+                       status = 'approved'
+                 WHERE server_id = ? AND tool_name = ?
+                """,
+                (
+                    profile_hash,
+                    json.dumps(profile, sort_keys=True),
+                    now,
+                    now,
+                    server_id,
+                    tool_name,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO mcp_effect_profiles
+                  (server_id, tool_name, profile_hash, profile_json,
+                   first_seen, last_seen, updated_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'approved')
+                """,
+                (
+                    server_id,
+                    tool_name,
+                    profile_hash,
+                    json.dumps(profile, sort_keys=True),
+                    first_seen,
+                    now,
+                    now,
+                ),
+            )
+    return lookup_mcp_effect_profile(server_id, tool_name) or {}
+
+
+def lookup_mcp_effect_profile(
+    server_id: str, tool_name: str
+) -> Optional[Dict[str, Any]]:
+    """Return the approved effect/outcome profile for a server/tool."""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_effect_profiles
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+    return _mcp_effect_profile_row_to_dict(row) if row else None
+
+
+def mark_mcp_tool_effect_drift(
+    server_id: str, tool_name: str, finding_types: List[str], reason: str = ""
+) -> Dict[str, Any]:
+    """Quarantine a known tool after material effect/outcome drift."""
+    reason = reason or "Observed effect drift introduced unexpected side effects."
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_tool_metadata
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": "not_found"}
+
+        current = _mcp_tool_metadata_row_to_dict(row)
+        drift_types = _unique_list(
+            [*(current.get("drift_types") or []), *(finding_types or [])]
+        )
+        drift_reasons = _unique_list([*(current.get("drift_reasons") or []), reason])
+        conn.execute(
+            """
+            UPDATE mcp_tool_metadata
+               SET status = 'quarantined',
+                   drift_severity = ?,
+                   drift_action = 'quarantine',
+                   drift_types = ?,
+                   drift_reasons = ?,
+                   last_changed = COALESCE(last_changed, ?)
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (
+                (
+                    "critical"
+                    if any(
+                        str(t).startswith("effect_destructive")
+                        or str(t).startswith("effect_external")
+                        or str(t).startswith("effect_money")
+                        or str(t).startswith("effect_deploy")
+                        or str(t).startswith("effect_execution")
+                        or str(t).startswith("effect_temporal_external")
+                        or str(t).startswith("effect_temporal_destructive")
+                        or str(t).startswith("effect_temporal_deploy")
+                        or str(t).startswith("effect_temporal_execution")
+                        or str(t).startswith("effect_temporal_money")
+                        or str(t).startswith("readback_")
+                        or str(t) == "silent_side_effect_drift"
+                        or str(t) == "effect_response_contradicted_by_readback"
+                        for t in finding_types or []
+                    )
+                    else "high"
+                ),
+                json.dumps(drift_types),
+                json.dumps(drift_reasons),
+                now,
+                server_id,
+                tool_name,
+            ),
+        )
+
+    updated = lookup_mcp_tool_metadata(server_id, tool_name) or {}
+    return {"ok": True, **updated}
+
+
+def mark_mcp_tool_response_drift(
+    server_id: str, tool_name: str, finding_types: List[str], reason: str = ""
+) -> Dict[str, Any]:
+    """Quarantine a known tool after critical response/data-exposure drift."""
+    reason = reason or "Response exposure drift introduced critical data exposure."
+    now = datetime.now(timezone.utc).isoformat()
+    with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_tool_metadata
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (server_id, tool_name),
+        ).fetchone()
+        if not row:
+            return {"ok": False, "error": "not_found"}
+
+        current = _mcp_tool_metadata_row_to_dict(row)
+        drift_types = _unique_list(
+            [*(current.get("drift_types") or []), *(finding_types or [])]
+        )
+        drift_reasons = _unique_list([*(current.get("drift_reasons") or []), reason])
+        conn.execute(
+            """
+            UPDATE mcp_tool_metadata
+               SET status = 'quarantined',
+                   drift_severity = 'critical',
+                   drift_action = 'quarantine',
+                   drift_types = ?,
+                   drift_reasons = ?,
+                   last_changed = COALESCE(last_changed, ?)
+             WHERE server_id = ? AND tool_name = ?
+            """,
+            (
+                json.dumps(drift_types),
+                json.dumps(drift_reasons),
+                now,
+                server_id,
+                tool_name,
+            ),
+        )
+
+    updated = lookup_mcp_tool_metadata(server_id, tool_name) or {}
+    return {"ok": True, **updated}
+
+
 # ── MCP audit log ─────────────────────────────────────────────────────────────
 
 
@@ -2550,6 +3027,23 @@ def list_mcp_audit_logs(limit: int = 100) -> List[Dict[str, Any]]:
             (limit,),
         ).fetchall()
     return [_mcp_audit_row_to_dict(r) for r in rows]
+
+
+def lookup_latest_mcp_audit_log_by_probe_id(probe_id: str) -> Optional[Dict[str, Any]]:
+    """Return the newest MCP audit event for a manual probe id."""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM mcp_audit_log
+             WHERE probe_id = ?
+             ORDER BY ts DESC, id DESC
+             LIMIT 1
+            """,
+            (probe_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return _mcp_audit_row_to_dict(row)
 
 
 def get_mcp_audit_log(audit_id: int) -> Optional[Dict[str, Any]]:

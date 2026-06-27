@@ -13,6 +13,21 @@ from core.tool_inspector import inspect_tool_call
 from core.tool_metadata import normalize_tool_metadata
 from core import db
 from core.response_scanner import scan_injection, scan_pii_and_volume
+from core.effect_drift import (
+    build_effect_profile,
+    classify_effect_drift,
+    effect_profile_hash,
+)
+from core.external_reach import (
+    build_external_reach_profile,
+    classify_external_reach_drift,
+    external_reach_profile_hash,
+)
+from core.response_drift import (
+    build_response_exposure_profile,
+    classify_response_exposure_drift,
+    response_profile_hash,
+)
 from core.mcp_drift import classify_server_drift
 from core import drift_evidence
 
@@ -725,6 +740,8 @@ async def proxy_mcp_tool_call(
         stored_metadata or {}, runtime_metadata
     )
     drift_context = _stored_tool_drift_context(stored_tool)
+    external_reach_drift = None
+    effect_drift = None
     if drift_context:
         warnings = list(tool_metadata.get("warnings") or [])
         drift_warning = (
@@ -898,6 +915,102 @@ async def proxy_mcp_tool_call(
             "Provenance check failed at tool-call time -- failing open"
         )
 
+    # 4d. Destination-aware external reach drift. This runs before the
+    # upstream call so a tool cannot publish/send/export to a newly observed
+    # external destination before review. Only known discovered tools get
+    # baselined; inferred-only calls still go through the existing policy path.
+    stored_external_reach_profile = None
+    current_external_reach_profile = None
+    if stored_tool is not None:
+        current_external_reach_profile = build_external_reach_profile(arguments or {})
+        stored_external_reach_profile = db.lookup_mcp_external_reach_profile(
+            server_id, tool_name
+        )
+        if stored_external_reach_profile is None:
+            db.upsert_mcp_external_reach_profile(
+                server_id, tool_name, current_external_reach_profile
+            )
+        else:
+            external_reach_drift = classify_external_reach_drift(
+                stored_external_reach_profile.get("profile") or {},
+                current_external_reach_profile,
+            )
+            if not external_reach_drift.get("drift_detected"):
+                external_reach_drift = None
+
+    if external_reach_drift:
+        external_baseline_hash = stored_external_reach_profile.get(
+            "profile_hash"
+        ) or external_reach_profile_hash(
+            stored_external_reach_profile.get("profile") or {}
+        )
+        external_current_hash = external_reach_profile_hash(
+            current_external_reach_profile or {}
+        )
+        external_reason = _external_reach_drift_reason(external_reach_drift)
+        external_action = external_reach_drift.get("action") or "monitor"
+        if external_action == "quarantine":
+            db.mark_mcp_tool_external_reach_drift(
+                server_id,
+                tool_name,
+                external_reach_drift.get("types") or [],
+                external_reason,
+            )
+
+        external_audit = dict(policy_decision.get("audit_context") or {})
+        external_audit.update(
+            {
+                "action": external_action,
+                "matched_rule": "external_reach_drift",
+                "reason": external_reason,
+                "blocked_by": (
+                    "external_reach_drift"
+                    if external_action in {"deny", "quarantine"}
+                    else ""
+                ),
+                "drift_status": "external_reach_drift",
+                "drift_severity": external_reach_drift.get("severity") or "none",
+                "drift_action": external_action,
+                "drift_types": external_reach_drift.get("types") or [],
+                "drift_reasons": external_reach_drift.get("reasons") or [],
+                "drift_baseline_hash": external_baseline_hash,
+                "drift_current_hash": external_current_hash,
+                "argument_keys": [],
+                "scan_time_ms": _elapsed_ms(),
+            }
+        )
+        external_public = _public_external_reach_drift_context(external_reach_drift)
+        if external_action in {"deny", "quarantine"}:
+            db.log_mcp_audit_event(external_audit)
+            return {
+                "ok": False,
+                "error": "external_reach_drift_violation",
+                "message": external_reason,
+                "blocked_before_execution": True,
+                "external_reach_drift": external_public,
+                "drift": drift_context,
+                "policy_decision": policy_decision,
+            }
+
+        policy_decision["action"] = "monitor"
+        policy_decision["matched_rule"] = "external_reach_drift"
+        policy_decision["reason"] = external_reason
+        policy_decision["audit_context"].update(
+            {
+                "decision": "monitor",
+                "matched_rule": "external_reach_drift",
+                "reason": external_reason,
+                "drift_status": "external_reach_drift",
+                "drift_severity": external_reach_drift.get("severity") or "none",
+                "drift_action": external_action,
+                "drift_types": external_reach_drift.get("types") or [],
+                "drift_reasons": external_reach_drift.get("reasons") or [],
+                "drift_baseline_hash": external_baseline_hash,
+                "drift_current_hash": external_current_hash,
+                "argument_keys": [],
+            }
+        )
+
     # 5. Forward to actual MCP server
     try:
         server_url = ensure_safe_outbound_url(server["url"], context="MCP server")
@@ -942,10 +1055,12 @@ async def proxy_mcp_tool_call(
                     "policy_decision": policy_decision,
                 }
 
+            max_response_bytes = key_config.get("max_response_bytes", 50_000)
+            max_array_items = key_config.get("max_array_items", 500)
             pii_result = scan_pii_and_volume(
                 response_text,
-                max_bytes=key_config.get("max_response_bytes", 50_000),
-                max_items=key_config.get("max_array_items", 500),
+                max_bytes=max_response_bytes,
+                max_items=max_array_items,
             )
             if pii_result.is_threat:
                 _log_mcp_policy_audit(
@@ -957,6 +1072,205 @@ async def proxy_mcp_tool_call(
                         "matched_patterns": pii_result.matched_patterns,
                         "redactions": pii_result.redactions,
                     },
+                )
+
+            stored_effect_profile = None
+            current_effect_profile = None
+            # Effect drift is a post-execution observation. It cannot undo the
+            # first observed side effect, so high/critical findings quarantine
+            # future use and block the drifted response from continuing.
+            if stored_tool is not None:
+                current_effect_profile = build_effect_profile(result_payload)
+                stored_effect_profile = db.lookup_mcp_effect_profile(
+                    server_id, tool_name
+                )
+                if stored_effect_profile is None:
+                    db.upsert_mcp_effect_profile(
+                        server_id, tool_name, current_effect_profile
+                    )
+                else:
+                    effect_drift = classify_effect_drift(
+                        stored_effect_profile.get("profile") or {},
+                        current_effect_profile,
+                    )
+                    if not effect_drift.get("drift_detected"):
+                        effect_drift = None
+
+            if effect_drift:
+                effect_baseline_hash = stored_effect_profile.get(
+                    "profile_hash"
+                ) or effect_profile_hash(stored_effect_profile.get("profile") or {})
+                effect_current_hash = effect_profile_hash(current_effect_profile or {})
+                effect_reason = _effect_drift_reason(effect_drift)
+                effect_action = effect_drift.get("action") or "monitor"
+                if effect_action == "quarantine":
+                    db.mark_mcp_tool_effect_drift(
+                        server_id,
+                        tool_name,
+                        effect_drift.get("types") or [],
+                        effect_reason,
+                    )
+
+                effect_audit = dict(policy_decision.get("audit_context") or {})
+                effect_audit.update(
+                    {
+                        "action": effect_action,
+                        "matched_rule": "effect_drift",
+                        "reason": effect_reason,
+                        "blocked_by": (
+                            "effect_drift" if effect_action == "quarantine" else ""
+                        ),
+                        "drift_status": "effect_drift",
+                        "drift_severity": effect_drift.get("severity") or "none",
+                        "drift_action": effect_action,
+                        "drift_types": effect_drift.get("types") or [],
+                        "drift_reasons": effect_drift.get("reasons") or [],
+                        "drift_baseline_hash": effect_baseline_hash,
+                        "drift_current_hash": effect_current_hash,
+                        "argument_keys": [],
+                        "scan_time_ms": _elapsed_ms(),
+                    }
+                )
+                effect_public = _public_effect_drift_context(effect_drift)
+                if effect_action == "quarantine":
+                    db.log_mcp_audit_event(effect_audit)
+                    return {
+                        "ok": False,
+                        "error": "effect_drift_violation",
+                        "message": effect_reason,
+                        "blocked_response": True,
+                        "effect_already_observed": True,
+                        "effect_drift": effect_public,
+                        "external_reach_drift": (
+                            _public_external_reach_drift_context(external_reach_drift)
+                            if external_reach_drift
+                            else None
+                        ),
+                        "effect_drift": (
+                            _public_effect_drift_context(effect_drift)
+                            if effect_drift
+                            else None
+                        ),
+                        "drift": drift_context,
+                        "policy_decision": policy_decision,
+                    }
+
+                policy_decision["action"] = "monitor"
+                policy_decision["matched_rule"] = "effect_drift"
+                policy_decision["reason"] = effect_reason
+                policy_decision["audit_context"].update(
+                    {
+                        "decision": "monitor",
+                        "matched_rule": "effect_drift",
+                        "reason": effect_reason,
+                        "drift_status": "effect_drift",
+                        "drift_severity": effect_drift.get("severity") or "none",
+                        "drift_action": effect_action,
+                        "drift_types": effect_drift.get("types") or [],
+                        "drift_reasons": effect_drift.get("reasons") or [],
+                        "drift_baseline_hash": effect_baseline_hash,
+                        "drift_current_hash": effect_current_hash,
+                        "argument_keys": [],
+                    }
+                )
+
+            response_drift = None
+            stored_response_profile = None
+            response_profile = None
+            # Response drift is a baseline comparison. Only create/enforce that
+            # baseline for known tools discovered into the metadata registry;
+            # inferred-only calls still get one-off response scanning/redaction.
+            if stored_tool is not None:
+                response_profile = build_response_exposure_profile(
+                    response_text,
+                    max_bytes=max_response_bytes,
+                    max_items=max_array_items,
+                )
+                stored_response_profile = db.lookup_mcp_response_profile(
+                    server_id, tool_name
+                )
+                if stored_response_profile is None:
+                    db.upsert_mcp_response_profile(
+                        server_id, tool_name, response_profile
+                    )
+                else:
+                    response_drift = classify_response_exposure_drift(
+                        stored_response_profile.get("profile") or {},
+                        response_profile,
+                    )
+                    if not response_drift.get("drift_detected"):
+                        response_drift = None
+
+            if response_drift:
+                response_baseline_hash = stored_response_profile.get(
+                    "profile_hash"
+                ) or response_profile_hash(stored_response_profile.get("profile") or {})
+                response_current_hash = response_profile_hash(response_profile)
+                response_reason = _response_drift_reason(response_drift)
+                response_action = response_drift.get("action") or "monitor"
+                if response_action == "quarantine":
+                    db.mark_mcp_tool_response_drift(
+                        server_id,
+                        tool_name,
+                        response_drift.get("types") or [],
+                        response_reason,
+                    )
+
+                response_audit = dict(policy_decision.get("audit_context") or {})
+                response_audit.update(
+                    {
+                        "action": response_action,
+                        "matched_rule": "response_exposure_drift",
+                        "reason": response_reason,
+                        "blocked_by": (
+                            "response_drift"
+                            if response_action in {"deny", "quarantine"}
+                            else ""
+                        ),
+                        "drift_status": "response_drift",
+                        "drift_severity": response_drift.get("severity") or "none",
+                        "drift_action": response_action,
+                        "drift_types": response_drift.get("types") or [],
+                        "drift_reasons": response_drift.get("reasons") or [],
+                        "drift_baseline_hash": response_baseline_hash,
+                        "drift_current_hash": response_current_hash,
+                        "scan_time_ms": _elapsed_ms(),
+                    }
+                )
+                response_public = _public_response_drift_context(response_drift)
+                if response_action in {"deny", "quarantine"}:
+                    db.log_mcp_audit_event(response_audit)
+                    return {
+                        "ok": False,
+                        "error": "response_drift_violation",
+                        "message": response_reason,
+                        "blocked_response": True,
+                        "response_drift": response_public,
+                        "external_reach_drift": (
+                            _public_external_reach_drift_context(external_reach_drift)
+                            if external_reach_drift
+                            else None
+                        ),
+                        "drift": drift_context,
+                        "policy_decision": policy_decision,
+                    }
+
+                policy_decision["action"] = "monitor"
+                policy_decision["matched_rule"] = "response_exposure_drift"
+                policy_decision["reason"] = response_reason
+                policy_decision["audit_context"].update(
+                    {
+                        "decision": "monitor",
+                        "matched_rule": "response_exposure_drift",
+                        "reason": response_reason,
+                        "drift_status": "response_drift",
+                        "drift_severity": response_drift.get("severity") or "none",
+                        "drift_action": response_action,
+                        "drift_types": response_drift.get("types") or [],
+                        "drift_reasons": response_drift.get("reasons") or [],
+                        "drift_baseline_hash": response_baseline_hash,
+                        "drift_current_hash": response_current_hash,
+                    }
                 )
 
             if pii_result.is_threat and pii_result.sanitized_content is not None:
@@ -976,6 +1290,19 @@ async def proxy_mcp_tool_call(
                 ),
                 "redactions": pii_result.redactions,
                 "drift": drift_context,
+                "response_drift": (
+                    _public_response_drift_context(response_drift)
+                    if response_drift
+                    else None
+                ),
+                "external_reach_drift": (
+                    _public_external_reach_drift_context(external_reach_drift)
+                    if external_reach_drift
+                    else None
+                ),
+                "effect_drift": (
+                    _public_effect_drift_context(effect_drift) if effect_drift else None
+                ),
                 "policy_decision": policy_decision,
             }
 
@@ -1164,6 +1491,78 @@ def _drift_reason(drift: Dict[str, Any], fallback: str) -> str:
     if not reasons:
         return fallback
     return f"{fallback} " + " ".join(str(reason) for reason in reasons[:3])
+
+
+def _effect_drift_reason(drift: Dict[str, Any]) -> str:
+    reasons = drift.get("reasons") or []
+    if not reasons:
+        return "Tool observed effect profile drifted from the approved baseline."
+    return (
+        "Tool observed effect profile drifted from the approved baseline. "
+        + " ".join(str(reason) for reason in reasons[:3])
+    )
+
+
+def _public_effect_drift_context(
+    drift: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not drift:
+        return None
+    return {
+        "detected": bool(drift.get("drift_detected")),
+        "severity": drift.get("severity") or "none",
+        "action": drift.get("action") or "allow",
+        "types": list(drift.get("types") or []),
+        "reasons": list(drift.get("reasons") or []),
+    }
+
+
+def _external_reach_drift_reason(drift: Dict[str, Any]) -> str:
+    reasons = drift.get("reasons") or []
+    if not reasons:
+        return "Tool external destination profile drifted from the approved baseline."
+    return (
+        "Tool external destination profile drifted from the approved baseline. "
+        + " ".join(str(reason) for reason in reasons[:3])
+    )
+
+
+def _public_external_reach_drift_context(
+    drift: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not drift:
+        return None
+    return {
+        "detected": bool(drift.get("drift_detected")),
+        "severity": drift.get("severity") or "none",
+        "action": drift.get("action") or "allow",
+        "types": list(drift.get("types") or []),
+        "reasons": list(drift.get("reasons") or []),
+    }
+
+
+def _response_drift_reason(drift: Dict[str, Any]) -> str:
+    reasons = drift.get("reasons") or []
+    if not reasons:
+        return "Tool response exposure profile drifted from the approved baseline."
+    return (
+        "Tool response exposure profile drifted from the approved baseline. "
+        + " ".join(str(reason) for reason in reasons[:3])
+    )
+
+
+def _public_response_drift_context(
+    drift: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not drift:
+        return None
+    return {
+        "detected": bool(drift.get("drift_detected")),
+        "severity": drift.get("severity") or "none",
+        "action": drift.get("action") or "allow",
+        "types": list(drift.get("types") or []),
+        "reasons": list(drift.get("reasons") or []),
+    }
 
 
 def _check_param_bounds(

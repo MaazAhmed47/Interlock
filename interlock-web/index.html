@@ -11,39 +11,46 @@
 <meta name="theme-color" content="#000000" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
+@font-face{font-family:'Mona Sans';src:url('https://cdn.jsdelivr.net/gh/github/mona-sans@main/fonts/variable/MonaSans%5Bwdth,wght%5D.ttf') format('truetype');font-weight:200 900;font-stretch:75% 125%;font-display:swap;font-synthesis:none}
 
 :root{
   --bg:#000;
-  --surface:#141414;
-  --surface-2:#1a1a1a;
-  --panel:#141414;
-  --line:#292929;
-  --line-soft:#1f1f1f;
-  --stroke-hover:#3d3d3d;
+  --surface:#0d1117;
+  --surface-2:#151b23;
+  --panel:#0b0f19;
+  --line:rgba(255,255,255,.13);
+  --line-soft:rgba(255,255,255,.075);
+  --stroke-hover:rgba(139,92,246,.42);
   --ink:#ffffff;
-  --ink-dim:#cccccc;
-  --ink-faint:#777777;
-  --accent:#ffffff;
-  --accent-ink:#ffffff;
-  --accent-dim:rgba(255,255,255,.08);
-  --cta-bg:#ffffff;
-  --cta-hover:#ebebeb;
-  --orange:#ff8800;
-  --orange-dim:rgba(255,136,0,.12);
-  --orange-line:rgba(255,136,0,.5);
-  --red:#eb361c;
-  --red-dim:rgba(235,54,28,.12);
-  --red-line:rgba(235,54,28,.42);
-  --green:#49a147;
-  --green-dim:rgba(73,161,71,.13);
-  --green-line:rgba(73,161,71,.4);
-  --sans:'IBM Plex Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
-  --body:'IBM Plex Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
+  --ink-dim:#dbeafe;
+  --ink-faint:#8b949e;
+  /* GitHub-homepage inspired: white hero, dark navy panels, blue/purple energy */
+  --blue:#4493f8;
+  --blue-bright:#79c0ff;
+  --purple:#a371f7;
+  --purple-deep:#6e40c9;
+  --accent:#8b5cf6;
+  --accent-ink:#d8b4fe;
+  --accent-dim:rgba(139,92,246,.14);
+  --cta-grad:linear-gradient(180deg,#ffffff,#dbeafe);
+  --cta-hover:linear-gradient(180deg,#ffffff,#f6f8fa);
+  --orange:var(--blue-bright);
+  --orange-dim:rgba(68,147,248,.13);
+  --orange-line:rgba(121,192,255,.44);
+  --red:#ff7b72;
+  --red-dim:rgba(248,81,73,.13);
+  --red-line:rgba(248,81,73,.44);
+  --green:#3fb950;
+  --green-dim:rgba(63,185,80,.13);
+  --green-line:rgba(63,185,80,.38);
+  --display:'Mona Sans','Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
+  --sans:'Mona Sans','Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
+  --body:'Mona Sans','Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
   --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
-  --maxw:1140px;
+  --maxw:1180px;
 }
 
 html{scroll-behavior:smooth;overflow-x:hidden}
@@ -52,6 +59,25 @@ body{
   font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
   overflow-x:hidden;
 }
+body::before{
+  content:"";position:fixed;inset:0;z-index:-3;pointer-events:none;
+  background:
+    linear-gradient(rgba(255,255,255,.026) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.026) 1px,transparent 1px);
+  background-size:72px 72px;
+  mask-image:linear-gradient(to bottom,rgba(0,0,0,.78),rgba(0,0,0,.3) 44%,transparent 88%);
+}
+body::after{
+  content:"";position:fixed;inset:-16%;z-index:-2;pointer-events:none;
+  background:
+    radial-gradient(70% 48% at 50% -8%,rgba(121,192,255,.24),transparent 62%),
+    radial-gradient(48% 38% at 78% 4%,rgba(163,113,247,.24),transparent 64%),
+    radial-gradient(42% 38% at 18% 7%,rgba(68,147,248,.18),transparent 62%),
+    linear-gradient(180deg,rgba(9,14,28,.2),transparent 48%);
+  opacity:.9;
+  animation:heroAtmosphere 18s cubic-bezier(.16,1,.3,1) infinite alternate;
+}
+@keyframes heroAtmosphere{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(-1.5%,1%,0) scale(1.04)}}
 img,svg{display:block;max-width:100%}
 a{color:inherit;text-decoration:none}
 [hidden]{display:none!important}
@@ -60,65 +86,72 @@ a{color:inherit;text-decoration:none}
 
 /* ── layout ── */
 .wrap{max-width:var(--maxw);min-width:0;margin:0 auto;padding:0 24px}
-.section{padding:96px 0;border-top:1px solid var(--line-soft)}
+.section{padding:104px 0;border-top:1px solid var(--line-soft)}
 section[id]{scroll-margin-top:80px}
 .eyebrow{font-family:var(--mono);font-size:13px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-dim);display:inline-flex;align-items:center;gap:9px;margin-bottom:18px}
 .eyebrow::before{content:"";width:6px;height:6px;border-radius:1px;background:var(--ink-faint)}
-.s-title{font-family:var(--sans);font-weight:600;letter-spacing:-.02em;line-height:1.12;font-size:clamp(25px,3.2vw,34px);color:#fff}
+.s-title{font-family:var(--display);font-weight:600;letter-spacing:0;line-height:1.12;font-size:clamp(26px,3.3vw,36px);color:#fff}
 .s-lead{color:var(--ink-dim);font-size:clamp(16px,1.4vw,17.5px);line-height:1.6;max-width:64ch;margin-top:14px}
 .mono{font-family:var(--mono)}
 
 /* ── buttons ── */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;font-family:var(--sans);font-size:14px;font-weight:500;letter-spacing:.01em;padding:11px 20px;border-radius:8px;cursor:pointer;border:1px solid transparent;transition:background .18s,border-color .18s,color .18s,transform .12s}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;font-family:var(--sans);font-size:14px;font-weight:600;letter-spacing:0;padding:11px 20px;border-radius:8px;cursor:pointer;border:1px solid transparent;transition:background .18s,border-color .18s,color .18s,transform .12s,box-shadow .18s}
 .btn:active{transform:translateY(1px)}
-.btn-primary{background:var(--cta-bg);color:#000;border-color:var(--cta-bg)}
-.btn-primary:hover{background:var(--cta-hover);border-color:var(--cta-hover)}
-.btn-ghost{background:transparent;color:var(--ink);border-color:var(--line)}
-.btn-ghost:hover{border-color:var(--stroke-hover);background:var(--surface)}
+.btn-primary{background:var(--cta-grad);color:#0d1117;border-color:rgba(255,255,255,.88);box-shadow:0 8px 28px -14px rgba(121,192,255,.55),inset 0 1px 0 rgba(255,255,255,.88)}
+.btn-primary:hover{background:var(--cta-hover);border-color:#fff;box-shadow:0 14px 36px -14px rgba(121,192,255,.75),0 0 0 4px rgba(121,192,255,.14),inset 0 1px 0 rgba(255,255,255,.92)}
+.btn-ghost{background:rgba(255,255,255,.08);color:var(--ink);border-color:rgba(255,255,255,.16)}
+.btn-ghost:hover{border-color:rgba(121,192,255,.42);background:rgba(121,192,255,.1);box-shadow:0 0 0 1px rgba(121,192,255,.08)}
 .btn-link{background:transparent;color:var(--ink-dim);padding:11px 6px;border-color:transparent}
 .btn-link:hover{color:var(--ink)}
 .btn-sm{padding:9px 15px;font-size:12.5px}
 .btn .star{font-family:var(--mono);font-size:12px;color:var(--ink-faint)}
 
 /* ── nav ── */
-.nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:22px;height:60px;padding:0 24px;background:rgba(0,0,0,.72);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
-.brand{display:inline-flex;align-items:center;gap:10px;font-family:var(--sans);font-weight:600;font-size:16.5px;letter-spacing:-.01em;color:#fff}
-.brand svg{color:var(--ink)}
+.nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:22px;height:64px;padding:0 28px;background:rgba(0,0,0,.72);backdrop-filter:blur(16px) saturate(140%);-webkit-backdrop-filter:blur(16px) saturate(140%);border-bottom:1px solid var(--line)}
+.brand{display:inline-flex;align-items:center;gap:10px;font-family:var(--display);font-weight:650;font-size:16.5px;letter-spacing:0;color:#fff}
+.brand svg{color:#fff;filter:drop-shadow(0 0 10px rgba(121,192,255,.35))}
 .nav-links{display:flex;gap:24px;margin-left:auto;list-style:none}
 .nav-links a{font-size:13.5px;color:var(--ink-dim);transition:color .18s}
 .nav-links a:hover{color:var(--ink)}
 .nav-actions{display:flex;align-items:center;gap:10px;margin-left:22px}
 
 /* ── hero ── */
-.hero{min-height:calc(100vh - 60px);min-height:calc(100svh - 60px);display:flex;flex-direction:column;justify-content:center;padding:clamp(16px,2vw,24px) 0;border-top:none}
-.hero-grid{display:grid;grid-template-columns:1.5fr 1fr;gap:clamp(36px,5vw,60px);align-items:center;min-width:0;max-width:100%}
+.hero{min-height:calc(100vh - 64px);min-height:calc(100svh - 64px);display:flex;flex-direction:column;justify-content:center;text-align:center;padding:96px 0 58px;border-top:none;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;left:50%;top:92px;width:min(980px,92vw);height:360px;transform:translateX(-50%);pointer-events:none;background:radial-gradient(closest-side at 50% 42%,rgba(255,255,255,.16),transparent 58%),linear-gradient(110deg,transparent 12%,rgba(68,147,248,.18) 34%,rgba(163,113,247,.22) 50%,rgba(68,147,248,.16) 66%,transparent 88%);filter:blur(24px);opacity:.86;animation:heroBeam 8s cubic-bezier(.16,1,.3,1) infinite alternate}
+.hero::after{content:"";position:absolute;left:50%;top:132px;width:min(760px,84vw);height:1px;transform:translateX(-50%);pointer-events:none;background:linear-gradient(90deg,transparent,rgba(121,192,255,.0),rgba(121,192,255,.85),rgba(163,113,247,.9),rgba(121,192,255,.0),transparent);box-shadow:0 0 42px rgba(121,192,255,.45);animation:heroLine 5.8s ease-in-out infinite}
+@keyframes heroBeam{0%{opacity:.62;transform:translateX(-50%) translateY(0) scale(.98)}100%{opacity:.96;transform:translateX(-50%) translateY(12px) scale(1.04)}}
+@keyframes heroLine{0%,100%{opacity:.18;filter:blur(0)}50%{opacity:.72;filter:blur(.3px)}}
+.hero-grid{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:48px;min-width:0;max-width:100%}
 .hero-grid>*,
 .hero-content{min-width:0;max-width:100%}
-.hero-label{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:13px;font-weight:500;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-dim);margin-top:18px}
-.hero-label::before{content:"";width:7px;height:7px;border-radius:2px;background:var(--ink-faint)}
-.hero h1{font-family:var(--sans);font-weight:600;letter-spacing:-.035em;font-size:clamp(48px,5.6vw,80px);line-height:.98;max-width:13ch;color:#fff}
-.hero-problem{color:var(--ink);font-size:clamp(18px,1.35vw,20px);line-height:1.55;max-width:58ch;margin-bottom:18px;overflow-wrap:break-word}
-.hero-sub{color:var(--ink-dim);font-size:clamp(19px,1.4vw,21px);line-height:1.55;max-width:50ch;margin-top:18px;overflow-wrap:break-word}
-.hero-cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}
+.hero-content{width:100%;max-width:924px;margin:0 auto;text-align:center}
+.hero-label{display:none}
+.hero h1{font-family:var(--display);font-weight:425;font-size:72px;line-height:1.08;letter-spacing:0;max-width:924px;margin:0 auto;color:#fff;text-wrap:balance;font-stretch:96%;text-shadow:0 0 34px rgba(121,192,255,.14)}
+.hero h1 .grad{background:none;-webkit-background-clip:initial;background-clip:initial;color:inherit;text-shadow:none}
+.hero-problem{color:var(--ink);font-size:20px;line-height:1.55;max-width:780px;margin:24px auto 0;overflow-wrap:break-word;text-wrap:pretty}
+.hero-sub{color:var(--ink-dim);font-size:18px;line-height:1.62;max-width:730px;margin:15px auto 0;overflow-wrap:break-word;text-wrap:pretty}
+.hero-cta{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:28px}
 .hero-cta .btn{font-size:15px;padding:13px 22px}
-.hero-links{display:flex;flex-wrap:wrap;gap:22px;margin-top:14px;font-family:var(--mono);font-size:13.5px;letter-spacing:.02em}
+.hero-links{display:flex;flex-wrap:wrap;justify-content:center;gap:22px;margin-top:15px;font-family:var(--mono);font-size:13.5px;letter-spacing:.02em}
 .hero-links a{color:var(--ink-dim);transition:color .18s}
 .hero-links a:hover{color:var(--ink)}
-.trust-row{display:flex;flex-wrap:wrap;gap:9px 20px;margin-top:22px;font-family:var(--mono);font-size:13px;letter-spacing:.03em;color:var(--ink-dim)}
+.trust-row{display:flex;flex-wrap:wrap;justify-content:center;gap:9px 20px;margin-top:25px;font-family:var(--mono);font-size:12.5px;letter-spacing:.02em;color:var(--ink-dim)}
 .trust-row span{display:inline-flex;align-items:center;gap:8px}
-.trust-row span::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--ink-faint)}
+.trust-row span::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--blue-bright)}
+.hero .runtime-console{width:min(100%,980px);margin:0 auto;text-align:left}
+@media (min-width:1200px){.hero h1{font-size:80px}}
 
 /* ── hero runtime diagram ── */
 .hdiag{font-family:var(--mono);border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden;box-shadow:0 40px 90px -54px rgba(0,0,0,.95);min-width:0;max-width:100%}
 .hd-bar{display:flex;align-items:center;gap:9px;padding:12px 15px;border-bottom:1px solid var(--line);background:var(--panel);font-size:13px;color:var(--ink-dim)}
 .hd-bar .dots{display:flex;gap:6px}
-.hd-bar .dots i{width:9px;height:9px;border-radius:50%;background:#262b36;display:block}
+.hd-bar .dots i{width:9px;height:9px;border-radius:50%;background:#262c28;display:block}
 .hd-bar .hd-title{letter-spacing:.04em}
 .hd-bar .hd-tag{margin-left:auto;color:var(--ink-dim)}
 .hd-pipe{display:flex;align-items:stretch;gap:9px;padding:18px 16px;border-bottom:1px solid var(--line-soft)}
 .hd-pnode{flex:1 1 0;min-width:0;text-align:center;padding:12px 6px;border:1px solid var(--line);border-radius:9px;background:var(--bg);font-size:13.5px;color:var(--ink-dim)}
 .hd-pnode .sub{display:block;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);margin-top:5px}
-.hd-pnode.boundary{border-color:var(--orange-line);background:var(--orange-dim);color:#fff;box-shadow:0 0 0 1px rgba(255,136,0,.18)}
+.hd-pnode.boundary{border-color:var(--orange-line);background:var(--orange-dim);color:#fff;box-shadow:0 0 0 1px rgba(121,192,255,.2)}
 .hd-pnode.boundary .sub{color:var(--orange)}
 .hd-arrow{flex:none;align-self:center;color:var(--ink-faint);font-size:15px}
 .hd-arrow.held{color:var(--red)}
@@ -132,7 +165,7 @@ section[id]{scroll-margin-top:80px}
 .hd-chip.ok{color:var(--green);background:var(--green-dim);border:1px solid var(--green-line)}
 .hd-foot{display:flex;align-items:center;gap:10px;padding:13px 16px;border-top:1px solid var(--line-soft);background:var(--red-dim);font-size:13.5px;color:var(--ink-dim)}
 .hd-foot .pulse{flex:none;width:8px;height:8px;border-radius:50%;background:var(--red);animation:hdpulse 2.4s ease-in-out infinite}
-@keyframes hdpulse{0%,100%{opacity:.5;box-shadow:0 0 0 0 rgba(235,54,28,.4)}50%{opacity:1;box-shadow:0 0 0 5px rgba(235,54,28,0)}}
+@keyframes hdpulse{0%,100%{opacity:.5;box-shadow:0 0 0 0 rgba(251,77,107,.4)}50%{opacity:1;box-shadow:0 0 0 5px rgba(251,77,107,0)}}
 
 /* ── hero diagram: live drift-detection sequence (~5.5s loop) ── */
 .hd-pnode.dest .sub{color:var(--red);animation:dgHeld 5.5s ease-in-out infinite}
@@ -144,21 +177,44 @@ section[id]{scroll-margin-top:80px}
 .hd-chip.deny{animation:proofPulseRed 2.8s ease-in-out infinite}
 .hd-chip.ok{animation:proofPulseGreen 3.2s ease-in-out infinite}
 .hd-foot{animation:dgFoot 5.5s ease-in-out infinite}
-@keyframes dgPulse{0%,100%{box-shadow:0 0 0 1px rgba(255,136,0,.18)}50%{box-shadow:0 0 0 1px rgba(255,136,0,.5),0 0 16px -4px rgba(255,136,0,.35)}}
+@keyframes dgPulse{0%,100%{box-shadow:0 0 0 1px rgba(121,192,255,.2)}50%{box-shadow:0 0 0 1px rgba(163,113,247,.48),0 0 16px -4px rgba(68,147,248,.3)}}
 @keyframes dgArrowA{0%,4%{color:var(--ink-faint)}12%,26%{color:#fff}34%,100%{color:var(--ink-faint)}}
 @keyframes dgArrowH{0%,50%{color:var(--ink-faint)}60%,100%{color:var(--red)}}
 @keyframes dgHeld{0%,50%{color:var(--ink-faint)}60%,100%{color:var(--red)}}
 @keyframes dgCur{0%,8%{background:transparent}15%,27%{background:rgba(255,255,255,.07)}34%,100%{background:transparent}}
-@keyframes dgDrift{0%,27%{background:transparent}34%,48%{background:rgba(235,54,28,.12)}56%,100%{background:transparent}}
-@keyframes proofPulseRed{0%,100%{box-shadow:0 0 0 0 rgba(235,54,28,0)}50%{box-shadow:0 0 0 3px rgba(235,54,28,.18)}}
-@keyframes proofPulseGreen{0%,100%{box-shadow:0 0 0 0 rgba(73,161,71,0)}50%{box-shadow:0 0 0 3px rgba(73,161,71,.16)}}
+@keyframes dgDrift{0%,27%{background:transparent}34%,48%{background:rgba(251,77,107,.12)}56%,100%{background:transparent}}
+@keyframes proofPulseRed{0%,100%{box-shadow:0 0 0 0 rgba(251,77,107,0)}50%{box-shadow:0 0 0 3px rgba(251,77,107,.18)}}
+@keyframes proofPulseGreen{0%,100%{box-shadow:0 0 0 0 rgba(68,147,248,0)}50%{box-shadow:0 0 0 3px rgba(51,214,160,.16)}}
 @keyframes dgFoot{0%,52%{opacity:0}62%,92%{opacity:1}100%{opacity:0}}
+
+/* ── E2B-like runtime trace console ── */
+.runtime-console{position:relative;border:1px solid rgba(255,255,255,.14);border-radius:18px;background:linear-gradient(180deg,#111827,#060b16 54%,#02040a);overflow:hidden;box-shadow:0 48px 150px -70px rgba(68,147,248,.56),0 34px 90px -58px rgba(0,0,0,.96),inset 0 1px 0 rgba(255,255,255,.1);min-width:0;isolation:isolate}
+.runtime-console::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(121,192,255,.15),rgba(163,113,247,.12),transparent);transform:translateX(-120%);animation:traceSweep 6.4s ease-in-out infinite;pointer-events:none;z-index:1}
+.runtime-console::after{content:"";position:absolute;inset:0;background:linear-gradient(rgba(255,255,255,.022) 1px,transparent 1px);background-size:100% 36px;opacity:.65;pointer-events:none}
+.rc-top{position:relative;z-index:2;display:flex;align-items:center;gap:10px;padding:13px 15px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11.5px;color:var(--ink-faint);background:rgba(0,0,0,.22)}
+.rc-dots{display:flex;gap:6px}.rc-dots i{width:9px;height:9px;border-radius:50%;background:#30363d;display:block}.rc-dots i:nth-child(2){background:var(--blue);box-shadow:0 0 18px rgba(68,147,248,.55)}.rc-dots i:nth-child(3){background:var(--purple);box-shadow:0 0 18px rgba(163,113,247,.55)}
+.rc-title{color:var(--ink-dim);letter-spacing:.04em}.rc-mode{margin-left:auto;color:var(--orange);letter-spacing:.08em;text-transform:uppercase}
+.rc-main{position:relative;z-index:2;padding:18px}
+.rc-rail{display:grid;grid-template-columns:1fr 36px 1.1fr 36px 1fr;align-items:center;gap:0;margin-bottom:16px}
+.rc-node{min-width:0;border:1px solid var(--line);border-radius:12px;background:#0d1117;padding:14px 12px;text-align:center}
+.rc-node strong{display:block;font-size:14px;font-weight:600;color:#fff;letter-spacing:0}.rc-node span{display:block;margin-top:3px;font-family:var(--mono);font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-faint)}
+.rc-node.active{border-color:rgba(121,192,255,.46);box-shadow:0 0 0 1px rgba(121,192,255,.22),0 0 38px -12px rgba(163,113,247,.62);background:linear-gradient(180deg,rgba(68,147,248,.13),rgba(163,113,247,.08),#0d1117)}
+.rc-arrow{height:1px;background:linear-gradient(90deg,var(--line),var(--orange));position:relative}.rc-arrow::after{content:"";position:absolute;right:-1px;top:-4px;width:8px;height:8px;border-top:1px solid var(--orange);border-right:1px solid var(--orange);transform:rotate(45deg)}.rc-arrow.stop{background:linear-gradient(90deg,var(--line),var(--red))}.rc-arrow.stop::after{border-color:var(--red)}
+.rc-status{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}.rc-stat{border:1px solid var(--line-soft);border-radius:10px;background:rgba(255,255,255,.025);padding:11px 12px}.rc-stat span{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:5px}.rc-stat strong{font-family:var(--mono);font-size:13px;color:#fff}.rc-stat.hot{border-color:var(--orange-line);background:var(--orange-dim)}.rc-stat.hot strong{color:var(--orange)}
+.rc-log{border:1px solid var(--line);border-radius:12px;background:#02040a;overflow:hidden;font-family:var(--mono);font-size:12px}.rc-line{display:grid;grid-template-columns:72px minmax(0,1fr) auto;gap:12px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line-soft);color:var(--ink-dim)}.rc-line:last-child{border-bottom:0}.rc-line .time{color:var(--ink-faint)}.rc-line .event{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rc-pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;border:1px solid var(--line);padding:3px 8px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-dim)}.rc-pill.allow{color:var(--green);border-color:var(--green-line);background:var(--green-dim)}.rc-pill.hold{color:var(--red);border-color:var(--red-line);background:var(--red-dim)}.rc-line.drift{animation:traceHot 4.8s ease-in-out infinite}.rc-line.drift .event{color:#fff}.rc-receipt{display:flex;align-items:center;gap:9px;margin-top:12px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.025);padding:12px 13px;font-family:var(--mono);font-size:11.5px;color:var(--ink-dim)}.rc-receipt b{color:#fff;font-weight:600}.rc-receipt .seal{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 20px rgba(121,192,255,.55);animation:sealPulse 3s ease-in-out infinite}
+@keyframes sealPulse{0%,100%{box-shadow:0 0 0 0 rgba(121,192,255,.5)}50%{box-shadow:0 0 0 6px rgba(68,147,248,0)}}
+@keyframes traceSweep{0%,22%{transform:translateX(-120%);opacity:0}34%,54%{opacity:1}70%,100%{transform:translateX(120%);opacity:0}}
+@keyframes traceHot{0%,100%{background:transparent}45%,62%{background:rgba(251,77,107,.12)}}
+
+/* ── behavioral drift proof ── */
+.behavior-grid{display:grid;grid-template-columns:.92fr 1.08fr;gap:34px;align-items:start;margin-top:38px}.behavior-panel{border:1px solid rgba(255,255,255,.13);border-radius:16px;background:linear-gradient(180deg,#111827,#060b16);overflow:hidden;box-shadow:0 28px 80px -54px rgba(68,147,248,.45)}.behavior-top{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:15px 17px;border-bottom:1px solid var(--line);font-family:var(--mono);font-size:11.5px;color:var(--ink-faint)}.behavior-top b{font-family:var(--sans);font-size:14px;color:#fff}.behavior-top span{color:var(--orange);text-transform:uppercase;letter-spacing:.08em}.behavior-flow{padding:18px}.same-surface{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}.same-surface div{border:1px solid var(--line-soft);border-radius:9px;background:#060907;padding:10px}.same-surface span{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:4px}.same-surface strong{font-size:13px;color:#fff}.perm-transition{display:grid;grid-template-columns:1fr 34px 1fr;gap:0;align-items:center;margin-top:10px}.perm-state{border:1px solid var(--line);border-radius:12px;background:#000;padding:15px}.perm-state span{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px}.perm-state strong{font-family:var(--mono);font-size:22px;color:#fff}.perm-state.denied strong{color:var(--ink-dim)}.perm-state.allowed{border-color:var(--red-line);background:var(--red-dim);animation:allowedPulse 3.2s ease-in-out infinite}.perm-state.allowed strong{color:var(--red)}
+@keyframes allowedPulse{0%,100%{box-shadow:0 0 0 1px rgba(251,77,107,.2)}50%{box-shadow:0 0 0 1px rgba(251,77,107,.5),0 0 24px -4px rgba(251,77,107,.45)}}.perm-arrow{height:1px;background:var(--red);position:relative}.perm-arrow::after{content:"";position:absolute;right:-1px;top:-4px;width:8px;height:8px;border-top:1px solid var(--red);border-right:1px solid var(--red);transform:rotate(45deg)}.behavior-verdict{margin-top:14px;border:1px solid var(--red-line);border-radius:12px;background:var(--red-dim);padding:13px 14px;font-family:var(--mono);font-size:12px;color:var(--ink-dim);box-shadow:inset 0 0 26px -10px rgba(251,77,107,.45)}.behavior-verdict b{color:var(--red);font-weight:600}.behavior-copy h3{font-size:18px;font-weight:600;color:#fff;margin-bottom:10px}.behavior-copy p{color:var(--ink-dim);font-size:14px;line-height:1.65;margin-bottom:14px}.behavior-list{list-style:none;display:flex;flex-direction:column;gap:10px}.behavior-list li{display:flex;gap:10px;color:var(--ink-dim);font-size:13.5px;line-height:1.5}.behavior-list li::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;background:var(--orange);margin-top:7px}.behavior-list b{color:#fff;font-weight:600}
 
 /* ── code / terminal ── */
 .code{font-family:var(--mono);font-size:12.5px;line-height:1.65;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 24px 60px -44px rgba(0,0,0,.9)}
 .code-bar{display:flex;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid var(--line);color:var(--ink-faint);font-size:11.5px}
 .code-dots{display:flex;gap:6px}
-.code-dots i{width:10px;height:10px;border-radius:50%;background:#262b36;display:block}
+.code-dots i{width:10px;height:10px;border-radius:50%;background:#262c28;display:block}
 .code-title{margin-left:4px;letter-spacing:.04em}
 .code pre{margin:0;padding:15px 16px;overflow-x:auto;white-space:pre;max-width:100%}
 .c-com{color:var(--ink-faint)} .c-key{color:var(--ink-dim)} .c-str{color:var(--ink)} .c-pun{color:var(--ink-faint)} .c-cmd{color:var(--ink)}
@@ -167,7 +223,7 @@ section[id]{scroll-margin-top:80px}
 /* ── app / dashboard frame ── */
 .app-frame{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface);box-shadow:0 30px 70px -48px rgba(0,0,0,.95)}
 .app-bar{display:flex;align-items:center;gap:11px;padding:11px 15px;border-bottom:1px solid var(--line);background:var(--panel)}
-.app-dots{display:flex;gap:6px}.app-dots i{width:10px;height:10px;border-radius:50%;background:#262b36;display:block}
+.app-dots{display:flex;gap:6px}.app-dots i{width:10px;height:10px;border-radius:50%;background:#262c28;display:block}
 .app-url{font-family:var(--mono);font-size:11.5px;color:var(--ink-faint);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 12px}
 .app-live{margin-left:auto;display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--ink-dim)}
 .app-body{display:grid;grid-template-columns:188px minmax(0,1fr)}
@@ -207,7 +263,7 @@ section[id]{scroll-margin-top:80px}
 .b-allow{color:var(--green);background:var(--green-dim);border:1px solid var(--green-line)}
 .b-monitor{color:var(--ink-dim);background:rgba(255,255,255,.04);border:1px solid var(--line)}
 .b-quar{color:var(--red);background:var(--red-dim);border:1px solid var(--red-line)}
-.b-deny{color:var(--red);background:rgba(235,54,28,.18);border:1px solid rgba(235,54,28,.5)}
+.b-deny{color:var(--red);background:rgba(251,77,107,.18);border:1px solid rgba(251,77,107,.5)}
 
 .proof-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:20px}
 .pstep{border:1px solid var(--line-soft);border-radius:9px;background:var(--surface);padding:13px 14px}
@@ -237,7 +293,7 @@ section[id]{scroll-margin-top:80px}
 .fnode .fk{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-faint)}
 .fnode .ft{font-family:var(--sans);font-weight:600;font-size:15.5px;color:#fff;margin-top:6px}
 .fnode .fs{font-size:12px;color:var(--ink-dim);margin-top:4px}
-.fnode.gw{border-color:var(--stroke-hover);box-shadow:0 0 0 1px rgba(255,255,255,.05)}
+.fnode.gw{border-color:var(--orange-line);background:linear-gradient(180deg,rgba(68,147,248,.1),rgba(163,113,247,.06),var(--surface));box-shadow:0 0 0 1px rgba(121,192,255,.2),0 0 40px -16px rgba(163,113,247,.45)}
 .fnode.gw .ft{color:var(--accent-ink)}
 .stages{list-style:none;margin-top:13px;display:flex;flex-direction:column;gap:7px}
 .stages li{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px;color:var(--ink-dim)}
@@ -299,8 +355,8 @@ section[id]{scroll-margin-top:80px}
 
 /* ── use cases ── */
 .uc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(232px,1fr));gap:14px;margin-top:38px}
-.uc{border:1px solid var(--line);border-radius:11px;background:var(--surface);padding:18px;transition:border-color .18s}
-.uc:hover{border-color:var(--stroke-hover)}
+.uc{border:1px solid var(--line);border-radius:11px;background:var(--surface);padding:18px;transition:border-color .18s,transform .2s,box-shadow .2s}
+.uc:hover{border-color:var(--stroke-hover);transform:translateY(-3px);box-shadow:0 20px 44px -26px rgba(68,147,248,.45)}
 .uc .ui{width:30px;height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.04);color:var(--ink-dim);margin-bottom:12px}
 .uc h3{font-family:var(--sans);font-size:14.5px;font-weight:600;color:#fff;margin-bottom:10px}
 .uc .uc-drift{font-family:var(--mono);font-size:11.5px;display:flex;flex-wrap:wrap;align-items:center;gap:7px;padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid var(--line-soft)}
@@ -311,8 +367,8 @@ section[id]{scroll-margin-top:80px}
 
 /* ── supporting controls ── */
 .ctrl-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-top:36px}
-.ctrl{border:1px solid var(--line-soft);border-radius:10px;background:var(--surface);padding:17px;transition:border-color .18s}
-.ctrl:hover{border-color:var(--line)}
+.ctrl{border:1px solid var(--line-soft);border-radius:10px;background:var(--surface);padding:17px;transition:border-color .18s,transform .2s,box-shadow .2s}
+.ctrl:hover{border-color:var(--stroke-hover);transform:translateY(-2px);box-shadow:0 16px 38px -26px rgba(163,113,247,.38)}
 .ctrl .ci{width:30px;height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.04);color:var(--ink-dim);margin-bottom:11px}
 .ctrl h4{font-family:var(--sans);font-size:14px;font-weight:600;color:#fff;margin-bottom:5px}
 .ctrl p{font-size:12.5px;color:var(--ink-dim);line-height:1.5}
@@ -327,7 +383,7 @@ section[id]{scroll-margin-top:80px}
 .demo-cap{font-size:12.5px;color:var(--ink-dim);margin-top:12px}
 
 /* ── pilot ── */
-.pilot{border:1px solid var(--line);border-radius:14px;background:var(--surface-2);padding:clamp(26px,4vw,46px)}
+.pilot{position:relative;border:1px solid rgba(255,255,255,.13);border-radius:14px;background:linear-gradient(180deg,#111827,#060b16);padding:clamp(26px,4vw,46px);box-shadow:0 44px 120px -70px rgba(68,147,248,.45),inset 0 1px 0 rgba(255,255,255,.08)}
 .pilot .s-title{max-width:20ch}
 .pilot p.lead{color:var(--ink-dim);font-size:15.5px;max-width:62ch;margin-top:14px}
 .pilot-domains{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:28px 0}
@@ -354,8 +410,10 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
 
 /* ── responsive ── */
 @media (max-width:940px){
-  .hero-grid{grid-template-columns:1fr;gap:40px}
-  .hero h1{max-width:15ch}
+  .hero{padding:80px 0 52px}
+  .hero-grid{gap:42px}
+  .hero h1{font-size:56px;max-width:900px}
+  .behavior-grid{grid-template-columns:1fr;gap:26px}
   .drift-layout,.receipt-layout,.qs-layout{grid-template-columns:1fr;gap:26px}
   .flow{grid-template-columns:1fr;gap:14px}
   .farrow{transform:rotate(90deg);font-size:18px}
@@ -373,15 +431,28 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
   .hero{padding:40px 0}
 }
 @media (max-width:560px){
-  .wrap{width:100%;max-width:390px;margin-left:0;margin-right:auto;padding:0 20px}
+  .wrap{width:100%;max-width:100%;margin:0 auto;padding:0 20px}
   .nav{padding:0 20px;gap:12px}
   .nav-actions{display:none}
+  .hero{padding:64px 0 44px;text-align:center}
   .hero-grid{gap:34px}
-  .hero h1{font-size:clamp(32px,9vw,38px);line-height:1.04;letter-spacing:-.028em;max-width:10ch}
+  .hero h1{font-size:40px;line-height:1.1;letter-spacing:0;max-width:100%}
   .hero-problem,.hero-sub{font-size:16px;line-height:1.5;max-width:100%}
   .hero-cta .btn{width:100%;flex:1 1 100%;white-space:normal}
-  .trust-row{display:grid;grid-template-columns:1fr;gap:8px}
+  .trust-row{display:grid;grid-template-columns:1fr;gap:8px;justify-items:center}
   .code{max-width:100%;min-width:0}
+  .runtime-console{width:100%}
+  .rc-main{padding:13px}
+  .rc-rail{grid-template-columns:1fr;gap:9px}
+  .rc-arrow{height:22px;width:1px;margin:0 auto;background:linear-gradient(180deg,var(--line),var(--orange))}
+  .rc-arrow::after{right:-4px;top:auto;bottom:0;transform:rotate(135deg)}
+  .rc-status{grid-template-columns:1fr}
+  .rc-line{grid-template-columns:54px minmax(0,1fr);gap:8px}
+  .rc-line .rc-pill{grid-column:2;justify-self:start}
+  .same-surface{grid-template-columns:1fr}
+  .perm-transition{grid-template-columns:1fr;gap:9px}
+  .perm-arrow{height:22px;width:1px;margin:0 auto;background:var(--red)}
+  .perm-arrow::after{right:-4px;top:auto;bottom:0;transform:rotate(135deg)}
   .hdiag{width:100%}
   .hd-bar{padding:10px 12px;font-size:11.5px}
   .hd-bar .hd-tag{display:none}
@@ -399,7 +470,7 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
 }
 @media (prefers-reduced-motion: reduce){
   html{scroll-behavior:auto}
-  *{transition:none!important;animation:none!important}
+  *,*::before,*::after{transition:none!important;animation:none!important}
 }
 </style>
 </head>
@@ -413,6 +484,7 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
   </a>
   <ul class="nav-links">
     <li><a href="#drift">Problem</a></li>
+    <li><a href="#behavioral">Behavioral</a></li>
     <li><a href="#path">How it works</a></li>
     <li><a href="#receipts">Proof</a></li>
     <li><a href="#usecases">Use cases</a></li>
@@ -430,13 +502,13 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
   <div class="wrap">
     <div class="hero-grid">
       <div class="hero-content">
-        <p class="hero-problem">MCP tools can change after you approve them. A tool approved as read-only can later gain export, write, or PII access under the same name &mdash; and static policy still sees the same tool.</p>
-        <h1>Stop tool drift before it executes.</h1>
-        <p class="hero-sub">Interlock baselines the approved tool, detects the change at runtime, holds the risky call before it executes, and writes a tamper-evident receipt.</p>
         <div class="hero-label">MCP Runtime Trust Layer</div>
+        <h1>Stop MCP <span class="grad">tool drift</span> before it executes.</h1>
+        <p class="hero-problem">MCP tools can change after you approve them. A tool approved as read-only can later gain export, write, or PII access under the same name, and static policy still sees the same tool.</p>
+        <p class="hero-sub">Interlock baselines the approved tool, detects the change at runtime, holds the risky call before it executes, and writes a tamper-evident receipt.</p>
         <div class="hero-cta">
-          <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" class="btn btn-primary">Book a Pilot</a>
-          <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20MCP%20Tool%20Schema%20Review" class="btn btn-ghost">Get a Non-Production Drift Report</a>
+          <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" class="btn btn-primary">Run a Drift Check</a>
+          <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20MCP%20Tool%20Schema%20Review" class="btn btn-ghost">Get a Non-Production Report</a>
         </div>
         <div class="hero-links">
           <a href="https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664" target="_blank" rel="noopener">Docs →</a>
@@ -445,33 +517,37 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
         <div class="trust-row">
           <span>Open source</span>
           <span>Self-hosted</span>
-          <span>No shared hosted backend required</span>
-          <span>Built for non-production pilots</span>
+          <span>Receipts included</span>
+          <span>Non-production pilots</span>
         </div>
       </div>
 
-      <div class="hdiag" aria-label="Example Interlock runtime decision: a drifted MCP tool held at the trust boundary">
-        <div class="hd-bar">
-          <span class="dots"><i></i><i></i><i></i></span>
-          <span class="hd-title">interlock · runtime boundary</span>
-          <span class="hd-tag">mcp/inspect</span>
+      <div class="runtime-console" aria-label="Interlock runtime trace showing behavioral drift and quarantine before execution">
+        <div class="rc-top">
+          <span class="rc-dots"><i></i><i></i><i></i></span>
+          <span class="rc-title">interlock/runtime-trace</span>
+          <span class="rc-mode">live boundary</span>
         </div>
-        <div class="hd-pipe">
-          <div class="hd-pnode">Agent<span class="sub">request</span></div>
-          <span class="hd-arrow a1" aria-hidden="true">&rarr;</span>
-          <div class="hd-pnode boundary">Interlock<span class="sub">trust boundary</span></div>
-          <span class="hd-arrow held" aria-hidden="true">&rarr;</span>
-          <div class="hd-pnode dest">MCP Server<span class="sub">held</span></div>
+        <div class="rc-main">
+          <div class="rc-rail">
+            <div class="rc-node"><strong>Agent</strong><span>tool call</span></div>
+            <span class="rc-arrow" aria-hidden="true"></span>
+            <div class="rc-node active"><strong>Interlock</strong><span>baseline check</span></div>
+            <span class="rc-arrow stop" aria-hidden="true"></span>
+            <div class="rc-node"><strong>MCP Server</strong><span>held</span></div>
+          </div>
+          <div class="rc-status">
+            <div class="rc-stat"><span>approved</span><strong>read-only / no egress</strong></div>
+            <div class="rc-stat hot"><span>current drift</span><strong>+ export_external</strong></div>
+          </div>
+          <div class="rc-log">
+            <div class="rc-line"><span class="time">14:23:01</span><span class="event">postgres · list_tables matches approved baseline</span><span class="rc-pill allow">allow</span></div>
+            <div class="rc-line drift"><span class="time">14:23:04</span><span class="event">read_document gained pii.email + external reach</span><span class="rc-pill hold">quarantine</span></div>
+            <div class="rc-line"><span class="time">14:23:05</span><span class="event">effective permission probe: 403 → 200</span><span class="rc-pill hold">auth-scope</span></div>
+            <div class="rc-line"><span class="time">14:23:07</span><span class="event">receipt rcpt-4821 sealed into hash chain</span><span class="rc-pill allow">verified</span></div>
+          </div>
+          <div class="rc-receipt"><span class="seal" aria-hidden="true"></span><span><b>Execution held</b> before the changed tool reached the MCP server.</span></div>
         </div>
-        <div class="hd-rows">
-          <div class="hd-row"><span class="hk">approved_tool</span><span class="hv">read_document</span></div>
-          <div class="hd-row"><span class="hk">approved</span><span class="hv">read-only, no egress</span></div>
-          <div class="hd-row r-cur"><span class="hk">current</span><span class="hv">+export_external, +pii.email</span></div>
-          <div class="hd-row r-drift"><span class="hk">drift</span><span class="hv">capability + data access</span></div>
-          <div class="hd-row"><span class="hk">decision</span><span class="hv"><span class="hd-chip deny">quarantine</span></span></div>
-          <div class="hd-row"><span class="hk">receipt</span><span class="hv"><span class="hd-chip ok">rcpt-4821 &middot; sealed</span></span></div>
-        </div>
-        <div class="hd-foot"><span class="pulse" aria-hidden="true"></span>Execution held before reaching the MCP server</div>
       </div>
     </div>
   </div>
@@ -626,6 +702,45 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
     </div>
 
     <p class="cap-caption">Tested live against a reachable MCP server using a controlled escalation scenario.</p>
+  </div>
+</section>
+
+<!-- 2c. BEHAVIORAL DRIFT -->
+<section class="section" id="behavioral">
+  <div class="wrap">
+    <div class="eyebrow">Behavioral drift</div>
+    <h2 class="s-title">The drift surface diffing misses.</h2>
+    <p class="s-lead">Sometimes the MCP manifest does not change at all. Same tool, same schema, same arguments &mdash; but the upstream permission boundary moved.</p>
+
+    <div class="behavior-grid">
+      <div class="behavior-panel" role="img" aria-label="Behavioral effective permission drift: same surface, denied 403 becomes allowed 200, Interlock quarantines it.">
+        <div class="behavior-top"><b>effective-permission probe</b><span>auth-scope drift</span></div>
+        <div class="behavior-flow">
+          <div class="same-surface">
+            <div><span>Tool</span><strong>call_genesys_api</strong></div>
+            <div><span>Manifest</span><strong>unchanged</strong></div>
+            <div><span>Schema</span><strong>unchanged</strong></div>
+          </div>
+          <div class="perm-transition">
+            <div class="perm-state denied"><span>Baseline outcome</span><strong>403 denied</strong></div>
+            <span class="perm-arrow" aria-hidden="true"></span>
+            <div class="perm-state allowed"><span>Observed later</span><strong>200 allowed</strong></div>
+          </div>
+          <div class="behavior-verdict"><b>quarantine</b> · high severity · effective_permission_expansion · behavioral_scope_drift</div>
+        </div>
+      </div>
+
+      <div class="behavior-copy">
+        <h3>Interlock checks whether the approved tool is still effectively the same risk.</h3>
+        <p>A static allowlist can only see the visible MCP surface. Effective-permission probes catch the opaque case where an upstream provider scope changes and a call that used to fail now succeeds.</p>
+        <ul class="behavior-list">
+          <li><span><b>No OAuth overclaim:</b> Interlock does not pretend to read every provider's hidden config.</span></li>
+          <li><span><b>Behavioral proof:</b> a safe canary baselines denied/allowed outcomes and detects denied → allowed expansion.</span></li>
+          <li><span><b>Clean controls:</b> 403 → 403 and 200 → 200 stay clean; 429, 5xx, and timeouts are inconclusive, not drift.</span></li>
+          <li><span><b>Sanitized evidence:</b> no raw tokens, headers, arguments, or response bodies are stored.</span></li>
+        </ul>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -854,9 +969,9 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
 <section class="section" id="pilot">
   <div class="wrap">
     <div class="pilot">
-      <div class="eyebrow">Founder-led</div>
-      <h2 class="s-title">Design Partner Pilot</h2>
-      <p class="lead">I&rsquo;m looking for 2&ndash;3 MCP builders or AI-agent teams to test Interlock on one real, non-production MCP workflow. Direct support from me, structured feedback, and input on the roadmap.</p>
+      <div class="eyebrow">Pilot</div>
+      <h2 class="s-title">Run a drift check on one risky MCP workflow.</h2>
+      <p class="lead">For MCP builders and AI-agent teams: baseline one non-production workflow, simulate a safe drift, review the quarantine decision, and inspect the receipt evidence.</p>
       <div class="pilot-domains">
         <div class="pdomain"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>Databases</div>
         <div class="pdomain"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6-1.6A4 4 0 0 0 6 19Z"/></svg>Cloud / infra</div>
@@ -866,7 +981,7 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
         <div class="pdomain"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20v-6M6 20v-4M18 20v-9"/><path d="M3 11l9-7 9 7"/></svg>Workflow automation</div>
       </div>
       <div class="pilot-cta">
-        <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" class="btn btn-primary">Book a Pilot</a>
+        <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" class="btn btn-primary">Run a Drift Check</a>
         <a href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener" class="btn btn-ghost">View on GitHub</a>
         <span class="fineprint">Self-hosted or isolated demo only · non-production</span>
       </div>
@@ -902,7 +1017,7 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
       <div class="foot-col">
         <h5>Pilot</h5>
         <a href="#pilot">Design Partner Pilot</a>
-        <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot">Contact founder</a>
+        <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot">Contact</a>
       </div>
     </div>
     <div class="foot-bottom">

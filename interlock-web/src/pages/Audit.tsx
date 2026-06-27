@@ -63,7 +63,28 @@ function displaySeverity(raw?: string): string {
   return s === '' || s === 'none' || s === 'unknown' ? '-' : (raw as string)
 }
 
+function probeOutcomeSummary(event: AuditEvent): string {
+  const isEffectivePermissionProbe = event.matched_rule === 'effective_permission_probe' || Boolean(event.probe_id)
+  if (!isEffectivePermissionProbe) return ''
+
+  const expectedOutcome = compactCell(String(event.expected_outcome ?? ''), '')
+  const observedOutcome = compactCell(String(event.observed_outcome ?? ''), '')
+  const expectedStatus = compactCell(String(event.expected_status_code ?? ''), '')
+  const observedStatus = compactCell(String(event.observed_status_code ?? ''), '')
+  const expected = [expectedOutcome, expectedStatus].filter(Boolean).join('/')
+  const observed = [observedOutcome, observedStatus].filter(Boolean).join('/')
+
+  if (!expected && !observed) return ''
+  return `Probe ${expected || '?'} -> ${observed || '?'}`
+}
+
 function mcpRow(event: AuditEvent, index: number): AuditRow {
+  const probeSummary = probeOutcomeSummary(event)
+  const reason = [probeSummary, event.reason || event.matched_rule || '-']
+    .map(part => compactCell(part, ''))
+    .filter(Boolean)
+    .join(' — ')
+
   return {
     key: 'mcp-' + (event.id ?? index),
     timestamp: eventTimestamp(event),
@@ -72,7 +93,7 @@ function mcpRow(event: AuditEvent, index: number): AuditRow {
     target: compactCell(event.tool_name || '-'),
     action: event.action || '-',
     severity: displaySeverity(event.drift_severity),
-    reason: compactCell(event.reason || event.matched_rule || '-'),
+    reason: compactCell(reason || '-'),
     scanTime: typeof event.scan_time_ms === 'number' ? event.scan_time_ms : null,
     auditId: typeof event.id === 'number' ? event.id : undefined,
   }
@@ -192,6 +213,17 @@ export default function Audit() {
   useEffect(() => {
     if (view === 'admin' && session) void loadAdminAudit()
   }, [view, session?.accessToken])
+
+  useEffect(() => {
+    if (view !== 'runtime' || receiptOpen || receiptLoading || receipt) return
+    const rawReceiptId = params.get('receipt')
+    if (!rawReceiptId) return
+
+    const receiptId = Number(rawReceiptId)
+    if (!Number.isInteger(receiptId) || receiptId <= 0) return
+
+    void openReceipt(receiptId)
+  }, [params, view, receiptOpen, receiptLoading, receipt])
 
   async function refresh() {
     if (view === 'admin') return loadAdminAudit()

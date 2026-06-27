@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getinterlock.dev/schemas/chain-drift-record.v1.json",
+  "title": "Interlock Chain Drift Record v1",
+  "description": "A tamper-evident Interlock record for pre-execution MCP chain drift. It commits to an evidence-safe profile hash of a planned multi-step tool sequence and the material chain finding. It does not store raw tool arguments, tokens, headers, provider objects, or response bodies.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_type",
+    "schema_version",
+    "chain_id",
+    "chain_profile_hash",
+    "diff_classification",
+    "finding_types",
+    "severity",
+    "decision"
+  ],
+  "properties": {
+    "record_type": { "const": "interlock.chain-drift-record" },
+    "schema_version": { "const": "1" },
+    "chain_id": { "type": "string", "minLength": 1 },
+    "chain_profile_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "diff_classification": { "const": "chain" },
+    "finding_types": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "severity": { "enum": ["none", "minor", "moderate", "high", "critical"] },
+    "decision": { "enum": ["allow", "monitor", "deny", "quarantine"] }
+  }
+}

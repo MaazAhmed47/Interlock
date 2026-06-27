@@ -96,6 +96,37 @@ class MCPEffectivePermissionProbeRequest(BaseModel):
     safety_note: str
 
 
+class MCPReadbackCall(BaseModel):
+    tool_name: str
+    arguments: dict
+
+
+class MCPEffectReadbackProbeRequest(BaseModel):
+    probe_id: Optional[str] = None
+    target: MCPReadbackCall
+    readback: MCPReadbackCall
+    expected_effect: Literal["no_change", "change_allowed"]
+    non_production: bool = False
+    safety_note: str
+
+
+class MCPChainStep(BaseModel):
+    server_id: Optional[str] = ""
+    tool_name: str
+    arguments: dict = {}
+    effects: Optional[List[str]] = []
+    data_classes: Optional[List[str]] = []
+    externality: Optional[str] = "internal"
+    side_effect: Optional[str] = "unknown"
+
+
+class MCPChainAnalyzeRequest(BaseModel):
+    chain_id: Optional[str] = None
+    steps: List[MCPChainStep]
+    role: Optional[str] = "operator"
+    safety_note: str
+
+
 class ScanResult(BaseModel):
     is_threat: bool
     threat_level: ThreatLevel

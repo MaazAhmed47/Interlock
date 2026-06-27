@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getinterlock.dev/schemas/response-drift-record.v1.json",
+  "title": "Interlock Response Drift Evidence Record (v1)",
+  "description": "Canonical evidence for response/data-exposure drift: a tool response profile expanded from its approved baseline to include new sensitive data classes, secrets, or materially larger response volume. The evidenceRef digest is sha256 over this record's canonical JSON bytes using json/jcs-rfc8785. The record stores profile hashes and finding labels only; it does not store raw response bodies or raw response values.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_type",
+    "schema_version",
+    "server_id",
+    "tool_name",
+    "baseline_profile_hash",
+    "current_profile_hash",
+    "diff_classification",
+    "finding_types",
+    "severity",
+    "decision"
+  ],
+  "properties": {
+    "record_type": {
+      "const": "interlock.response-drift-record"
+    },
+    "schema_version": {
+      "const": "1"
+    },
+    "server_id": {
+      "type": "string"
+    },
+    "tool_name": {
+      "type": "string"
+    },
+    "baseline_profile_hash": {
+      "description": "Content address of the approved response exposure profile. The profile contains only counts, field names, category labels, and hashes, never raw response values.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "current_profile_hash": {
+      "description": "Content address of the current response exposure profile, computed the same way as baseline_profile_hash.",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "diff_classification": {
+      "const": "data-exposure"
+    },
+    "finding_types": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "none",
+        "minor",
+        "moderate",
+        "high",
+        "critical"
+      ]
+    },
+    "decision": {
+      "type": "string",
+      "enum": [
+        "allow",
+        "monitor",
+        "deny",
+        "quarantine"
+      ]
+    }
+  }
+}
