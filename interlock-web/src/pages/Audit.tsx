@@ -281,7 +281,10 @@ export default function Audit() {
 
           {(errors.audit || errors.scanHistory) && (
             <div className="inline-note">
-              {errors.audit ? 'MCP audit is unavailable. ' : ''}{errors.scanHistory ? 'Scan history is unavailable.' : ''}
+              Runtime data could not load.
+              {errors.audit ? ` MCP audit: ${errors.audit}.` : ''}
+              {errors.scanHistory ? ` Scan history: ${errors.scanHistory}.` : ''}
+              {' '}Check the API URL/key in <Link to="/dashboard/settings">Settings</Link>.
             </div>
           )}
 

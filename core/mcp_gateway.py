@@ -1146,11 +1146,6 @@ async def proxy_mcp_tool_call(
                             if external_reach_drift
                             else None
                         ),
-                        "effect_drift": (
-                            _public_effect_drift_context(effect_drift)
-                            if effect_drift
-                            else None
-                        ),
                         "drift": drift_context,
                         "policy_decision": policy_decision,
                     }

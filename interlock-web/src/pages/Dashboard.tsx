@@ -307,8 +307,8 @@ export default function Dashboard() {
 
           <div className="dash-section-title">Recent Activity</div>
           <div className="card glow-card" style={{ padding: 0 }}>
-            {errors.audit && scanHistory.length === 0
-              ? <div style={{ padding: 16 }}><EmptyState message="Audit log is unavailable right now. Run a scan to populate recent activity." showSettingsLink={false} /></div>
+            {(errors.audit || errors.scanHistory) && recentActivity.length === 0
+              ? <div style={{ padding: 16 }}><EmptyState message={`Runtime activity could not load. ${errors.audit ? `MCP audit: ${errors.audit}. ` : ''}${errors.scanHistory ? `Scan history: ${errors.scanHistory}. ` : ''}Check Settings for the active API URL/key.`} showSettingsLink /></div>
               : recentActivity.length === 0
                 ? <div style={{ padding: 16 }}><EmptyState message="No scan or MCP events yet." showSettingsLink={false} /></div>
                 : <div className="table-wrap">
