@@ -939,14 +939,12 @@ async def proxy_mcp_tool_call(
                 external_reach_drift = None
 
     if external_reach_drift:
-        external_baseline_hash = stored_external_reach_profile.get(
+        external_stored_profile = stored_external_reach_profile or {}
+        external_current_profile = current_external_reach_profile or {}
+        external_baseline_hash = external_stored_profile.get(
             "profile_hash"
-        ) or external_reach_profile_hash(
-            stored_external_reach_profile.get("profile") or {}
-        )
-        external_current_hash = external_reach_profile_hash(
-            current_external_reach_profile or {}
-        )
+        ) or external_reach_profile_hash(external_stored_profile.get("profile") or {})
+        external_current_hash = external_reach_profile_hash(external_current_profile)
         external_reason = _external_reach_drift_reason(external_reach_drift)
         external_action = external_reach_drift.get("action") or "monitor"
         if external_action == "quarantine":
@@ -1097,10 +1095,12 @@ async def proxy_mcp_tool_call(
                         effect_drift = None
 
             if effect_drift:
-                effect_baseline_hash = stored_effect_profile.get(
+                effect_stored_profile = stored_effect_profile or {}
+                effect_current_profile = current_effect_profile or {}
+                effect_baseline_hash = effect_stored_profile.get(
                     "profile_hash"
-                ) or effect_profile_hash(stored_effect_profile.get("profile") or {})
-                effect_current_hash = effect_profile_hash(current_effect_profile or {})
+                ) or effect_profile_hash(effect_stored_profile.get("profile") or {})
+                effect_current_hash = effect_profile_hash(effect_current_profile)
                 effect_reason = _effect_drift_reason(effect_drift)
                 effect_action = effect_drift.get("action") or "monitor"
                 if effect_action == "quarantine":
@@ -1197,10 +1197,12 @@ async def proxy_mcp_tool_call(
                         response_drift = None
 
             if response_drift:
-                response_baseline_hash = stored_response_profile.get(
+                response_stored_profile = stored_response_profile or {}
+                response_current_profile = response_profile or {}
+                response_baseline_hash = response_stored_profile.get(
                     "profile_hash"
-                ) or response_profile_hash(stored_response_profile.get("profile") or {})
-                response_current_hash = response_profile_hash(response_profile)
+                ) or response_profile_hash(response_stored_profile.get("profile") or {})
+                response_current_hash = response_profile_hash(response_current_profile)
                 response_reason = _response_drift_reason(response_drift)
                 response_action = response_drift.get("action") or "monitor"
                 if response_action == "quarantine":

@@ -140,7 +140,7 @@ def _host_destination(host: str) -> tuple[str, str]:
 
 
 def _destinations_from_string(key: str, value: str) -> Dict[str, Set[str]]:
-    out = {
+    out: Dict[str, Set[str]] = {
         "external_destinations": set(),
         "internal_destinations": set(),
         "hashed_destinations": set(),
