@@ -239,23 +239,9 @@ export default function Dashboard() {
       ) : (
         <>
           {demoMode && (
-            <div style={{
-              width: '100%',
-              background: 'rgba(255, 193, 7, 0.12)',
-              border: '1px solid rgba(255, 193, 7, 0.4)',
-              borderRadius: 4,
-              padding: '10px 16px',
-              marginBottom: 20,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              fontSize: 13,
-              fontFamily: 'var(--font-mono)',
-              color: '#ffc107',
-              letterSpacing: '0.3px',
-            }}>
+            <div className="inline-note demo-mode-strip">
               <span style={{ fontWeight: 700 }}>DEMO MODE</span>
-              <span style={{ color: 'rgba(255,193,7,0.7)' }}>—</span>
+              <span aria-hidden="true">-</span>
               <span>Connect your API key in Settings to see live data</span>
             </div>
           )}

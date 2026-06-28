@@ -99,7 +99,7 @@ export default function MCPGateway() {
                     {tool.drift_severity && <StatusBadge value={tool.drift_severity} />}
                   </div>
                   {formatValue(toolField(tool, 'description')) !== '-' && (
-                    <div className="drift-card-field" style={{ color: 'rgba(245,240,232,.65)' }}>{formatValue(toolField(tool, 'description'))}</div>
+                    <div className="drift-card-field" style={{ color: 'var(--brand-color-text-muted)' }}>{formatValue(toolField(tool, 'description'))}</div>
                   )}
                   <div className="drift-card-field"><strong>Effects:</strong> {formatValue(toolField(tool, 'effects'))}</div>
                   <div className="drift-card-field"><strong>Side effect:</strong> {formatValue(toolField(tool, 'side_effect'))}</div>

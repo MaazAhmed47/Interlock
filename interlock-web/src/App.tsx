@@ -24,18 +24,18 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
       return (
         <div style={{
           minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: '#06060a', color: '#f5f0e8', fontFamily: 'system-ui, sans-serif',
+          background: 'var(--brand-color-canvas-default)', color: 'var(--brand-color-text-default)', fontFamily: 'var(--font-body)',
         }}>
           <div style={{ textAlign: 'center', maxWidth: 420, padding: 32 }}>
             <div style={{ fontSize: 32, marginBottom: 16 }}>⚠</div>
             <h2 style={{ margin: '0 0 8px', fontSize: 20 }}>Something went wrong</h2>
-            <p style={{ color: 'rgba(245,240,232,.5)', margin: '0 0 24px', fontSize: 14 }}>
+            <p style={{ color: 'var(--brand-color-text-muted)', margin: '0 0 24px', fontSize: 14 }}>
               An unexpected error occurred in the dashboard. Your data is safe.
             </p>
             <button
               style={{
-                padding: '10px 24px', background: '#00e5c8', color: '#06060a',
-                border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 14,
+                padding: '10px 24px', background: 'var(--brand-color-accent-primary)', color: '#000',
+                border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 14,
               }}
               onClick={() => window.location.reload()}
             >

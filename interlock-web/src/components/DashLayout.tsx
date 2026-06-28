@@ -431,7 +431,7 @@ export default function DashLayout() {
           <div
             style={{
               position: 'fixed', inset: 0, zIndex: 200,
-              background: 'rgba(6,6,8,.97)',
+              background: 'rgba(0,0,0,.96)',
               paddingTop: 52, display: 'flex', flexDirection: 'column',
             }}
           >
