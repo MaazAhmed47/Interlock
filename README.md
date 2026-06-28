@@ -10,6 +10,8 @@ Interlock is a self-hosted MCP runtime trust layer for AI agents.
 
 It detects when approved MCP tools change their schema, data access, external reach, side effects, auth scope, or behavior after approval, then can hold or quarantine risky changes before execution and preserve audit evidence.
 
+**Live proof:** behavioral drift caught and quarantined: same tool, same manifest, expected `403 denied` → observed `200 allowed`, with hash-chain verified receipt evidence.
+
 _Pre-release, design-partner stage — self-hosted, for trying drift detection on one non-production MCP workflow. [Quick start ↓](#quick-start)_
 
 [![Interlock Demo](./interlock_thumbnail.png)](https://youtu.be/zYDgD8Eo7uc)
@@ -51,6 +53,7 @@ Interlock focuses on post-approval tool and capability drift: the changes that h
 | Code quality | ruff · black · mypy (core/routes) |
 | Docker build | passing |
 | Live demo | getinterlock.dev |
+| Behavioral drift proof | expected 403 denied → observed 200 allowed; quarantined with receipt evidence |
 | Last verified | June 2026 |
 
 ---

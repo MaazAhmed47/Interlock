@@ -518,6 +518,7 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
           <span>Open source</span>
           <span>Self-hosted</span>
           <span>Receipts included</span>
+          <span>Live proof: 403 → 200 quarantined</span>
           <span>Non-production pilots</span>
         </div>
       </div>
@@ -733,6 +734,7 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
       <div class="behavior-copy">
         <h3>Interlock checks whether the approved tool is still effectively the same risk.</h3>
         <p>A static allowlist can only see the visible MCP surface. Effective-permission probes catch the opaque case where an upstream provider scope changes and a call that used to fail now succeeds.</p>
+        <p><b>Live proof:</b> Interlock caught expected 403 denied → observed 200 allowed, classified it as behavioral scope drift, quarantined the tool, and emitted hash-chain verified receipt evidence.</p>
         <ul class="behavior-list">
           <li><span><b>No OAuth overclaim:</b> Interlock does not pretend to read every provider's hidden config.</span></li>
           <li><span><b>Behavioral proof:</b> a safe canary baselines denied/allowed outcomes and detects denied → allowed expansion.</span></li>
