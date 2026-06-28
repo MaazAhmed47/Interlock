@@ -20,22 +20,23 @@
   --bg:#000;
   --surface:#0d1117;
   --surface-2:#151b23;
-  --panel:#0b0f19;
-  --line:rgba(255,255,255,.13);
+  --panel:#090d18;
+  --line:rgba(255,255,255,.14);
   --line-soft:rgba(255,255,255,.075);
-  --stroke-hover:rgba(139,92,246,.42);
+  --stroke-hover:rgba(121,192,255,.42);
   --ink:#ffffff;
-  --ink-dim:#dbeafe;
+  --ink-dim:#d2d9f8;
   --ink-faint:#8b949e;
-  /* GitHub-homepage inspired: white hero, dark navy panels, blue/purple energy */
+  /* GitHub.com dark marketing inspired: black canvas, Mona-style type, blue/purple light */
   --blue:#4493f8;
   --blue-bright:#79c0ff;
   --purple:#a371f7;
   --purple-deep:#6e40c9;
+  --pink:#db61a2;
   --accent:#8b5cf6;
   --accent-ink:#d8b4fe;
-  --accent-dim:rgba(139,92,246,.14);
-  --cta-grad:linear-gradient(180deg,#ffffff,#dbeafe);
+  --accent-dim:rgba(139,92,246,.16);
+  --cta-grad:linear-gradient(180deg,#ffffff,#e6edf8);
   --cta-hover:linear-gradient(180deg,#ffffff,#f6f8fa);
   --orange:var(--blue-bright);
   --orange-dim:rgba(68,147,248,.13);
@@ -70,11 +71,11 @@ body::before{
 body::after{
   content:"";position:fixed;inset:-16%;z-index:-2;pointer-events:none;
   background:
-    radial-gradient(70% 48% at 50% -8%,rgba(121,192,255,.24),transparent 62%),
-    radial-gradient(48% 38% at 78% 4%,rgba(163,113,247,.24),transparent 64%),
-    radial-gradient(42% 38% at 18% 7%,rgba(68,147,248,.18),transparent 62%),
-    linear-gradient(180deg,rgba(9,14,28,.2),transparent 48%);
-  opacity:.9;
+    radial-gradient(70% 48% at 50% -8%,rgba(121,192,255,.3),transparent 62%),
+    radial-gradient(54% 42% at 74% 4%,rgba(163,113,247,.32),transparent 64%),
+    radial-gradient(44% 38% at 18% 8%,rgba(219,97,162,.18),transparent 62%),
+    linear-gradient(180deg,rgba(9,14,28,.22),transparent 48%);
+  opacity:.98;
   animation:heroAtmosphere 18s cubic-bezier(.16,1,.3,1) infinite alternate;
 }
 @keyframes heroAtmosphere{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(-1.5%,1%,0) scale(1.04)}}
@@ -95,7 +96,7 @@ section[id]{scroll-margin-top:80px}
 .mono{font-family:var(--mono)}
 
 /* ── buttons ── */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;font-family:var(--sans);font-size:14px;font-weight:600;letter-spacing:0;padding:11px 20px;border-radius:8px;cursor:pointer;border:1px solid transparent;transition:background .18s,border-color .18s,color .18s,transform .12s,box-shadow .18s}
+.btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap;font-family:var(--sans);font-size:14px;font-weight:600;letter-spacing:0;padding:11px 20px;border-radius:8px;cursor:pointer;border:1px solid transparent;transition:background .18s,border-color .18s,color .18s,transform .12s,box-shadow .18s}
 .btn:active{transform:translateY(1px)}
 .btn-primary{background:var(--cta-grad);color:#0d1117;border-color:rgba(255,255,255,.88);box-shadow:0 8px 28px -14px rgba(121,192,255,.55),inset 0 1px 0 rgba(255,255,255,.88)}
 .btn-primary:hover{background:var(--cta-hover);border-color:#fff;box-shadow:0 14px 36px -14px rgba(121,192,255,.75),0 0 0 4px rgba(121,192,255,.14),inset 0 1px 0 rgba(255,255,255,.92)}
@@ -116,8 +117,8 @@ section[id]{scroll-margin-top:80px}
 .nav-actions{display:flex;align-items:center;gap:10px;margin-left:22px}
 
 /* ── hero ── */
-.hero{min-height:calc(100vh - 64px);min-height:calc(100svh - 64px);display:flex;flex-direction:column;justify-content:center;text-align:center;padding:96px 0 58px;border-top:none;position:relative;overflow:hidden}
-.hero::before{content:"";position:absolute;left:50%;top:92px;width:min(980px,92vw);height:360px;transform:translateX(-50%);pointer-events:none;background:radial-gradient(closest-side at 50% 42%,rgba(255,255,255,.16),transparent 58%),linear-gradient(110deg,transparent 12%,rgba(68,147,248,.18) 34%,rgba(163,113,247,.22) 50%,rgba(68,147,248,.16) 66%,transparent 88%);filter:blur(24px);opacity:.86;animation:heroBeam 8s cubic-bezier(.16,1,.3,1) infinite alternate}
+.hero{min-height:calc(100vh - 64px);min-height:calc(100svh - 64px);display:flex;flex-direction:column;justify-content:center;text-align:center;padding:104px 0 64px;border-top:none;position:relative;overflow:hidden}
+.hero::before{content:"";position:absolute;left:50%;top:78px;width:min(1100px,94vw);height:420px;transform:translateX(-50%);pointer-events:none;background:radial-gradient(closest-side at 50% 42%,rgba(255,255,255,.2),transparent 56%),linear-gradient(110deg,transparent 10%,rgba(68,147,248,.2) 31%,rgba(163,113,247,.3) 49%,rgba(219,97,162,.16) 62%,rgba(68,147,248,.16) 76%,transparent 90%);filter:blur(28px);opacity:.96;animation:heroBeam 8s cubic-bezier(.16,1,.3,1) infinite alternate}
 .hero::after{content:"";position:absolute;left:50%;top:132px;width:min(760px,84vw);height:1px;transform:translateX(-50%);pointer-events:none;background:linear-gradient(90deg,transparent,rgba(121,192,255,.0),rgba(121,192,255,.85),rgba(163,113,247,.9),rgba(121,192,255,.0),transparent);box-shadow:0 0 42px rgba(121,192,255,.45);animation:heroLine 5.8s ease-in-out infinite}
 @keyframes heroBeam{0%{opacity:.62;transform:translateX(-50%) translateY(0) scale(.98)}100%{opacity:.96;transform:translateX(-50%) translateY(12px) scale(1.04)}}
 @keyframes heroLine{0%,100%{opacity:.18;filter:blur(0)}50%{opacity:.72;filter:blur(.3px)}}
@@ -126,8 +127,9 @@ section[id]{scroll-margin-top:80px}
 .hero-content{min-width:0;max-width:100%}
 .hero-content{width:100%;max-width:924px;margin:0 auto;text-align:center}
 .hero-label{display:none}
-.hero h1{font-family:var(--display);font-weight:425;font-size:72px;line-height:1.08;letter-spacing:0;max-width:924px;margin:0 auto;color:#fff;text-wrap:balance;font-stretch:96%;text-shadow:0 0 34px rgba(121,192,255,.14)}
-.hero h1 .grad{background:none;-webkit-background-clip:initial;background-clip:initial;color:inherit;text-shadow:none}
+.hero h1{font-family:var(--display);font-weight:430;font-size:clamp(54px,7.3vw,88px);line-height:1.04;letter-spacing:-.01em;max-width:980px;margin:0 auto;color:#fff;text-wrap:balance;font-stretch:96%;text-shadow:0 0 34px rgba(121,192,255,.14)}
+.hero h1 .grad{background:linear-gradient(92deg,#fff 0%,#79c0ff 30%,#a371f7 61%,#db61a2 100%);background-size:180% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:none;animation:heroTextGradient 7s ease-in-out infinite alternate}
+@keyframes heroTextGradient{0%{background-position:0% 50%}100%{background-position:100% 50%}}
 .hero-problem{color:var(--ink);font-size:20px;line-height:1.55;max-width:780px;margin:24px auto 0;overflow-wrap:break-word;text-wrap:pretty}
 .hero-sub{color:var(--ink-dim);font-size:18px;line-height:1.62;max-width:730px;margin:15px auto 0;overflow-wrap:break-word;text-wrap:pretty}
 .hero-cta{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:28px}
@@ -139,7 +141,7 @@ section[id]{scroll-margin-top:80px}
 .trust-row span{display:inline-flex;align-items:center;gap:8px}
 .trust-row span::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--blue-bright)}
 .hero .runtime-console{width:min(100%,980px);margin:0 auto;text-align:left}
-@media (min-width:1200px){.hero h1{font-size:80px}}
+@media (min-width:1200px){.hero h1{font-size:88px}}
 
 /* ── hero runtime diagram ── */
 .hdiag{font-family:var(--mono);border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden;box-shadow:0 40px 90px -54px rgba(0,0,0,.95);min-width:0;max-width:100%}
@@ -408,11 +410,30 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
 .foot-bottom a{color:var(--ink-faint)}
 .foot-bottom a:hover{color:var(--ink-dim)}
 
+
+/* -- contact action panel -- */
+.contact-modal{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:24px;background:rgba(0,0,0,.68);backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%)}
+.contact-modal[hidden]{display:none!important}
+.contact-card{position:relative;width:min(620px,100%);border:1px solid rgba(255,255,255,.16);border-radius:18px;background:linear-gradient(180deg,#111827,#060b16 60%,#02040a);box-shadow:0 50px 140px -54px rgba(68,147,248,.62),0 0 0 1px rgba(121,192,255,.08) inset;padding:28px;overflow:hidden}
+.contact-card::before{content:"";position:absolute;inset:-1px;pointer-events:none;background:radial-gradient(66% 42% at 50% 0%,rgba(121,192,255,.22),transparent 62%),radial-gradient(46% 34% at 86% 4%,rgba(163,113,247,.26),transparent 64%)}
+.contact-card>*{position:relative;z-index:1}
+.contact-close{position:absolute;right:14px;top:14px;z-index:2;width:34px;height:34px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.06);color:#fff;font-size:22px;line-height:1;cursor:pointer}
+.contact-close:hover{background:rgba(255,255,255,.1);border-color:rgba(121,192,255,.36)}
+.contact-kicker{font-family:var(--mono);font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--blue-bright);margin-bottom:10px}
+.contact-card h2{font-family:var(--display);font-weight:520;font-size:clamp(26px,4vw,38px);line-height:1.1;letter-spacing:0;color:#fff;max-width:14ch}
+.contact-card p{color:var(--ink-dim);font-size:15px;line-height:1.65;margin-top:12px;max-width:58ch}
+.contact-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+.contact-template{margin-top:18px;border:1px solid var(--line);border-radius:12px;background:#02040a;overflow:hidden}
+.contact-template span{display:block;padding:10px 13px;border-bottom:1px solid var(--line-soft);font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint)}
+.contact-template pre{margin:0;padding:13px;white-space:pre-wrap;font-family:var(--mono);font-size:12px;line-height:1.55;color:var(--ink-dim)}
+.copy-ok{color:var(--green)!important;border-color:var(--green-line)!important;background:var(--green-dim)!important}
+body.modal-open{overflow:hidden}
+
 /* ── responsive ── */
 @media (max-width:940px){
   .hero{padding:80px 0 52px}
   .hero-grid{gap:42px}
-  .hero h1{font-size:56px;max-width:900px}
+  .hero h1{font-size:58px;max-width:900px}
   .behavior-grid{grid-template-columns:1fr;gap:26px}
   .drift-layout,.receipt-layout,.qs-layout{grid-template-columns:1fr;gap:26px}
   .flow{grid-template-columns:1fr;gap:14px}
@@ -493,7 +514,7 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
   </ul>
   <div class="nav-actions">
     <a href="/dashboard/" class="btn btn-ghost btn-sm">Dashboard</a>
-    <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" class="btn btn-primary btn-sm">Book a Pilot</a>
+    <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" class="btn btn-primary btn-sm" data-contact="pilot">Book a Pilot</a>
   </div>
 </nav>
 
@@ -507,8 +528,8 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
         <p class="hero-problem">MCP tools can change after approval, especially when your agent uses vendor, community, forked, or separately operated tools your team does not fully control. A tool approved as read-only can later gain export, write, or PII access under the same name, and static policy still sees the same tool.</p>
         <p class="hero-sub">Interlock baselines the approved tool, detects the change at runtime, holds the risky call before it executes, and writes a tamper-evident receipt.</p>
         <div class="hero-cta">
-          <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" class="btn btn-primary">Run a Drift Check</a>
-          <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20MCP%20Tool%20Schema%20Review" class="btn btn-ghost">Get a Non-Production Report</a>
+          <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" class="btn btn-primary" data-contact="drift">Run a Drift Check</a>
+          <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20MCP%20Tool%20Schema%20Review" class="btn btn-ghost" data-contact="report">Get a Non-Production Report</a>
         </div>
         <div class="hero-links">
           <a href="https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664" target="_blank" rel="noopener">Docs →</a>
@@ -983,7 +1004,7 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
         <div class="pdomain"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 20v-6M6 20v-4M18 20v-9"/><path d="M3 11l9-7 9 7"/></svg>Workflow automation</div>
       </div>
       <div class="pilot-cta">
-        <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" class="btn btn-primary">Run a Drift Check</a>
+        <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" class="btn btn-primary" data-contact="drift">Run a Drift Check</a>
         <a href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener" class="btn btn-ghost">View on GitHub</a>
         <span class="fineprint">Self-hosted or isolated demo only · non-production</span>
       </div>
@@ -1019,7 +1040,7 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
       <div class="foot-col">
         <h5>Pilot</h5>
         <a href="#pilot">Design Partner Pilot</a>
-        <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot">Contact</a>
+        <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" data-contact="pilot">Contact</a>
       </div>
     </div>
     <div class="foot-bottom">
@@ -1028,6 +1049,108 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
     </div>
   </div>
 </footer>
+
+
+<div class="contact-modal" id="contact-panel" role="dialog" aria-modal="true" aria-labelledby="contact-title" hidden>
+  <div class="contact-card">
+    <button class="contact-close" type="button" aria-label="Close contact panel">×</button>
+    <div class="contact-kicker" id="contact-kicker">Interlock pilot</div>
+    <h2 id="contact-title">Run a non-production drift check.</h2>
+    <p id="contact-copy">Send one risky MCP workflow and I will baseline it, simulate a safe drift, show what Interlock would allow or quarantine, and return the receipt evidence.</p>
+    <div class="contact-actions">
+      <a id="contact-mail" class="btn btn-primary" href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot">Open email</a>
+      <button id="copy-email" class="btn btn-ghost" type="button">Copy email</button>
+      <a class="btn btn-ghost" href="https://linkedin.com/in/syed-maaz-ahmed" target="_blank" rel="noopener">LinkedIn</a>
+    </div>
+    <div class="contact-template" aria-label="Suggested message">
+      <span>Suggested message</span>
+      <pre id="contact-template-text">Hi Maaz, we operate agents against MCP tools we do not fully control. I’d like to run a non-production drift check on one workflow.</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const panel = document.getElementById('contact-panel');
+  const close = panel?.querySelector('.contact-close');
+  const title = document.getElementById('contact-title');
+  const copy = document.getElementById('contact-copy');
+  const kicker = document.getElementById('contact-kicker');
+  const mail = document.getElementById('contact-mail');
+  const template = document.getElementById('contact-template-text');
+  const copyEmail = document.getElementById('copy-email');
+  const email = 'maaz@getinterlock.dev';
+  const flows = {
+    pilot: {
+      kicker: 'Book a pilot',
+      title: 'Book a focused Interlock pilot.',
+      copy: 'Start with one non-production MCP workflow. We baseline the approved surface, simulate safe drift, review the quarantine decision, and inspect the Security Receipt.',
+      subject: 'Interlock Design Partner Pilot',
+      body: 'Hi Maaz, I want to discuss a focused Interlock pilot. We operate agents against MCP tools we do not fully control. A good non-production workflow to start with is: '
+    },
+    drift: {
+      kicker: 'Run a drift check',
+      title: 'Run a drift check on one MCP workflow.',
+      copy: 'Send one risky MCP workflow. I will baseline it, simulate safe drift, show allow/hold/quarantine behavior, and return receipt evidence plus false-positive controls.',
+      subject: 'Interlock Drift Check',
+      body: 'Hi Maaz, I would like a non-production drift check. The MCP workflow/tool surface is: '
+    },
+    report: {
+      kicker: 'Non-production report',
+      title: 'Get a non-production drift report.',
+      copy: 'Use this when you are not ready for a pilot yet. I will review one workflow and return what changed, what Interlock would flag, and what proof artifact would matter.',
+      subject: 'Interlock Non-Production Drift Report',
+      body: 'Hi Maaz, I would like a non-production drift/audit report for this MCP workflow: '
+    }
+  };
+  const encode = (value) => encodeURIComponent(value).replace(/%20/g, '+');
+  function openPanel(kind) {
+    const flow = flows[kind] || flows.drift;
+    kicker.textContent = flow.kicker;
+    title.textContent = flow.title;
+    copy.textContent = flow.copy;
+    template.textContent = flow.body;
+    mail.href = `mailto:${email}?subject=${encode(flow.subject)}&body=${encode(flow.body)}`;
+    panel.hidden = false;
+    document.body.classList.add('modal-open');
+    close?.focus();
+  }
+  function closePanel() {
+    panel.hidden = true;
+    document.body.classList.remove('modal-open');
+  }
+  document.querySelectorAll('[data-contact]').forEach((el) => {
+    el.addEventListener('click', (event) => {
+      event.preventDefault();
+      openPanel(el.getAttribute('data-contact'));
+    });
+  });
+  close?.addEventListener('click', closePanel);
+  panel?.addEventListener('click', (event) => {
+    if (event.target === panel) closePanel();
+  });
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && panel && !panel.hidden) closePanel();
+  });
+  const requestedContact = new URLSearchParams(window.location.search).get('contact');
+  if (requestedContact && flows[requestedContact]) {
+    window.setTimeout(() => openPanel(requestedContact), 120);
+  }
+  copyEmail?.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(email);
+      copyEmail.textContent = 'Copied email';
+      copyEmail.classList.add('copy-ok');
+      setTimeout(() => {
+        copyEmail.textContent = 'Copy email';
+        copyEmail.classList.remove('copy-ok');
+      }, 1800);
+    } catch {
+      window.location.href = `mailto:${email}`;
+    }
+  });
+})();
+</script>
 
 </body>
 </html>
