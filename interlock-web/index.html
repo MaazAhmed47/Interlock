@@ -1,123 +1,2300 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Interlock - Runtime trust for MCP tools after approval</title>
-<meta name="description" content="Interlock detects when approved MCP tools drift in behavior, permissions, data access, external reach, or side effects, then quarantines risky changes before agents keep using them.">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-<link rel="icon" type="image/x-icon" href="/favicon.ico" />
-<link rel="apple-touch-icon" href="/favicon.svg" />
-<meta name="theme-color" content="#0d1117" />
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --canvas:#0d1117;
-  --canvas-deep:#010409;
-  --surface:#161b22;
-  --surface-2:#21262d;
-  --surface-3:#0f1722;
-  --border:#30363d;
-  --border-muted:#21262d;
-  --text:#f0f6fc;
-  --text-2:#c9d1d9;
-  --muted:#8b949e;
-  --muted-2:#6e7681;
-  --blue:#2f81f7;
-  --blue-2:#58a6ff;
-  --green:#3fb950;
-  --green-2:#56d364;
-  --danger:#f85149;
-  --warning:#d29922;
-  --white:#fff;
-  --light-text:#24292f;
-  --light-muted:#57606a;
-  --light-border:#d0d7de;
-  --shadow:0 24px 80px rgba(1,4,9,.46);
-  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
-  --mono:ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,"Liberation Mono",monospace;
-  --max:1248px;
-}
-html{scroll-behavior:smooth;background:var(--canvas);overflow-x:hidden}
-body{font-family:var(--font);background:var(--canvas);color:var(--text);font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;overflow-x:hidden}
-body::before{content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;background:radial-gradient(900px 420px at 50% -160px,rgba(47,129,247,.25),transparent 72%),radial-gradient(780px 520px at 82% 2%,rgba(63,185,80,.10),transparent 70%),linear-gradient(180deg,#010409 0,#0d1117 38%,#0d1117 100%)}
-body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:linear-gradient(rgba(240,246,252,.032) 1px,transparent 1px),linear-gradient(90deg,rgba(240,246,252,.032) 1px,transparent 1px);background-size:72px 72px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.74),rgba(0,0,0,.24) 42%,transparent 82%)}
-img,svg{display:block;max-width:100%}a{color:inherit;text-decoration:none}button{font:inherit}::selection{background:rgba(47,129,247,.38);color:#fff}:focus-visible{outline:3px solid rgba(47,129,247,.72);outline-offset:3px;border-radius:8px}
-.wrap{width:min(100% - 48px,var(--max));margin:0 auto}.section{padding:118px 0;border-top:1px solid rgba(48,54,61,.72)}section[id]{scroll-margin-top:88px}.label{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--blue-2);margin-bottom:16px}.section-head{max-width:850px;margin-bottom:42px}.section-title{font-size:clamp(38px,5vw,60px);line-height:1.05;letter-spacing:-.04em;font-weight:800;color:var(--text)}.section-lead{font-size:clamp(17px,2vw,21px);line-height:1.55;color:var(--text-2);margin-top:16px;max-width:760px}.muted{color:var(--muted)}.mono{font-family:var(--mono)}
-.btn{appearance:none;border:1px solid transparent;border-radius:8px;min-height:48px;padding:12px 18px;display:inline-flex;align-items:center;justify-content:center;gap:10px;font-weight:700;font-size:15px;line-height:1;color:var(--text);cursor:pointer;transition:transform .16s ease,background .16s ease,border-color .16s ease,box-shadow .16s ease,color .16s ease}.btn:hover{transform:translateY(-1px)}.btn-primary{background:var(--blue);border-color:rgba(240,246,252,.12);color:#fff;box-shadow:0 12px 30px rgba(47,129,247,.22)}.btn-primary:hover{background:#1f6feb;box-shadow:0 16px 40px rgba(47,129,247,.3)}.btn-secondary{background:rgba(240,246,252,.08);border-color:rgba(240,246,252,.16);color:var(--text)}.btn-secondary:hover{background:rgba(240,246,252,.12);border-color:rgba(240,246,252,.26)}.btn-quiet{background:transparent;border-color:var(--border);color:var(--text-2)}.btn-quiet:hover{border-color:var(--blue);color:var(--text)}.arrow{font-size:18px;line-height:0;transition:transform .16s ease}.btn:hover .arrow{transform:translateX(3px)}
-.nav{position:sticky;top:0;z-index:80;border-bottom:1px solid rgba(48,54,61,.72);background:rgba(13,17,23,.82);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);transition:border-color .2s ease,background .2s ease}.nav.scrolled{background:rgba(13,17,23,.94);border-color:rgba(139,148,158,.4)}.nav-inner{height:72px;width:min(100% - 40px,var(--max));margin:0 auto;display:flex;align-items:center;gap:22px}.brand{display:flex;align-items:center;gap:11px;font-weight:800;font-size:20px;letter-spacing:-.02em}.brand-mark{width:30px;height:30px;border:1px solid rgba(88,166,255,.48);border-radius:8px;display:grid;place-items:center;color:var(--blue-2);background:linear-gradient(180deg,rgba(47,129,247,.16),rgba(47,129,247,.04))}.nav-links{display:flex;align-items:center;gap:22px;list-style:none;margin:0 auto}.nav-links a{font-size:14px;font-weight:600;color:var(--text-2)}.nav-links a:hover{color:#fff}.nav-actions{display:flex;gap:10px;align-items:center}.nav-actions .btn{min-height:38px;padding:9px 14px;font-size:13px}.menu-btn{display:none;margin-left:auto;width:42px;height:42px;border:1px solid var(--border);border-radius:8px;background:rgba(240,246,252,.06);color:#fff;align-items:center;justify-content:center}.mobile-panel{display:none;border-top:1px solid var(--border);padding:16px 20px 20px;background:var(--canvas)}.mobile-panel a{display:block;padding:12px 0;color:var(--text-2);font-weight:700}.mobile-panel .btn{margin-top:10px;width:100%}
-.hero{position:relative;padding:112px 0 56px;overflow:hidden}.hero::before{content:"";position:absolute;left:50%;top:26px;width:min(1000px,92vw);height:1px;transform:translateX(-50%);background:linear-gradient(90deg,transparent,rgba(88,166,255,.9),rgba(63,185,80,.65),transparent);box-shadow:0 0 42px rgba(88,166,255,.32);animation:heroLine 6s ease-in-out infinite}.hero-grid{width:min(100% - 48px,var(--max));margin:0 auto;display:grid;grid-template-columns:minmax(0,1.02fr) minmax(480px,.98fr);gap:56px;align-items:center}.hero-copy{min-width:0}.hero h1{font-size:clamp(58px,7vw,88px);line-height:.98;letter-spacing:-.06em;font-weight:800;max-width:900px;color:#fff;text-wrap:balance}.hero-sub{font-size:clamp(20px,2.2vw,24px);line-height:1.45;color:var(--text-2);margin-top:24px;max-width:780px}.hero-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:32px}.hero-meta{display:flex;flex-wrap:wrap;gap:16px 24px;margin-top:30px;color:var(--muted);font-size:14px;font-family:var(--mono)}.hero-meta span{display:flex;align-items:center;gap:8px}.hero-meta span::before{content:"";width:8px;height:8px;border-radius:99px;background:var(--green);box-shadow:0 0 18px rgba(63,185,80,.48)}
-.console{border:1px solid var(--border);border-radius:14px;background:linear-gradient(180deg,#161b22,#0d1117);box-shadow:var(--shadow);overflow:hidden;min-width:0;position:relative}.console::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(88,166,255,.08),transparent);transform:translateX(-120%);animation:sweep 7s ease-in-out infinite;pointer-events:none}.console-top{height:48px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;padding:0 16px;background:rgba(1,4,9,.22);font-family:var(--mono);font-size:12px;color:var(--muted)}.dots{display:flex;gap:7px}.dots i{width:10px;height:10px;border-radius:99px;background:var(--surface-2)}.dots i:nth-child(2){background:var(--blue)}.dots i:nth-child(3){background:var(--green)}.console-live{margin-left:auto;border:1px solid rgba(63,185,80,.34);color:var(--green-2);background:rgba(63,185,80,.10);border-radius:6px;padding:3px 8px;font-size:11px;font-weight:800}.console-body{padding:22px;font-family:var(--mono);font-size:13px;color:var(--text-2)}.console-block{border:1px solid var(--border-muted);border-radius:10px;background:rgba(1,4,9,.32);padding:15px 16px;margin-bottom:12px}.console-block:last-child{margin-bottom:0}.console-k{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}.console-k::before{content:"";width:8px;height:8px;border-radius:99px;background:currentColor}.console-grid{display:grid;grid-template-columns:132px minmax(0,1fr);gap:7px 14px}.ck{color:var(--muted-2)}.cv{color:var(--text);word-break:break-word}.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:3px 9px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}.pill.green{color:var(--green-2);border-color:rgba(63,185,80,.36);background:rgba(63,185,80,.12)}.pill.blue{color:var(--blue-2);border-color:rgba(47,129,247,.42);background:rgba(47,129,247,.14)}.pill.red{color:var(--danger);border-color:rgba(248,81,73,.42);background:rgba(248,81,73,.13)}.pill.warn{color:var(--warning);border-color:rgba(210,153,34,.42);background:rgba(210,153,34,.13)}.line-animate{opacity:0;animation:lineIn .6s ease forwards}.line-animate:nth-child(1){animation-delay:.1s}.line-animate:nth-child(2){animation-delay:.35s}.line-animate:nth-child(3){animation-delay:.6s}
-.proof-strip{width:min(100% - 48px,var(--max));margin:44px auto 0;display:grid;grid-template-columns:repeat(5,1fr);border:1px solid var(--border);border-radius:14px;background:rgba(22,27,34,.72);box-shadow:0 18px 70px rgba(1,4,9,.28);overflow:hidden}.proof-item{padding:22px;border-right:1px solid var(--border-muted)}.proof-item:last-child{border-right:0}.proof-item strong{display:block;font-size:17px;color:#fff;letter-spacing:-.02em}.proof-item span{display:block;color:var(--muted);font-size:13px;margin-top:5px}.proof-icon{width:34px;height:34px;border-radius:8px;border:1px solid rgba(63,185,80,.32);color:var(--green-2);display:grid;place-items:center;margin-bottom:12px;background:rgba(63,185,80,.08)}
-.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card{border:1px solid var(--border);border-radius:12px;background:linear-gradient(180deg,rgba(22,27,34,.92),rgba(13,17,23,.92));padding:24px;transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease}.card:hover{transform:translateY(-4px);border-color:rgba(88,166,255,.5);box-shadow:0 18px 55px rgba(1,4,9,.32)}.card-icon{width:40px;height:40px;border:1px solid var(--border);border-radius:10px;display:grid;place-items:center;color:var(--blue-2);background:rgba(47,129,247,.08);margin-bottom:18px}.card h3{font-size:clamp(20px,2vw,26px);line-height:1.16;letter-spacing:-.03em;margin-bottom:10px}.card p{color:var(--text-2);font-size:16px;line-height:1.55}.workflow{position:relative;margin-top:46px}.workflow-line{position:absolute;left:5%;right:5%;top:58px;height:1px;background:linear-gradient(90deg,transparent,var(--border),var(--border),transparent)}.workflow-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;position:relative}.step{min-width:0;text-align:center}.step-node{width:56px;height:56px;margin:0 auto 16px;border:1px solid var(--border);border-radius:50%;display:grid;place-items:center;background:var(--surface);color:var(--text);position:relative;box-shadow:0 0 0 8px var(--canvas);animation:nodeGlow 5s ease-in-out infinite}.step:nth-child(2) .step-node{animation-delay:.25s}.step:nth-child(3) .step-node{animation-delay:.5s}.step:nth-child(4) .step-node{animation-delay:.75s}.step:nth-child(5) .step-node{animation-delay:1s}.step:nth-child(6) .step-node{animation-delay:1.25s}.step-num{font-family:var(--mono);font-size:12px;color:var(--green-2);font-weight:800}.step h3{font-size:16px;margin:8px 0 6px;letter-spacing:-.02em}.step p{font-size:13px;color:var(--muted);line-height:1.45}.product-console{border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:var(--shadow);overflow:hidden}.tabs{display:flex;align-items:center;gap:2px;padding:10px;border-bottom:1px solid var(--border);background:rgba(1,4,9,.24);overflow-x:auto}.tab{border:0;background:transparent;color:var(--muted);border-radius:8px;padding:10px 13px;font-weight:700;font-size:13px;white-space:nowrap;cursor:pointer}.tab.active,.tab:hover{color:#fff;background:rgba(240,246,252,.08)}.table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}.table th{color:var(--muted);font-weight:700;text-align:left;text-transform:uppercase;letter-spacing:.07em;font-size:11px;padding:14px 16px;border-bottom:1px solid var(--border)}.table td{padding:15px 16px;border-bottom:1px solid var(--border-muted);color:var(--text-2);vertical-align:middle}.table tr:hover td{background:rgba(240,246,252,.035)}.hash{color:var(--muted);font-size:11px}.comparison{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:32px}.compare-card{border:1px solid var(--border);border-radius:14px;background:var(--surface);overflow:hidden}.compare-card header{padding:18px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:12px;align-items:center}.compare-card h3{font-size:22px;letter-spacing:-.03em}.compare-body{padding:20px;font-family:var(--mono);font-size:13px}.row{display:grid;grid-template-columns:138px minmax(0,1fr);gap:12px;padding:8px 0;border-bottom:1px solid var(--border-muted)}.row:last-child{border-bottom:0}.decision-box{margin-top:18px;border:1px solid rgba(248,81,73,.42);background:rgba(248,81,73,.10);border-radius:12px;padding:16px;font-family:var(--mono);color:var(--text-2)}.code{margin-top:24px;border:1px solid var(--border);border-radius:12px;background:#010409;overflow:hidden}.code-head{height:42px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 14px;color:var(--muted);font-family:var(--mono);font-size:12px}.code pre{padding:18px;overflow:auto;font-family:var(--mono);font-size:13px;color:var(--text-2)}.receipt-layout{display:grid;grid-template-columns:1fr .85fr;gap:28px;align-items:start}.receipt-card{border:1px solid var(--border);border-radius:14px;background:linear-gradient(180deg,var(--surface),#0d1117);overflow:hidden;box-shadow:var(--shadow)}.receipt-head{display:flex;align-items:center;justify-content:space-between;padding:20px;border-bottom:1px solid var(--border)}.receipt-head strong{font-size:18px}.receipt-rows{padding:6px 20px}.receipt-row{display:grid;grid-template-columns:190px minmax(0,1fr);gap:14px;padding:13px 0;border-bottom:1px solid var(--border-muted);font-family:var(--mono);font-size:13px}.receipt-row:last-child{border-bottom:0}.receipt-row span:first-child{color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.08em}.receipt-row span:last-child{color:var(--text);word-break:break-word}.receipt-foot{border-top:1px solid var(--border);padding:16px 20px;color:var(--green-2);font-family:var(--mono);font-size:13px;background:rgba(63,185,80,.08)}.use-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}.limit{background:#fff;color:var(--light-text);border-top:0}.limit .label{color:#0969da}.limit .section-title{color:var(--light-text)}.limit .section-lead{color:var(--light-muted)}.limit-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:38px}.limit-item{border:1px solid var(--light-border);border-radius:12px;background:#fff;padding:18px;box-shadow:0 10px 34px rgba(31,35,40,.06)}.limit-item strong{display:block;font-size:16px;margin-bottom:8px}.limit-item p{color:var(--light-muted);font-size:14px;line-height:1.45}.final-cta{padding:118px 0;background:linear-gradient(180deg,#0d1117,#010409);text-align:center;border-top:1px solid var(--border)}.final-cta .section-title{max-width:860px;margin:0 auto}.final-cta .section-lead{margin-left:auto;margin-right:auto}.final-actions{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:30px}.footer{border-top:1px solid var(--border);padding:58px 0 36px;background:#010409}.footer-grid{width:min(100% - 48px,var(--max));margin:0 auto;display:grid;grid-template-columns:1.5fr repeat(4,1fr);gap:32px}.footer p{color:var(--muted);font-size:14px;max-width:38ch;margin-top:12px}.footer h4{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px}.footer a{display:block;color:var(--text-2);font-size:14px;padding:5px 0}.footer a:hover{color:#fff}.footer-bottom{width:min(100% - 48px,var(--max));margin:38px auto 0;padding-top:22px;border-top:1px solid var(--border);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;color:var(--muted);font-family:var(--mono);font-size:12px}.reveal{opacity:0;transform:translateY(22px);transition:opacity .55s ease,transform .55s ease}.reveal.in{opacity:1;transform:translateY(0)}
-.contact-modal{position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:24px;background:rgba(1,4,9,.72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}.contact-modal[hidden]{display:none!important}.contact-card{width:min(620px,100%);position:relative;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:var(--shadow);padding:28px}.contact-close{position:absolute;right:14px;top:14px;width:36px;height:36px;border:1px solid var(--border);border-radius:8px;background:rgba(240,246,252,.06);color:#fff;font-size:22px;cursor:pointer}.contact-card h2{font-size:34px;line-height:1.1;letter-spacing:-.04em;margin-bottom:12px}.contact-card p{color:var(--text-2);font-size:16px;line-height:1.55;max-width:56ch}.contact-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}.contact-template{margin-top:18px;border:1px solid var(--border);border-radius:10px;background:#010409;overflow:hidden}.contact-template span{display:block;padding:10px 13px;border-bottom:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.08em}.contact-template pre{font-family:var(--mono);white-space:pre-wrap;color:var(--text-2);font-size:12px;line-height:1.55;padding:13px}.copy-ok{color:var(--green-2)!important;border-color:rgba(63,185,80,.42)!important;background:rgba(63,185,80,.12)!important}body.modal-open{overflow:hidden}
-@keyframes heroLine{0%,100%{opacity:.28}50%{opacity:.8}}@keyframes sweep{0%,22%{transform:translateX(-120%);opacity:0}42%,60%{opacity:1}80%,100%{transform:translateX(120%);opacity:0}}@keyframes lineIn{to{opacity:1}}@keyframes nodeGlow{0%,100%{box-shadow:0 0 0 8px var(--canvas),0 0 0 rgba(47,129,247,0)}50%{box-shadow:0 0 0 8px var(--canvas),0 0 28px rgba(47,129,247,.32)}}
-@media (max-width:1080px){.hero-grid{grid-template-columns:1fr;gap:42px}.hero h1{font-size:clamp(48px,9vw,72px)}.proof-strip{grid-template-columns:repeat(3,1fr)}.workflow-grid{grid-template-columns:repeat(3,1fr);gap:28px}.workflow-line{display:none}.use-grid,.limit-grid{grid-template-columns:repeat(2,1fr)}.receipt-layout{grid-template-columns:1fr}.footer-grid{grid-template-columns:1.4fr 1fr 1fr}}
-@media (max-width:760px){.wrap,.hero-grid,.proof-strip,.footer-grid,.footer-bottom{width:min(100% - 32px,var(--max))}.section{padding:82px 0}.nav-inner{width:min(100% - 28px,var(--max));height:64px}.nav-links,.nav-actions{display:none}.menu-btn{display:flex}.mobile-panel.open{display:block}.hero{padding:72px 0 42px}.hero h1{font-size:clamp(36px,12vw,42px);letter-spacing:-.045em}.hero-sub{font-size:18px}.hero-actions,.final-actions{display:grid;grid-template-columns:1fr}.hero-actions .btn,.final-actions .btn{width:100%}.console-body{padding:16px;font-size:12px}.console-grid,.row,.receipt-row{grid-template-columns:1fr;gap:4px}.proof-strip,.cards,.comparison,.workflow-grid,.use-grid,.limit-grid{grid-template-columns:1fr}.proof-item{border-right:0;border-bottom:1px solid var(--border-muted)}.proof-item:last-child{border-bottom:0}.table{min-width:760px}.product-scroll{overflow-x:auto}.section-title{font-size:36px}.footer-grid{grid-template-columns:1fr}.contact-card{padding:24px}.contact-card h2{font-size:28px}}
-@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Interlock - Runtime trust for MCP tools after approval</title>
+  <meta name="description" content="Interlock detects when approved MCP tools drift in behavior, permissions, data access, external reach, or side effects, then quarantines risky changes before agents keep using them." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+  <link rel="apple-touch-icon" href="/favicon.svg" />
+  <meta name="theme-color" content="#000000" />
+  <style>
+    :root {
+      --base-color-scale-black-0: #000;
+      --base-color-scale-gray-0: #d2d9d4;
+      --base-color-scale-gray-1: #c4ccc6;
+      --base-color-scale-gray-2: #a4aea6;
+      --base-color-scale-gray-3: #7c8980;
+      --base-color-scale-gray-4: #58635b;
+      --base-color-scale-gray-5: #353d37;
+      --base-color-scale-gray-6: #262c28;
+      --base-color-scale-gray-7: #191f1b;
+      --base-color-scale-gray-8: #0f1511;
+      --base-color-scale-gray-9: #060907;
+
+      --base-color-scale-blue-2: #78bafe;
+      --base-color-scale-blue-3: #3094ff;
+      --base-color-scale-blue-5: #0a50db;
+      --base-color-scale-blue-8: #052063;
+
+      --base-color-scale-green-2: #5fed83;
+      --base-color-scale-green-3: #23ea57;
+      --base-color-scale-green-5: #08872b;
+      --base-color-scale-green-8: #0d3024;
+
+      --brand-color-text-default: #fff;
+      --brand-color-text-muted: #a4aea6;
+      --brand-color-canvas-default: #000;
+      --brand-color-canvas-subtle: #0f1511;
+      --brand-color-canvas-muted: #090d0a;
+      --brand-color-border-default: #353d37;
+      --brand-color-border-muted: #191f1b;
+      --brand-color-accent-primary: #5fed83;
+      --brand-color-text-link-rest: #8dd6ff;
+
+      --brand-animation-easing-default: cubic-bezier(.16, 1, .3, 1);
+      --brand-animation-easing-glide: cubic-bezier(.33, 1, .68, 1);
+      --brand-animation-duration-default: .6s;
+      --brand-animation-duration-fast: .3s;
+
+      --danger: #ff6b6b;
+      --danger-strong: #f85149;
+      --warning: #d29922;
+      --font-sans: "Mona Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+      --page-max: 1280px;
+      --radius: 8px;
+      --shadow-panel: 0 30px 100px rgba(0, 0, 0, .62);
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-width: 320px;
+      background: var(--brand-color-canvas-default);
+      scroll-behavior: smooth;
+      overflow-x: hidden;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--brand-color-text-default);
+      background:
+        radial-gradient(900px 420px at 50% 790px, rgba(120, 186, 254, .12), transparent 70%),
+        radial-gradient(660px 360px at 20% 880px, rgba(95, 237, 131, .10), transparent 72%),
+        linear-gradient(180deg, #000 0%, #000 44%, #060907 100%);
+      font-family: var(--font-sans);
+      font-size: 16px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      text-rendering: optimizeLegibility;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background:
+        linear-gradient(rgba(210, 217, 212, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(210, 217, 212, .025) 1px, transparent 1px);
+      background-size: 96px 96px;
+      mask-image: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, .42) 18%, rgba(0, 0, 0, .18) 56%, transparent 100%);
+    }
+
+    body.modal-open,
+    body.menu-open {
+      overflow: hidden;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    img,
+    svg {
+      display: block;
+      max-width: 100%;
+    }
+
+    ::selection {
+      color: #fff;
+      background: rgba(48, 148, 255, .42);
+    }
+
+    :focus-visible {
+      outline: 3px solid rgba(120, 186, 254, .9);
+      outline-offset: 3px;
+      border-radius: var(--radius);
+    }
+
+    .skip-link {
+      position: fixed;
+      left: 16px;
+      top: 12px;
+      z-index: 100;
+      padding: 10px 14px;
+      color: #fff;
+      background: var(--base-color-scale-green-5);
+      border-radius: 6px;
+      transform: translateY(-160%);
+      transition: transform var(--brand-animation-duration-fast) var(--brand-animation-easing-default);
+    }
+
+    .skip-link:focus {
+      transform: translateY(0);
+    }
+
+    .shell {
+      width: min(100% - 48px, var(--page-max));
+      margin: 0 auto;
+    }
+
+    .site-nav {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(0, 0, 0, .78);
+      border-bottom: 1px solid rgba(53, 61, 55, .42);
+      backdrop-filter: blur(14px) saturate(130%);
+      -webkit-backdrop-filter: blur(14px) saturate(130%);
+      transition:
+        background var(--brand-animation-duration-fast) var(--brand-animation-easing-default),
+        border-color var(--brand-animation-duration-fast) var(--brand-animation-easing-default);
+    }
+
+    .site-nav.is-scrolled {
+      background: rgba(0, 0, 0, .92);
+      border-color: rgba(124, 137, 128, .38);
+    }
+
+    .nav-inner {
+      width: min(100% - 40px, var(--page-max));
+      height: 72px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      position: relative;
+      width: 32px;
+      height: 32px;
+      border: 1px solid rgba(210, 217, 212, .22);
+      border-radius: 50%;
+      background:
+        linear-gradient(180deg, rgba(95, 237, 131, .18), rgba(95, 237, 131, .035)),
+        var(--brand-color-canvas-muted);
+    }
+
+    .brand-mark::before,
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      width: 13px;
+      height: 8px;
+      border: 1.5px solid var(--base-color-scale-green-2);
+      border-radius: 999px;
+      top: 11px;
+      opacity: .95;
+    }
+
+    .brand-mark::before {
+      left: 6px;
+      transform: rotate(-18deg);
+    }
+
+    .brand-mark::after {
+      right: 6px;
+      transform: rotate(18deg);
+      border-color: var(--base-color-scale-blue-2);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      margin: 0 auto;
+    }
+
+    .nav-links a {
+      color: var(--base-color-scale-gray-1);
+      font-size: 14px;
+      font-weight: 520;
+      transition: color var(--brand-animation-duration-fast) var(--brand-animation-easing-default);
+    }
+
+    .nav-links a:hover {
+      color: #fff;
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .btn {
+      appearance: none;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      min-height: 48px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 12px 18px;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0;
+      line-height: 1;
+      white-space: nowrap;
+      transition:
+        transform var(--brand-animation-duration-fast) var(--brand-animation-easing-default),
+        background var(--brand-animation-duration-fast) var(--brand-animation-easing-default),
+        border-color var(--brand-animation-duration-fast) var(--brand-animation-easing-default),
+        box-shadow var(--brand-animation-duration-fast) var(--brand-animation-easing-default);
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    .btn-primary {
+      background: var(--base-color-scale-green-5);
+      border-color: transparent;
+      box-shadow: 0 10px 28px rgba(8, 135, 43, .24);
+    }
+
+    .btn-primary:hover {
+      background: #077726;
+      box-shadow: 0 16px 36px rgba(8, 135, 43, .28);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, .12);
+      border-color: rgba(255, 255, 255, .12);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, .16);
+      border-color: rgba(255, 255, 255, .20);
+    }
+
+    .btn-subtle {
+      color: var(--base-color-scale-gray-0);
+      background: transparent;
+      border-color: var(--brand-color-border-default);
+    }
+
+    .btn-subtle:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, .06);
+      border-color: rgba(210, 217, 212, .28);
+    }
+
+    .nav-actions .btn {
+      min-height: 38px;
+      padding: 9px 13px;
+      font-size: 13px;
+    }
+
+    .arrow {
+      display: inline-block;
+      transition: transform var(--brand-animation-duration-fast) var(--brand-animation-easing-default);
+    }
+
+    .btn:hover .arrow {
+      transform: translateX(3px);
+    }
+
+    .menu-toggle {
+      display: none;
+      width: 42px;
+      height: 42px;
+      margin-left: auto;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(255, 255, 255, .14);
+      border-radius: 6px;
+      color: #fff;
+      background: rgba(255, 255, 255, .08);
+    }
+
+    .mobile-nav-cta {
+      display: none;
+      min-height: 36px;
+      padding: 8px 13px;
+      color: #fff;
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, .42);
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1;
+      transition:
+        background var(--brand-animation-duration-fast) var(--brand-animation-easing-default),
+        border-color var(--brand-animation-duration-fast) var(--brand-animation-easing-default);
+    }
+
+    .mobile-nav-cta:hover {
+      background: rgba(255, 255, 255, .10);
+      border-color: rgba(255, 255, 255, .62);
+    }
+
+    .menu-lines {
+      position: relative;
+      width: 18px;
+      height: 14px;
+    }
+
+    .menu-lines span {
+      position: absolute;
+      left: 0;
+      width: 18px;
+      height: 2px;
+      border-radius: 999px;
+      background: currentColor;
+      transition:
+        transform var(--brand-animation-duration-fast) var(--brand-animation-easing-default),
+        opacity var(--brand-animation-duration-fast) var(--brand-animation-easing-default);
+    }
+
+    .menu-lines span:nth-child(1) { top: 0; }
+    .menu-lines span:nth-child(2) { top: 6px; }
+    .menu-lines span:nth-child(3) { top: 12px; }
+
+    .menu-toggle[aria-expanded="true"] .menu-lines span:nth-child(1) {
+      transform: translateY(6px) rotate(45deg);
+    }
+
+    .menu-toggle[aria-expanded="true"] .menu-lines span:nth-child(2) {
+      opacity: 0;
+    }
+
+    .menu-toggle[aria-expanded="true"] .menu-lines span:nth-child(3) {
+      transform: translateY(-6px) rotate(-45deg);
+    }
+
+    .mobile-menu {
+      display: none;
+    }
+
+    .hero {
+      position: relative;
+      min-height: calc(100svh - 72px);
+      padding: 96px 0 34px;
+    }
+
+    .hero-inner {
+      display: grid;
+      justify-items: center;
+      text-align: center;
+    }
+
+    .hero h1 {
+      max-width: 924px;
+      margin: 0;
+      color: #fff;
+      font-size: 5.5rem;
+      font-weight: 440;
+      line-height: 1.08;
+      letter-spacing: 0;
+      text-wrap: balance;
+    }
+
+    .hero-lead {
+      max-width: 792px;
+      margin: 24px 0 0;
+      color: var(--brand-color-text-muted);
+      font-size: 1.25rem;
+      font-weight: 450;
+      line-height: 1.55;
+      text-wrap: balance;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+      margin-top: 34px;
+    }
+
+    .hero-visual {
+      width: min(1128px, 100%);
+      margin-top: 76px;
+    }
+
+    .developer-window {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(124, 137, 128, .54);
+      border-radius: 12px;
+      background: #060907;
+      box-shadow: var(--shadow-panel);
+    }
+
+    .developer-window::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      border-radius: inherit;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, .08),
+        inset 0 -1px 0 rgba(0, 0, 0, .8);
+    }
+
+    .window-toolbar {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 16px;
+      color: var(--base-color-scale-gray-3);
+      background: #0f1511;
+      border-bottom: 1px solid var(--brand-color-border-muted);
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+
+    .window-dots {
+      display: inline-flex;
+      gap: 7px;
+      flex: 0 0 auto;
+    }
+
+    .window-dots i {
+      width: 11px;
+      height: 11px;
+      border-radius: 999px;
+      background: var(--base-color-scale-gray-6);
+      border: 1px solid rgba(210, 217, 212, .08);
+    }
+
+    .window-tabs {
+      display: flex;
+      align-items: stretch;
+      min-width: 0;
+      align-self: stretch;
+      overflow: hidden;
+    }
+
+    .window-tab {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      padding: 0 16px;
+      color: var(--base-color-scale-gray-1);
+      border-left: 1px solid var(--brand-color-border-muted);
+      background: rgba(255, 255, 255, .025);
+      white-space: nowrap;
+    }
+
+    .window-tab.is-active {
+      color: #fff;
+      background: #060907;
+    }
+
+    .window-status {
+      margin-left: auto;
+      flex: 0 0 auto;
+      color: var(--base-color-scale-green-2);
+    }
+
+    .window-body {
+      display: grid;
+      grid-template-columns: 282px minmax(0, 1fr);
+      min-height: 420px;
+    }
+
+    .console-sidebar {
+      padding: 20px;
+      border-right: 1px solid var(--brand-color-border-muted);
+      background: linear-gradient(180deg, rgba(15, 21, 17, .96), rgba(6, 9, 7, .96));
+    }
+
+    .console-sidebar h2 {
+      margin: 0;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+
+    .console-sidebar p {
+      margin: 10px 0 0;
+      color: var(--base-color-scale-gray-2);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .side-stack {
+      display: grid;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .side-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 0;
+      border-top: 1px solid rgba(53, 61, 55, .62);
+      color: var(--base-color-scale-gray-1);
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+
+    .side-row:first-child {
+      border-top: 0;
+    }
+
+    .side-key {
+      color: var(--base-color-scale-gray-3);
+    }
+
+    .editor-console {
+      min-width: 0;
+      padding: 20px 0;
+      background:
+        linear-gradient(90deg, rgba(210, 217, 212, .035) 1px, transparent 1px) 46px 0 / 1px 100% no-repeat,
+        #060907;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.65;
+    }
+
+    .code-line {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr);
+      min-height: 28px;
+      color: var(--base-color-scale-gray-1);
+      opacity: 0;
+      transform: translateY(8px);
+      animation: lineReveal var(--brand-animation-duration-default) var(--brand-animation-easing-default) forwards;
+    }
+
+    .code-line:nth-child(1) { animation-delay: .08s; }
+    .code-line:nth-child(2) { animation-delay: .18s; }
+    .code-line:nth-child(3) { animation-delay: .28s; }
+    .code-line:nth-child(4) { animation-delay: .42s; }
+    .code-line:nth-child(5) { animation-delay: .52s; }
+    .code-line:nth-child(6) { animation-delay: .62s; }
+    .code-line:nth-child(7) { animation-delay: .76s; }
+    .code-line:nth-child(8) { animation-delay: .86s; }
+    .code-line:nth-child(9) { animation-delay: .96s; }
+    .code-line:nth-child(10) { animation-delay: 1.06s; }
+    .code-line:nth-child(11) { animation-delay: 1.16s; }
+
+    .line-no {
+      color: var(--base-color-scale-gray-4);
+      text-align: right;
+      padding-right: 14px;
+      user-select: none;
+    }
+
+    .line-code {
+      padding: 0 20px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .code-head {
+      color: var(--base-color-scale-blue-2);
+    }
+
+    .code-key {
+      color: var(--base-color-scale-gray-2);
+    }
+
+    .code-value {
+      color: #fff;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      white-space: nowrap;
+      border: 1px solid currentColor;
+      background: rgba(255, 255, 255, .05);
+    }
+
+    .status-pill.green {
+      color: var(--base-color-scale-green-2);
+      background: rgba(95, 237, 131, .10);
+      border-color: rgba(95, 237, 131, .28);
+    }
+
+    .status-pill.blue {
+      color: var(--base-color-scale-blue-2);
+      background: rgba(120, 186, 254, .10);
+      border-color: rgba(120, 186, 254, .28);
+    }
+
+    .status-pill.red {
+      color: var(--danger);
+      background: rgba(255, 107, 107, .10);
+      border-color: rgba(255, 107, 107, .28);
+    }
+
+    .status-pill.warn {
+      color: #f0c36a;
+      background: rgba(210, 153, 34, .12);
+      border-color: rgba(210, 153, 34, .30);
+    }
+
+    .status-pill.neutral {
+      color: var(--base-color-scale-gray-1);
+      background: rgba(210, 217, 212, .06);
+      border-color: rgba(210, 217, 212, .18);
+    }
+
+    .proof-strip {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      width: min(100% - 48px, var(--page-max));
+      margin: 34px auto 0;
+      overflow: hidden;
+      border: 1px solid var(--brand-color-border-default);
+      border-radius: var(--radius);
+      background: rgba(15, 21, 17, .74);
+    }
+
+    .proof-item {
+      min-width: 0;
+      padding: 18px 18px 17px;
+      border-right: 1px solid var(--brand-color-border-muted);
+      text-align: left;
+    }
+
+    .proof-item:last-child {
+      border-right: 0;
+    }
+
+    .proof-item strong {
+      display: block;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 560;
+      line-height: 1.3;
+    }
+
+    .proof-item span {
+      display: block;
+      margin-top: 5px;
+      color: var(--brand-color-text-muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .section {
+      padding: 116px 0;
+      border-top: 1px solid rgba(25, 31, 27, .95);
+    }
+
+    .section.alt {
+      background: rgba(15, 21, 17, .48);
+    }
+
+    section[id] {
+      scroll-margin-top: 88px;
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, .95fr) minmax(280px, .72fr);
+      gap: 56px;
+      align-items: end;
+      margin-bottom: 46px;
+    }
+
+    .section-kicker {
+      margin: 0 0 14px;
+      color: var(--base-color-scale-green-2);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .section-title {
+      max-width: 900px;
+      margin: 0;
+      color: #fff;
+      font-size: 4rem;
+      font-weight: 440;
+      line-height: 1.08;
+      letter-spacing: 0;
+      text-wrap: balance;
+    }
+
+    .section-lead {
+      margin: 0;
+      color: var(--brand-color-text-muted);
+      font-size: 1.125rem;
+      line-height: 1.6;
+      text-wrap: balance;
+    }
+
+    .problem-grid {
+      display: grid;
+      grid-template-columns: 1.05fr .95fr;
+      gap: 26px;
+      align-items: stretch;
+    }
+
+    .problem-panel,
+    .product-console,
+    .receipt-panel,
+    .drift-panel,
+    .limit-panel,
+    .use-card {
+      border: 1px solid var(--brand-color-border-default);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, rgba(15, 21, 17, .92), rgba(6, 9, 7, .92));
+      transition:
+        transform var(--brand-animation-duration-fast) var(--brand-animation-easing-default),
+        border-color var(--brand-animation-duration-fast) var(--brand-animation-easing-default),
+        background var(--brand-animation-duration-fast) var(--brand-animation-easing-default);
+    }
+
+    .problem-panel:hover,
+    .use-card:hover,
+    .limit-panel:hover {
+      transform: translateY(-3px);
+      border-color: rgba(120, 186, 254, .42);
+      background: linear-gradient(180deg, rgba(15, 21, 17, 1), rgba(9, 13, 10, .96));
+    }
+
+    .problem-panel {
+      padding: 28px;
+      min-height: 390px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .problem-panel h3 {
+      max-width: 620px;
+      margin: 0;
+      color: #fff;
+      font-size: 2.5rem;
+      font-weight: 440;
+      line-height: 1.12;
+      letter-spacing: 0;
+      text-wrap: balance;
+    }
+
+    .signal-list {
+      display: grid;
+      gap: 0;
+      border-top: 1px solid var(--brand-color-border-default);
+    }
+
+    .signal-row {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      gap: 16px;
+      padding: 22px 0;
+      border-bottom: 1px solid var(--brand-color-border-muted);
+    }
+
+    .signal-row:last-child {
+      border-bottom: 0;
+    }
+
+    .signal-num {
+      color: var(--base-color-scale-green-2);
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+
+    .signal-row h3 {
+      margin: 0;
+      color: #fff;
+      font-size: 1.125rem;
+      font-weight: 560;
+      line-height: 1.35;
+    }
+
+    .signal-row p {
+      margin: 8px 0 0;
+      color: var(--brand-color-text-muted);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    .workflow {
+      position: relative;
+      margin-top: 20px;
+    }
+
+    .workflow::before {
+      content: "";
+      position: absolute;
+      top: 36px;
+      left: 6%;
+      right: 6%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--brand-color-border-default), var(--brand-color-border-default), transparent);
+    }
+
+    .workflow-grid {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .workflow-step {
+      min-width: 0;
+    }
+
+    .workflow-node {
+      width: 72px;
+      height: 72px;
+      margin-bottom: 24px;
+      display: grid;
+      place-items: center;
+      color: var(--base-color-scale-green-2);
+      border: 1px solid var(--brand-color-border-default);
+      border-radius: 50%;
+      background: var(--brand-color-canvas-subtle);
+      box-shadow: 0 0 0 10px #000;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .workflow-step h3 {
+      margin: 0;
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 560;
+      line-height: 1.35;
+    }
+
+    .workflow-step p {
+      margin: 9px 0 0;
+      color: var(--brand-color-text-muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .product-console {
+      overflow: hidden;
+      box-shadow: var(--shadow-panel);
+    }
+
+    .product-tabs {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      min-height: 54px;
+      padding: 8px;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--brand-color-border-default);
+      background: #0f1511;
+    }
+
+    .tab-button {
+      flex: 0 0 auto;
+      min-height: 38px;
+      padding: 9px 14px;
+      color: var(--brand-color-text-muted);
+      background: transparent;
+      border: 0;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 560;
+      transition:
+        color var(--brand-animation-duration-fast) var(--brand-animation-easing-default),
+        background var(--brand-animation-duration-fast) var(--brand-animation-easing-default);
+    }
+
+    .tab-button[aria-selected="true"],
+    .tab-button:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, .08);
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.is-active {
+      display: block;
+    }
+
+    .console-table-wrap {
+      overflow-x: auto;
+    }
+
+    .console-table {
+      width: 100%;
+      min-width: 920px;
+      border-collapse: collapse;
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+
+    .console-table th,
+    .console-table td {
+      padding: 15px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--brand-color-border-muted);
+      white-space: nowrap;
+    }
+
+    .console-table th {
+      color: var(--base-color-scale-gray-3);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      background: rgba(0, 0, 0, .18);
+    }
+
+    .console-table td {
+      color: var(--base-color-scale-gray-1);
+    }
+
+    .console-table tr:hover td {
+      background: rgba(255, 255, 255, .028);
+    }
+
+    .hash {
+      color: var(--base-color-scale-gray-3);
+    }
+
+    .drift-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .drift-panel {
+      overflow: hidden;
+    }
+
+    .drift-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--brand-color-border-default);
+      background: rgba(15, 21, 17, .72);
+    }
+
+    .drift-head h3 {
+      margin: 0;
+      color: #fff;
+      font-size: 1.35rem;
+      font-weight: 500;
+      line-height: 1.2;
+    }
+
+    .drift-body {
+      padding: 20px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+
+    .kv-row {
+      display: grid;
+      grid-template-columns: 164px minmax(0, 1fr);
+      gap: 14px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--brand-color-border-muted);
+    }
+
+    .kv-row:last-child {
+      border-bottom: 0;
+    }
+
+    .kv-row span:first-child {
+      color: var(--base-color-scale-gray-3);
+    }
+
+    .kv-row span:last-child {
+      color: #fff;
+      overflow-wrap: anywhere;
+    }
+
+    .decision-banner {
+      margin-top: 18px;
+      padding: 16px 18px;
+      color: var(--base-color-scale-gray-1);
+      border: 1px solid rgba(255, 107, 107, .32);
+      border-radius: var(--radius);
+      background: rgba(255, 107, 107, .08);
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+
+    .receipt-layout {
+      display: grid;
+      grid-template-columns: minmax(0, .9fr) minmax(420px, 1fr);
+      gap: 42px;
+      align-items: start;
+    }
+
+    .receipt-panel {
+      overflow: hidden;
+      box-shadow: var(--shadow-panel);
+    }
+
+    .receipt-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 20px;
+      border-bottom: 1px solid var(--brand-color-border-default);
+      background: #0f1511;
+    }
+
+    .receipt-header strong {
+      color: #fff;
+      font-size: 18px;
+      font-weight: 560;
+    }
+
+    .receipt-rows {
+      padding: 6px 20px;
+    }
+
+    .receipt-row {
+      display: grid;
+      grid-template-columns: 190px minmax(0, 1fr);
+      gap: 18px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--brand-color-border-muted);
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+
+    .receipt-row:last-child {
+      border-bottom: 0;
+    }
+
+    .receipt-row span:first-child {
+      color: var(--base-color-scale-gray-3);
+    }
+
+    .receipt-row span:last-child {
+      color: #fff;
+      overflow-wrap: anywhere;
+    }
+
+    .receipt-foot {
+      padding: 16px 20px;
+      color: var(--base-color-scale-green-2);
+      border-top: 1px solid var(--brand-color-border-default);
+      background: rgba(95, 237, 131, .07);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .use-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .use-card {
+      padding: 22px;
+      min-height: 220px;
+    }
+
+    .use-card h3 {
+      margin: 0;
+      color: #fff;
+      font-size: 1.25rem;
+      font-weight: 560;
+      line-height: 1.25;
+    }
+
+    .use-card p {
+      margin: 12px 0 0;
+      color: var(--brand-color-text-muted);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    .limit-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .limit-panel {
+      padding: 18px;
+      min-height: 178px;
+    }
+
+    .limit-panel strong {
+      display: block;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 560;
+      line-height: 1.3;
+    }
+
+    .limit-panel p {
+      margin: 10px 0 0;
+      color: var(--brand-color-text-muted);
+      font-size: 14px;
+      line-height: 1.48;
+    }
+
+    .final-cta {
+      padding: 124px 0;
+      border-top: 1px solid rgba(25, 31, 27, .95);
+      text-align: center;
+      background:
+        radial-gradient(720px 320px at 50% 100%, rgba(95, 237, 131, .10), transparent 70%),
+        #000;
+    }
+
+    .final-cta .section-title {
+      margin-inline: auto;
+    }
+
+    .final-cta .section-lead {
+      max-width: 740px;
+      margin: 18px auto 0;
+    }
+
+    .final-actions {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 30px;
+    }
+
+    .footer {
+      padding: 52px 0 34px;
+      color: var(--brand-color-text-muted);
+      background: #000;
+      border-top: 1px solid var(--brand-color-border-muted);
+    }
+
+    .footer-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 1.4fr) repeat(4, minmax(130px, 1fr));
+      gap: 32px;
+    }
+
+    .footer p {
+      max-width: 38ch;
+      margin: 14px 0 0;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    .footer h3 {
+      margin: 0 0 12px;
+      color: var(--base-color-scale-gray-2);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .footer a:not(.brand) {
+      display: block;
+      padding: 5px 0;
+      color: var(--base-color-scale-gray-1);
+      font-size: 14px;
+      transition: color var(--brand-animation-duration-fast) var(--brand-animation-easing-default);
+    }
+
+    .footer a:hover {
+      color: #fff;
+    }
+
+    .footer-bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 36px;
+      padding-top: 22px;
+      border-top: 1px solid var(--brand-color-border-muted);
+      color: var(--base-color-scale-gray-3);
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+
+    .contact-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: rgba(0, 0, 0, .72);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .contact-modal[hidden] {
+      display: none;
+    }
+
+    .contact-card {
+      position: relative;
+      width: min(640px, 100%);
+      padding: 28px;
+      color: #fff;
+      border: 1px solid var(--brand-color-border-default);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, #0f1511, #060907);
+      box-shadow: var(--shadow-panel);
+    }
+
+    .contact-close {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: rgba(255, 255, 255, .08);
+      border: 1px solid rgba(255, 255, 255, .14);
+      border-radius: 6px;
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    .contact-card h2 {
+      max-width: 540px;
+      margin: 0;
+      font-size: 2.25rem;
+      font-weight: 440;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    .contact-card p {
+      max-width: 58ch;
+      margin: 12px 0 0;
+      color: var(--brand-color-text-muted);
+      font-size: 16px;
+      line-height: 1.6;
+    }
+
+    .contact-email {
+      display: inline-flex;
+      margin-top: 20px;
+      color: var(--brand-color-text-link-rest);
+      font-family: var(--font-mono);
+      font-size: 14px;
+    }
+
+    .contact-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .message-box {
+      margin-top: 18px;
+      overflow: hidden;
+      border: 1px solid var(--brand-color-border-default);
+      border-radius: var(--radius);
+      background: #000;
+    }
+
+    .message-box span {
+      display: block;
+      padding: 10px 13px;
+      color: var(--base-color-scale-gray-3);
+      border-bottom: 1px solid var(--brand-color-border-muted);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .message-box pre {
+      margin: 0;
+      padding: 14px;
+      color: var(--base-color-scale-gray-1);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+
+    .copy-ok {
+      color: #fff;
+      background: #0d6731;
+      border-color: transparent;
+    }
+
+    .reveal {
+      opacity: 0;
+      transform: translateY(22px);
+      transition:
+        opacity var(--brand-animation-duration-default) var(--brand-animation-easing-default),
+        transform var(--brand-animation-duration-default) var(--brand-animation-easing-default);
+    }
+
+    .reveal.is-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .workflow-step.reveal:nth-child(2) { transition-delay: .05s; }
+    .workflow-step.reveal:nth-child(3) { transition-delay: .10s; }
+    .workflow-step.reveal:nth-child(4) { transition-delay: .15s; }
+    .workflow-step.reveal:nth-child(5) { transition-delay: .20s; }
+    .workflow-step.reveal:nth-child(6) { transition-delay: .25s; }
+
+    @keyframes lineReveal {
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 1120px) {
+      .hero h1 {
+        font-size: 4.55rem;
+      }
+
+      .section-title {
+        font-size: 3.35rem;
+      }
+
+      .window-body,
+      .problem-grid,
+      .receipt-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .console-sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--brand-color-border-muted);
+      }
+
+      .proof-strip {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .proof-item:nth-child(3) {
+        border-right: 0;
+      }
+
+      .proof-item:nth-child(n + 4) {
+        border-top: 1px solid var(--brand-color-border-muted);
+      }
+
+      .workflow-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 34px 20px;
+      }
+
+      .workflow::before {
+        display: none;
+      }
+
+      .use-grid,
+      .limit-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .footer-grid {
+        grid-template-columns: 1.3fr 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .shell,
+      .proof-strip,
+      .nav-inner {
+        width: min(100% - 32px, var(--page-max));
+      }
+
+      .nav-inner {
+        height: 64px;
+        position: relative;
+        justify-content: space-between;
+      }
+
+      .nav-links,
+      .nav-actions {
+        display: none;
+      }
+
+      .brand {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+
+      .menu-toggle {
+        display: inline-flex;
+        order: -1;
+        margin-left: 0;
+      }
+
+      .mobile-nav-cta {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .mobile-menu {
+        position: fixed;
+        inset: 64px 0 auto;
+        z-index: 49;
+        display: grid;
+        gap: 4px;
+        padding: 16px;
+        background: rgba(0, 0, 0, .98);
+        border-bottom: 1px solid var(--brand-color-border-default);
+        transform: translateY(-10px);
+        opacity: 0;
+        pointer-events: none;
+        transition:
+          opacity var(--brand-animation-duration-fast) var(--brand-animation-easing-default),
+          transform var(--brand-animation-duration-fast) var(--brand-animation-easing-default);
+      }
+
+      .mobile-menu.is-open {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+      }
+
+      .mobile-menu a {
+        display: flex;
+        min-height: 44px;
+        align-items: center;
+        color: var(--base-color-scale-gray-0);
+        font-size: 16px;
+        font-weight: 560;
+      }
+
+      .mobile-menu .btn {
+        width: 100%;
+        margin-top: 8px;
+      }
+
+      .hero {
+        min-height: auto;
+        padding: 58px 0 30px;
+      }
+
+      .hero h1 {
+        font-size: 3.35rem;
+        line-height: 1.08;
+      }
+
+      .hero-lead {
+        font-size: 1.1rem;
+        line-height: 1.5;
+      }
+
+      .hero-actions,
+      .final-actions,
+      .contact-actions {
+        display: grid;
+        width: 100%;
+        grid-template-columns: 1fr;
+      }
+
+      .hero-actions .btn,
+      .final-actions .btn,
+      .contact-actions .btn {
+        width: 100%;
+      }
+
+      .hero-visual {
+        margin-top: 48px;
+      }
+
+      .window-toolbar {
+        gap: 10px;
+        padding: 0 12px;
+      }
+
+      .window-dots,
+      .window-status {
+        display: none;
+      }
+
+      .window-tab {
+        padding: 0 12px;
+      }
+
+      .console-sidebar {
+        padding: 16px;
+      }
+
+      .editor-console {
+        font-size: 12px;
+      }
+
+      .code-line {
+        grid-template-columns: 38px minmax(0, 1fr);
+      }
+
+      .line-code {
+        padding: 0 14px;
+      }
+
+      .proof-strip,
+      .workflow-grid,
+      .drift-grid,
+      .use-grid,
+      .limit-grid,
+      .section-head,
+      .footer-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .proof-item {
+        border-right: 0;
+        border-top: 1px solid var(--brand-color-border-muted);
+      }
+
+      .proof-item:first-child {
+        border-top: 0;
+      }
+
+      .section {
+        padding: 82px 0;
+      }
+
+      .section-head {
+        gap: 18px;
+        margin-bottom: 34px;
+      }
+
+      .section-title {
+        font-size: 2.55rem;
+      }
+
+      .section-lead {
+        font-size: 1.03rem;
+      }
+
+      .problem-panel {
+        min-height: 320px;
+        padding: 22px;
+      }
+
+      .problem-panel h3 {
+        font-size: 2rem;
+      }
+
+      .signal-row {
+        grid-template-columns: 40px minmax(0, 1fr);
+        gap: 12px;
+      }
+
+      .workflow-node {
+        width: 58px;
+        height: 58px;
+        margin-bottom: 14px;
+        box-shadow: none;
+      }
+
+      .kv-row,
+      .receipt-row {
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+
+      .final-cta {
+        padding: 86px 0;
+      }
+
+      .contact-card {
+        padding: 24px;
+      }
+
+      .contact-card h2 {
+        padding-right: 34px;
+        font-size: 2rem;
+      }
+    }
+
+    @media (max-width: 430px) {
+      .hero h1 {
+        font-size: 3rem;
+      }
+
+      .section-title {
+        font-size: 2.35rem;
+      }
+
+      .btn {
+        white-space: normal;
+        text-align: center;
+      }
+
+      .console-table {
+        min-width: 760px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+
+      *,
+      *::before,
+      *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+
+      .reveal,
+      .code-line {
+        opacity: 1;
+        transform: none;
+      }
+    }
+  </style>
 </head>
 <body>
-<nav class="nav" id="nav">
-  <div class="nav-inner">
-    <a class="brand" href="#top" aria-label="Interlock home"><span class="brand-mark" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 4 7v6c0 5 3.4 7.7 8 9 4.6-1.3 8-4 8-9V7l-8-4Z"/><path d="m9 12 2 2 4-5"/></svg></span>Interlock</a>
-    <ul class="nav-links">
-      <li><a href="#product">Product</a></li><li><a href="#demo">Demo</a></li><li><a href="#receipts">Security Receipts</a></li><li><a href="https://github.com/MaazAhmed47/Interlock#quick-start" target="_blank" rel="noopener">Docs</a></li><li><a href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">GitHub</a></li><li><a href="#pilot" data-contact="pilot">Contact</a></li>
-    </ul>
-    <div class="nav-actions"><a class="btn btn-secondary" href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">View GitHub</a><a class="btn btn-primary" href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" data-contact="pilot">Book Pilot</a></div>
-    <button class="menu-btn" id="menu-toggle" type="button" aria-label="Open navigation" aria-expanded="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" id="site-nav" aria-label="Primary navigation">
+    <div class="nav-inner">
+      <a class="brand" href="#top" aria-label="Interlock home">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>Interlock</span>
+      </a>
+
+      <div class="nav-links" aria-label="Primary links">
+        <a href="#problem">Problem</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#console">Console</a>
+        <a href="#receipts">Receipts</a>
+        <a href="#limits">Limits</a>
+      </div>
+
+      <div class="nav-actions">
+        <a class="btn btn-subtle" href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">Repo</a>
+        <button class="btn btn-primary" type="button" data-contact="pilot">Book pilot</button>
+      </div>
+
+      <button class="menu-toggle" id="menu-toggle" type="button" aria-label="Open menu" aria-controls="mobile-menu" aria-expanded="false">
+        <span class="menu-lines" aria-hidden="true"><span></span><span></span><span></span></span>
+      </button>
+      <button class="mobile-nav-cta" type="button" data-contact="pilot">Pilot</button>
+    </div>
+  </nav>
+
+  <div class="mobile-menu" id="mobile-menu" aria-label="Mobile navigation">
+    <a href="#problem">Problem</a>
+    <a href="#workflow">Workflow</a>
+    <a href="#console">Console</a>
+    <a href="#receipts">Receipts</a>
+    <a href="#limits">Limits</a>
+    <a href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">View GitHub repo</a>
+    <button class="btn btn-primary" type="button" data-contact="pilot">Book design partner pilot</button>
   </div>
-  <div class="mobile-panel" id="mobile-menu"><a href="#product">Product</a><a href="#demo">Demo</a><a href="#receipts">Security Receipts</a><a href="https://github.com/MaazAhmed47/Interlock#quick-start" target="_blank" rel="noopener">Docs</a><a href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">GitHub</a><a href="#pilot" data-contact="pilot">Contact</a><a class="btn btn-primary" href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" data-contact="pilot">Book design partner pilot</a></div>
-</nav>
-<header class="hero" id="top">
-  <div class="hero-grid">
-    <div class="hero-copy reveal"><h1>Runtime trust for MCP tools after approval.</h1><p class="hero-sub">Interlock detects when approved MCP tools drift in behavior, permissions, data access, external reach, or side effects — then quarantines risky changes before agents keep using them.</p><div class="hero-actions"><a class="btn btn-primary" href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" data-contact="pilot">Book design partner pilot <span class="arrow">→</span></a><a class="btn btn-secondary" href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">View GitHub repo <span class="arrow">→</span></a></div><div class="hero-meta"><span>Open source</span><span>Self-hosted pilots</span><span>403 → 200 proof</span><span>Security Receipts</span></div></div>
-    <div class="console reveal" aria-label="Runtime trust console showing effective permission drift quarantine">
-      <div class="console-top"><span class="dots"><i></i><i></i><i></i></span><span>interlock/runtime-console</span><span class="console-live">LIVE</span></div>
-      <div class="console-body">
-        <div class="console-block line-animate"><div class="console-k">approved_baseline</div><div class="console-grid"><span class="ck">tool</span><span class="cv">query_customers</span><span class="ck">expected</span><span class="cv"><span class="pill red">403 denied</span></span></div></div>
-        <div class="console-block line-animate"><div class="console-k">runtime_probe</div><div class="console-grid"><span class="ck">tool</span><span class="cv">query_customers</span><span class="ck">observed</span><span class="cv"><span class="pill green">200 allowed</span></span></div></div>
-        <div class="console-block line-animate"><div class="console-k">interlock_decision</div><div class="console-grid"><span class="ck">drift</span><span class="cv">effective_permission_expansion</span><span class="ck">severity</span><span class="cv"><span class="pill red">critical</span></span><span class="ck">action</span><span class="cv"><span class="pill warn">quarantine</span></span><span class="ck">receipt</span><span class="cv"><span class="pill green">chain_verified</span></span></div></div>
+
+  <main id="main">
+    <header class="hero" id="top">
+      <div class="shell hero-inner">
+        <h1 class="reveal">Runtime trust for MCP tools after approval.</h1>
+        <p class="hero-lead reveal">Interlock detects when approved MCP tools drift in behavior, permissions, data access, external reach, or side effects &mdash; then quarantines risky changes before agents keep using them.</p>
+        <div class="hero-actions reveal">
+          <button class="btn btn-primary" type="button" data-contact="pilot">Book design partner pilot <span class="arrow" aria-hidden="true">&rarr;</span></button>
+          <a class="btn btn-secondary" href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">View GitHub repo <span class="arrow" aria-hidden="true">&rarr;</span></a>
+        </div>
+
+        <div class="hero-visual reveal" aria-label="Interlock runtime trust console">
+          <div class="developer-window">
+            <div class="window-toolbar">
+              <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              <div class="window-tabs" aria-hidden="true">
+                <span class="window-tab is-active">runtime_probe.yml</span>
+                <span class="window-tab">receipt.chain</span>
+                <span class="window-tab">policy.diff</span>
+              </div>
+              <span class="window-status">chain_verified</span>
+            </div>
+            <div class="window-body">
+              <aside class="console-sidebar">
+                <h2>MCP runtime trust layer</h2>
+                <p>Same tool name. Same approved manifest. Runtime behavior moved from denied to allowed, so Interlock holds the tool before the agent continues.</p>
+                <div class="side-stack" aria-hidden="true">
+                  <div class="side-row"><span class="side-key">server</span><span>crm-mcp</span></div>
+                  <div class="side-row"><span class="side-key">probe</span><span>non-prod</span></div>
+                  <div class="side-row"><span class="side-key">decision</span><span class="status-pill warn">quarantine</span></div>
+                </div>
+              </aside>
+              <div class="editor-console" aria-label="Runtime console content">
+                <div class="code-line"><span class="line-no">01</span><span class="line-code"><span class="code-head">approved_baseline:</span></span></div>
+                <div class="code-line"><span class="line-no">02</span><span class="line-code">  <span class="code-key">tool:</span> <span class="code-value">query_customers</span></span></div>
+                <div class="code-line"><span class="line-no">03</span><span class="line-code">  <span class="code-key">expected:</span> <span class="status-pill red">403 denied</span></span></div>
+                <div class="code-line"><span class="line-no">04</span><span class="line-code"></span></div>
+                <div class="code-line"><span class="line-no">05</span><span class="line-code"><span class="code-head">runtime_probe:</span></span></div>
+                <div class="code-line"><span class="line-no">06</span><span class="line-code">  <span class="code-key">tool:</span> <span class="code-value">query_customers</span></span></div>
+                <div class="code-line"><span class="line-no">07</span><span class="line-code">  <span class="code-key">observed:</span> <span class="status-pill green">200 allowed</span></span></div>
+                <div class="code-line"><span class="line-no">08</span><span class="line-code"></span></div>
+                <div class="code-line"><span class="line-no">09</span><span class="line-code"><span class="code-head">interlock_decision:</span></span></div>
+                <div class="code-line"><span class="line-no">10</span><span class="line-code">  <span class="code-key">drift:</span> <span class="code-value">effective_permission_expansion</span></span></div>
+                <div class="code-line"><span class="line-no">11</span><span class="line-code">  <span class="code-key">severity:</span> <span class="status-pill red">critical</span>  <span class="code-key">action:</span> <span class="status-pill warn">quarantine</span>  <span class="code-key">receipt:</span> <span class="status-pill green">chain_verified</span></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="proof-strip reveal" aria-label="Compact proof strip">
+        <div class="proof-item"><strong>Behavioral drift proof</strong><span>Expected denial became observed access.</span></div>
+        <div class="proof-item"><strong>Same manifest hash</strong><span>Surface stayed stable while behavior moved.</span></div>
+        <div class="proof-item"><strong>Quarantine decision</strong><span>Risky tool calls stop before continuation.</span></div>
+        <div class="proof-item"><strong>Security Receipt</strong><span>Decision evidence is structured and signed.</span></div>
+        <div class="proof-item"><strong>Chain verified</strong><span>Audit history can be recomputed.</span></div>
+      </div>
+    </header>
+
+    <section class="section" id="problem">
+      <div class="shell">
+        <div class="section-head">
+          <div class="reveal">
+            <p class="section-kicker">Problem</p>
+            <h2 class="section-title">Approval is not enough.</h2>
+          </div>
+          <p class="section-lead reveal">MCP tools carry permissions, data access, external reach, and side effects. A one-time approval only proves what was reviewed then, not what the agent is allowed to do now.</p>
+        </div>
+
+        <div class="problem-grid">
+          <article class="problem-panel reveal">
+            <h3>Post-approval MCP drift is the gap between a trusted name and an unsafe runtime boundary.</h3>
+            <div class="side-stack" aria-hidden="true">
+              <div class="side-row"><span class="side-key">baseline</span><span class="status-pill red">403 denied</span></div>
+              <div class="side-row"><span class="side-key">runtime</span><span class="status-pill green">200 allowed</span></div>
+              <div class="side-row"><span class="side-key">action</span><span class="status-pill warn">hold tool</span></div>
+            </div>
+          </article>
+
+          <div class="signal-list reveal">
+            <article class="signal-row">
+              <span class="signal-num">01</span>
+              <div>
+                <h3>Tool manifests can stay unchanged while effective behavior changes.</h3>
+                <p>Surface diffing is useful, but it does not prove the approved permission boundary is still true.</p>
+              </div>
+            </article>
+            <article class="signal-row">
+              <span class="signal-num">02</span>
+              <div>
+                <h3>Agents inherit runtime access, not screenshots of past approvals.</h3>
+                <p>Interlock checks the observed outcome before risky MCP tools keep executing in the workflow.</p>
+              </div>
+            </article>
+            <article class="signal-row">
+              <span class="signal-num">03</span>
+              <div>
+                <h3>Security teams need evidence that survives review.</h3>
+                <p>Every quarantine decision can point to the baseline, probe, drift type, and receipt chain.</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt" id="workflow">
+      <div class="shell">
+        <div class="section-head">
+          <div class="reveal">
+            <p class="section-kicker">Workflow</p>
+            <h2 class="section-title">How Interlock works</h2>
+          </div>
+          <p class="section-lead reveal">A runtime path for teams operating agents against MCP servers and tools they do not fully control.</p>
+        </div>
+
+        <div class="workflow">
+          <div class="workflow-grid">
+            <article class="workflow-step reveal">
+              <div class="workflow-node">01</div>
+              <h3>Baseline approved tool</h3>
+              <p>Record the approved MCP surface and expected behavior.</p>
+            </article>
+            <article class="workflow-step reveal">
+              <div class="workflow-node">02</div>
+              <h3>Run safe probe</h3>
+              <p>Test behavior in a scoped non-production workflow.</p>
+            </article>
+            <article class="workflow-step reveal">
+              <div class="workflow-node">03</div>
+              <h3>Classify drift</h3>
+              <p>Compare observed permissions, data reach, and side effects.</p>
+            </article>
+            <article class="workflow-step reveal">
+              <div class="workflow-node">04</div>
+              <h3>Quarantine risk</h3>
+              <p>Hold the tool before agents keep using the changed boundary.</p>
+            </article>
+            <article class="workflow-step reveal">
+              <div class="workflow-node">05</div>
+              <h3>Emit receipt</h3>
+              <p>Create structured evidence for the decision and review path.</p>
+            </article>
+            <article class="workflow-step reveal">
+              <div class="workflow-node">06</div>
+              <h3>Verify chain</h3>
+              <p>Recompute hashes and prove the audit history stayed intact.</p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="console">
+      <div class="shell">
+        <div class="section-head">
+          <div class="reveal">
+            <p class="section-kicker">Product console</p>
+            <h2 class="section-title">Inspect runtime trust decisions like code.</h2>
+          </div>
+          <p class="section-lead reveal">The console is built around drift queues, receipt evidence, and MCP inventory review rather than generic alert dashboards.</p>
+        </div>
+
+        <div class="product-console reveal">
+          <div class="product-tabs" role="tablist" aria-label="Product console tabs">
+            <button class="tab-button" id="tab-drift" type="button" role="tab" aria-selected="true" aria-controls="panel-drift" data-tab="drift">Drift queue</button>
+            <button class="tab-button" id="tab-receipts" type="button" role="tab" aria-selected="false" aria-controls="panel-receipts" data-tab="receipts">Security Receipts</button>
+            <button class="tab-button" id="tab-inventory" type="button" role="tab" aria-selected="false" aria-controls="panel-inventory" data-tab="inventory">MCP inventory</button>
+            <button class="tab-button" id="tab-policy" type="button" role="tab" aria-selected="false" aria-controls="panel-policy" data-tab="policy">Policy decisions</button>
+          </div>
+
+          <div class="tab-panel is-active" id="panel-drift" role="tabpanel" aria-labelledby="tab-drift" data-panel="drift">
+            <div class="console-table-wrap">
+              <table class="console-table">
+                <thead>
+                  <tr><th>tool_name</th><th>server_id</th><th>expected</th><th>observed</th><th>decision</th><th>severity</th><th>receipt</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>query_customers</td><td>crm-mcp</td><td><span class="status-pill red">403 denied</span></td><td><span class="status-pill green">200 allowed</span></td><td><span class="status-pill warn">quarantine</span></td><td><span class="status-pill red">critical</span></td><td class="hash">rcpt_8f3a9c2e</td></tr>
+                  <tr><td>list_tables</td><td>postgres-mcp</td><td><span class="status-pill green">allowed</span></td><td><span class="status-pill green">allowed</span></td><td><span class="status-pill green">allow</span></td><td><span class="status-pill neutral">none</span></td><td class="hash">rcpt_1aa45d90</td></tr>
+                  <tr><td>send_update</td><td>slack-mcp</td><td><span class="status-pill blue">known shape</span></td><td><span class="status-pill blue">new field</span></td><td><span class="status-pill blue">monitor</span></td><td><span class="status-pill warn">medium</span></td><td class="hash">rcpt_cc82f10b</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="panel-receipts" role="tabpanel" aria-labelledby="tab-receipts" data-panel="receipts">
+            <div class="console-table-wrap">
+              <table class="console-table">
+                <thead>
+                  <tr><th>receipt_id</th><th>decision</th><th>baseline_hash</th><th>current_hash</th><th>chain</th><th>created</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>rcpt_8f3a9c2e</td><td><span class="status-pill warn">quarantine</span></td><td class="hash">sha256:92b1...e8f0</td><td class="hash">sha256:92b1...e8f0</td><td><span class="status-pill green">verified</span></td><td>21:04:18</td></tr>
+                  <tr><td>rcpt_1aa45d90</td><td><span class="status-pill green">allow</span></td><td class="hash">sha256:a9d2...7bc1</td><td class="hash">sha256:a9d2...7bc1</td><td><span class="status-pill green">verified</span></td><td>21:04:11</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="panel-inventory" role="tabpanel" aria-labelledby="tab-inventory" data-panel="inventory">
+            <div class="console-table-wrap">
+              <table class="console-table">
+                <thead>
+                  <tr><th>server_id</th><th>tool_count</th><th>owner</th><th>external reach</th><th>last baseline</th><th>trust state</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>crm-mcp</td><td>18</td><td>revops-platform</td><td><span class="status-pill red">customer data</span></td><td>21:01:02</td><td><span class="status-pill warn">held</span></td></tr>
+                  <tr><td>postgres-mcp</td><td>12</td><td>data-platform</td><td><span class="status-pill blue">internal db</span></td><td>20:57:40</td><td><span class="status-pill green">trusted</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="tab-panel" id="panel-policy" role="tabpanel" aria-labelledby="tab-policy" data-panel="policy">
+            <div class="console-table-wrap">
+              <table class="console-table">
+                <thead>
+                  <tr><th>agent_role</th><th>tool</th><th>policy result</th><th>rbac</th><th>response scan</th><th>next action</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>support_agent</td><td>query_customers</td><td><span class="status-pill warn">requires review</span></td><td><span class="status-pill red">expanded</span></td><td><span class="status-pill green">clean</span></td><td>quarantine</td></tr>
+                  <tr><td>readonly_agent</td><td>list_tables</td><td><span class="status-pill green">allow</span></td><td><span class="status-pill green">within role</span></td><td><span class="status-pill green">clean</span></td><td>continue</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt" id="behavioral">
+      <div class="shell">
+        <div class="section-head">
+          <div class="reveal">
+            <p class="section-kicker">Behavioral drift</p>
+            <h2 class="section-title">Same tool. Same manifest. Different behavior.</h2>
+          </div>
+          <p class="section-lead reveal">The strongest proof is the runtime outcome: a tool expected to deny access returns allowed while the approved surface still appears unchanged.</p>
+        </div>
+
+        <div class="drift-grid">
+          <article class="drift-panel reveal">
+            <div class="drift-head">
+              <h3>Approved baseline</h3>
+              <span class="status-pill red">expected denied</span>
+            </div>
+            <div class="drift-body">
+              <div class="kv-row"><span>tool</span><span>query_customers</span></div>
+              <div class="kv-row"><span>expected</span><span>403 denied</span></div>
+              <div class="kv-row"><span>manifest_hash</span><span>sha256:92b1...e8f0</span></div>
+              <div class="kv-row"><span>approval_state</span><span>approved</span></div>
+            </div>
+          </article>
+
+          <article class="drift-panel reveal">
+            <div class="drift-head">
+              <h3>Runtime probe</h3>
+              <span class="status-pill green">observed allowed</span>
+            </div>
+            <div class="drift-body">
+              <div class="kv-row"><span>tool</span><span>query_customers</span></div>
+              <div class="kv-row"><span>observed</span><span>200 allowed</span></div>
+              <div class="kv-row"><span>manifest_hash</span><span>sha256:92b1...e8f0</span></div>
+              <div class="kv-row"><span>drift_type</span><span>effective_permission_expansion</span></div>
+            </div>
+          </article>
+        </div>
+
+        <div class="decision-banner reveal"><strong>Interlock decision:</strong> critical drift -> quarantine -> receipt generated -> chain verified.</div>
+      </div>
+    </section>
+
+    <section class="section" id="receipts">
+      <div class="shell receipt-layout">
+        <div class="reveal">
+          <p class="section-kicker">Security Receipt</p>
+          <h2 class="section-title">Every runtime decision leaves evidence.</h2>
+          <p class="section-lead" style="margin-top:18px">Interlock receipts connect baseline, probe, decision, and hash-chain verification so security teams can review what happened without reconstructing it from screenshots.</p>
+        </div>
+
+        <article class="receipt-panel reveal" aria-label="Security Receipt preview">
+          <div class="receipt-header">
+            <strong>Security Receipt</strong>
+            <span class="status-pill green">chain_verified</span>
+          </div>
+          <div class="receipt-rows">
+            <div class="receipt-row"><span>receipt_id</span><span>rcpt_8f3a9c2e</span></div>
+            <div class="receipt-row"><span>server_id</span><span>crm-mcp</span></div>
+            <div class="receipt-row"><span>tool_name</span><span>query_customers</span></div>
+            <div class="receipt-row"><span>expected_outcome</span><span>403 denied</span></div>
+            <div class="receipt-row"><span>observed_outcome</span><span>200 allowed</span></div>
+            <div class="receipt-row"><span>drift_type</span><span>effective_permission_expansion</span></div>
+            <div class="receipt-row"><span>decision</span><span>quarantine</span></div>
+            <div class="receipt-row"><span>baseline_hash</span><span>sha256:92b1...e8f0</span></div>
+            <div class="receipt-row"><span>current_hash</span><span>sha256:92b1...e8f0</span></div>
+          </div>
+          <div class="receipt-foot">Manifest hash unchanged. Behavior changed. Runtime held the tool before agent continuation.</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section alt" id="usecases">
+      <div class="shell">
+        <div class="section-head">
+          <div class="reveal">
+            <p class="section-kicker">Use cases</p>
+            <h2 class="section-title">Built for teams with real MCP blast radius.</h2>
+          </div>
+          <p class="section-lead reveal">Best fit: teams operating agents against tools, gateways, and external MCP servers where permission drift matters more than a static approval screen.</p>
+        </div>
+
+        <div class="use-grid">
+          <article class="use-card reveal"><h3>AI-agent teams</h3><p>Keep tool trust aligned as agents gain data, write, send, deploy, and admin paths.</p></article>
+          <article class="use-card reveal"><h3>MCP gateways</h3><p>Add runtime drift checks before forwarding risky tool calls across shared infrastructure.</p></article>
+          <article class="use-card reveal"><h3>Internal platforms</h3><p>Operate bring-your-own MCP servers with evidence, quarantine, and review paths.</p></article>
+          <article class="use-card reveal"><h3>Security engineers</h3><p>Turn tool trust incidents into concrete receipt evidence instead of ad hoc screenshots.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="limits">
+      <div class="shell">
+        <div class="section-head">
+          <div class="reveal">
+            <p class="section-kicker">Honest limits</p>
+            <h2 class="section-title">What Interlock is and is not.</h2>
+          </div>
+          <p class="section-lead reveal">The boundary is intentionally narrow: runtime MCP trust, drift detection, quarantine, and evidence. It is not a broad compliance claim.</p>
+        </div>
+
+        <div class="limit-grid">
+          <article class="limit-panel reveal"><strong>Runtime trust layer</strong><p>Controls MCP tool drift at the agent execution boundary.</p></article>
+          <article class="limit-panel reveal"><strong>Not SAST or DAST</strong><p>It does not replace source scanning, dependency scanning, or app testing.</p></article>
+          <article class="limit-panel reveal"><strong>Not server hardening</strong><p>MCP servers still need auth, validation, isolation, and logs.</p></article>
+          <article class="limit-panel reveal"><strong>Pilot-stage</strong><p>Best suited for design partner and non-production proof work right now.</p></article>
+          <article class="limit-panel reveal"><strong>No certification claims</strong><p>No SOC 2, ISO, HIPAA, or GDPR certification claim is made.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="final-cta" id="pilot">
+      <div class="shell reveal">
+        <h2 class="section-title">Run one drift check before trusting many MCP tools.</h2>
+        <p class="section-lead">Start with a non-production workflow. Baseline the approved tool, probe the runtime behavior, quarantine drift, and review the Security Receipt.</p>
+        <div class="final-actions">
+          <button class="btn btn-primary" type="button" data-contact="drift">Run Drift Check <span class="arrow" aria-hidden="true">&rarr;</span></button>
+          <button class="btn btn-secondary" type="button" data-contact="pilot">Book design partner pilot</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="shell">
+      <div class="footer-grid">
+        <div>
+          <a class="brand" href="#top" aria-label="Interlock home">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span>Interlock</span>
+          </a>
+          <p>MCP runtime trust layer for AI agents. Built for drift checks, quarantine decisions, and receipt evidence.</p>
+        </div>
+        <div>
+          <h3>Product</h3>
+          <a href="#problem">Problem</a>
+          <a href="#workflow">Workflow</a>
+          <a href="#console">Console</a>
+        </div>
+        <div>
+          <h3>Security</h3>
+          <a href="#behavioral">Behavioral drift</a>
+          <a href="#receipts">Security Receipts</a>
+          <a href="#limits">Honest limits</a>
+        </div>
+        <div>
+          <h3>Docs</h3>
+          <a href="https://github.com/MaazAhmed47/Interlock#quick-start" target="_blank" rel="noopener">Quick start</a>
+          <a href="https://interlock.onrender.com/docs" target="_blank" rel="noopener">API reference</a>
+          <a href="/dashboard">Dashboard</a>
+        </div>
+        <div>
+          <h3>Contact</h3>
+          <button class="btn btn-subtle" type="button" data-contact="pilot">Book pilot</button>
+          <a href="mailto:maaz@getinterlock.dev">maaz@getinterlock.dev</a>
+          <a href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">View GitHub repo</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>&copy; 2026 Interlock</span>
+        <span>Runtime trust for MCP tools after approval.</span>
+      </div>
+    </div>
+  </footer>
+
+  <div class="contact-modal" id="contact-modal" role="dialog" aria-modal="true" aria-labelledby="contact-title" hidden>
+    <div class="contact-card">
+      <button class="contact-close" type="button" aria-label="Close contact modal">&times;</button>
+      <p class="section-kicker">Pilot request</p>
+      <h2 id="contact-title">Book a focused Interlock pilot.</h2>
+      <p id="contact-copy">Start with one non-production MCP workflow. We baseline the approved tool, run a safe drift probe, review the quarantine decision, and inspect the Security Receipt.</p>
+      <a class="contact-email" href="mailto:maaz@getinterlock.dev">maaz@getinterlock.dev</a>
+      <div class="contact-actions">
+        <button class="btn btn-secondary" id="copy-email" type="button">Copy email</button>
+        <a class="btn btn-primary" id="open-email" href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot">Open email fallback</a>
+      </div>
+      <div class="message-box">
+        <span>Suggested message</span>
+        <pre id="suggested-message">Hi Maaz, we operate agents against MCP tools we do not fully control. I would like to run a non-production drift check on one workflow.</pre>
       </div>
     </div>
   </div>
-  <div class="proof-strip reveal"><div class="proof-item"><div class="proof-icon">✓</div><strong>Behavioral drift proof</strong><span>Runtime outcome moved after approval.</span></div><div class="proof-item"><div class="proof-icon">↕</div><strong>403 denied → 200 allowed</strong><span>Same tool, same manifest, different behavior.</span></div><div class="proof-item"><div class="proof-icon">#</div><strong>Security Receipt generated</strong><span>Decision evidence is preserved.</span></div><div class="proof-item"><div class="proof-icon">⌁</div><strong>Audit chain verified</strong><span>Hash-linked records can be recomputed.</span></div><div class="proof-item"><div class="proof-icon">⌂</div><strong>Self-hosted pilot</strong><span>Run against isolated, non-production workflows.</span></div></div>
-</header>
-<section class="section" id="product"><div class="wrap"><div class="section-head reveal"><div class="label">Problem</div><h2 class="section-title">Approval is not enough.</h2><p class="section-lead">MCP tools are no longer passive integrations. They carry permissions, side effects, and access to real systems. A one-time approval does not prove the tool is still safe tomorrow.</p></div><div class="cards"><article class="card reveal"><div class="card-icon">{ }</div><h3>Tool manifests can stay the same while behavior changes.</h3><p>Surface diffing catches important drift, but opaque upstream scope changes can make the same call succeed where it used to fail.</p></article><article class="card reveal"><div class="card-icon">403</div><h3>Agents can inherit broader permissions than intended.</h3><p>A static allowlist can still trust the same tool name while the effective permission boundary quietly moved.</p></article><article class="card reveal"><div class="card-icon">#</div><h3>Security teams need evidence, not screenshots.</h3><p>Interlock records what changed, why the runtime held it, and the receipt fields needed for review.</p></article></div></div></section>
-<section class="section" id="workflow"><div class="wrap"><div class="section-head reveal"><div class="label">Workflow</div><h2 class="section-title">How Interlock works</h2><p class="section-lead">A compact runtime path for teams that need to trust MCP tools they do not fully control.</p></div><div class="workflow reveal"><div class="workflow-line"></div><div class="workflow-grid"><div class="step"><div class="step-node"><span class="step-num">01</span></div><h3>Baseline approved MCP tool</h3><p>Capture the known-good surface and expected behavior.</p></div><div class="step"><div class="step-node"><span class="step-num">02</span></div><h3>Run permission probe</h3><p>Use safe canaries for behavioral drift checks.</p></div><div class="step"><div class="step-node"><span class="step-num">03</span></div><h3>Detect runtime drift</h3><p>Classify capability, behavior, effect, and evidence changes.</p></div><div class="step"><div class="step-node"><span class="step-num">04</span></div><h3>Quarantine risky tool</h3><p>Hold dangerous changes before the agent continues.</p></div><div class="step"><div class="step-node"><span class="step-num">05</span></div><h3>Generate receipt</h3><p>Emit structured, recomputable decision evidence.</p></div><div class="step"><div class="step-node"><span class="step-num">06</span></div><h3>Verify audit chain</h3><p>Check the chain and review the exact decision path.</p></div></div></div></div></section>
-<section class="section" id="demo"><div class="wrap"><div class="section-head reveal"><div class="label">Product console</div><h2 class="section-title">A dashboard for runtime MCP trust.</h2><p class="section-lead">The pilot view is built around the decisions security and platform teams actually need to inspect.</p></div><div class="product-console reveal"><div class="tabs" role="tablist"><button class="tab active" type="button">Drift Queue</button><button class="tab" type="button">Security Receipts</button><button class="tab" type="button">MCP Inventory</button><button class="tab" type="button">Audit Log</button><button class="tab" type="button">Policy Decisions</button></div><div class="product-scroll"><table class="table"><thead><tr><th>tool_name</th><th>server_id</th><th>decision</th><th>reason</th><th>severity</th><th>timestamp</th><th>hash snippet</th><th>status</th></tr></thead><tbody><tr><td>query_customers</td><td>crm-mcp</td><td><span class="pill warn">quarantine</span></td><td>403 denied → 200 allowed</td><td><span class="pill red">critical</span></td><td>21:04:18</td><td class="hash">8f3a9c2e</td><td><span class="pill green">receipt</span></td></tr><tr><td>list_tables</td><td>postgres-mcp</td><td><span class="pill green">allowed</span></td><td>matches approved baseline</td><td>none</td><td>21:04:11</td><td class="hash">1aa45d90</td><td><span class="pill green">verified</span></td></tr><tr><td>send_update</td><td>slack-mcp</td><td><span class="pill blue">monitor</span></td><td>response shape changed</td><td>moderate</td><td>21:03:42</td><td class="hash">cc82f10b</td><td><span class="pill blue">review</span></td></tr><tr><td>delete_user</td><td>admin-mcp</td><td><span class="pill red">denied</span></td><td>not in token allowlist</td><td>high</td><td>21:02:57</td><td class="hash">0d7fb912</td><td><span class="pill green">logged</span></td></tr></tbody></table></div></div></div></section>
-<section class="section" id="behavioral"><div class="wrap"><div class="section-head reveal"><div class="label">Behavioral drift</div><h2 class="section-title">Same tool. Same manifest. Different behavior.</h2><p class="section-lead">This is the drift surface diffing misses: nothing visible changed in the MCP tool definition, but the effective permission boundary moved.</p></div><div class="comparison"><article class="compare-card reveal"><header><h3>Before</h3><span class="pill red">expected denied</span></header><div class="compare-body"><div class="row"><span class="ck">tool</span><span class="cv">query_customers</span></div><div class="row"><span class="ck">expected</span><span class="cv">403 denied</span></div><div class="row"><span class="ck">baseline</span><span class="cv">approved</span></div></div></article><article class="compare-card reveal"><header><h3>After</h3><span class="pill green">observed allowed</span></header><div class="compare-body"><div class="row"><span class="ck">tool</span><span class="cv">query_customers</span></div><div class="row"><span class="ck">observed</span><span class="cv">200 allowed</span></div><div class="row"><span class="ck">drift</span><span class="cv">effective permission expansion</span></div></div></article></div><div class="decision-box reveal"><strong>Decision:</strong> critical drift · quarantine · receipt generated · audit verified</div><div class="code reveal"><div class="code-head">behavioral drift proof</div><pre>python demo/behavioral-drift-403-200.py</pre></div></div></section>
-<section class="section" id="receipts"><div class="wrap"><div class="receipt-layout"><div class="section-head reveal"><div class="label">Security Receipts</div><h2 class="section-title">Every runtime decision leaves evidence.</h2><p class="section-lead">Interlock receipts are structured audit artifacts: what was approved, what was observed, why the runtime acted, and how the chain verifies.</p></div><div class="receipt-card reveal"><div class="receipt-head"><strong>Security Receipt</strong><span class="pill green">chain verified</span></div><div class="receipt-rows"><div class="receipt-row"><span>receipt_id</span><span>rcpt_8f3a9c2e</span></div><div class="receipt-row"><span>server_id</span><span>crm-mcp</span></div><div class="receipt-row"><span>tool_name</span><span>query_customers</span></div><div class="receipt-row"><span>expected_outcome</span><span>403 denied</span></div><div class="receipt-row"><span>observed_outcome</span><span>200 allowed</span></div><div class="receipt-row"><span>drift_type</span><span>effective_permission_expansion</span></div><div class="receipt-row"><span>decision</span><span>quarantine</span></div><div class="receipt-row"><span>baseline_hash</span><span>sha256:92b1...e8f0</span></div><div class="receipt-row"><span>current_hash</span><span>sha256:92b1...e8f0</span></div><div class="receipt-row"><span>audit_chain_verified</span><span>true</span></div></div><div class="receipt-foot">manifest hash unchanged · behavior changed · runtime held before execution</div></div></div></div></section>
-<section class="section" id="usecases"><div class="wrap"><div class="section-head reveal"><div class="label">Use cases</div><h2 class="section-title">Built for teams with real MCP blast radius.</h2></div><div class="use-grid"><article class="card reveal"><h3>MCP server builders</h3><p>Show consumers that tool-surface changes can be reviewed and evidenced before runtime trust continues.</p></article><article class="card reveal"><h3>AI agent startups</h3><p>Control the gap between tool approval and tool execution as your agents gain write, send, deploy, and data access.</p></article><article class="card reveal"><h3>Internal platform teams</h3><p>Operate shared MCP gateways with per-workflow evidence, quarantine decisions, and reviewable audit trails.</p></article><article class="card reveal"><h3>Security engineers</h3><p>Evaluate agent-tool risk with concrete drift reports instead of screenshots and one-off manual reviews.</p></article></div></div></section>
-<section class="section limit" id="limits"><div class="wrap"><div class="section-head reveal"><div class="label">Honest limits</div><h2 class="section-title">What Interlock is — and is not.</h2><p class="section-lead">The trust story is stronger when the boundary is explicit. Interlock is a runtime drift-control layer, not a magic compliance stamp.</p></div><div class="limit-grid"><div class="limit-item reveal"><strong>Runtime trust layer</strong><p>Interlock controls drift and evidence at the MCP runtime boundary.</p></div><div class="limit-item reveal"><strong>Not SAST/SCA/DAST</strong><p>It does not replace source scanning, dependency scanning, or dynamic app testing.</p></div><div class="limit-item reveal"><strong>Not secure design replacement</strong><p>MCP servers still need careful auth, validation, isolation, and logging.</p></div><div class="limit-item reveal"><strong>Pilot-stage</strong><p>Best fit is design partner and non-production proof work right now.</p></div><div class="limit-item reveal"><strong>No certification claims</strong><p>No SOC 2, ISO, HIPAA, or GDPR certification claim is made.</p></div></div></div></section>
-<section class="final-cta" id="pilot"><div class="wrap reveal"><h2 class="section-title">Test one MCP workflow before trusting many.</h2><p class="section-lead">Start with one non-production MCP workflow. Prove drift detection, quarantine, receipts, and audit evidence before broad rollout.</p><div class="final-actions"><a class="btn btn-primary" href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" data-contact="pilot">Book pilot <span class="arrow">→</span></a><a class="btn btn-secondary" href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">View GitHub <span class="arrow">→</span></a></div></div></section>
-<footer class="footer"><div class="footer-grid"><div><a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 4 7v6c0 5 3.4 7.7 8 9 4.6-1.3 8-4 8-9V7l-8-4Z"/></svg></span>Interlock</a><p>Runtime trust for MCP tools after approval. Built for drift checks, quarantine decisions, and receipt evidence.</p></div><div><h4>Product</h4><a href="#product">Problem</a><a href="#workflow">Workflow</a><a href="#demo">Console</a></div><div><h4>Docs</h4><a href="#behavioral">Behavioral proof</a><a href="#receipts">Security Receipts</a><a href="#limits">Honest limits</a></div><div><h4>Security</h4><a href="#receipts">Audit evidence</a><a href="#usecases">Use cases</a><a href="https://interlock.onrender.com/docs" target="_blank" rel="noopener">API reference</a></div><div><h4>Contact</h4><a href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">GitHub</a><a href="mailto:maaz@getinterlock.dev">maaz@getinterlock.dev</a><a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" data-contact="pilot">Book pilot</a></div></div><div class="footer-bottom"><span>© 2026 Interlock · Open source</span><span>maaz@getinterlock.dev</span></div></footer>
-<div class="contact-modal" id="contact-panel" role="dialog" aria-modal="true" aria-labelledby="contact-title" hidden><div class="contact-card"><button class="contact-close" type="button" aria-label="Close contact panel">×</button><div class="label">Pilot request</div><h2 id="contact-title">Run a non-production drift check.</h2><p id="contact-copy">Send one risky MCP workflow. I will baseline it, simulate safe drift, show allow/quarantine behavior, and return receipt evidence.</p><div class="contact-actions"><a id="contact-mail" class="btn btn-primary" href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot">Open email</a><button id="copy-email" class="btn btn-secondary" type="button">Copy email</button><a class="btn btn-quiet" href="https://linkedin.com/in/syed-maaz-ahmed" target="_blank" rel="noopener">LinkedIn</a></div><div class="contact-template"><span>Suggested message</span><pre id="contact-template-text">Hi Maaz, we operate agents against MCP tools we do not fully control. I’d like to run a non-production drift check on one workflow.</pre></div></div></div>
-<script>
-(() => {
-  const nav = document.getElementById('nav');
-  const menuToggle = document.getElementById('menu-toggle');
-  const mobileMenu = document.getElementById('mobile-menu');
-  const panel = document.getElementById('contact-panel');
-  const close = panel?.querySelector('.contact-close');
-  const title = document.getElementById('contact-title');
-  const copy = document.getElementById('contact-copy');
-  const mail = document.getElementById('contact-mail');
-  const template = document.getElementById('contact-template-text');
-  const copyEmail = document.getElementById('copy-email');
-  const email = 'maaz@getinterlock.dev';
-  const flows = { pilot: { title: 'Book a focused Interlock pilot.', copy: 'Start with one non-production MCP workflow. We baseline the approved surface, simulate safe drift, review the quarantine decision, and inspect the Security Receipt.', subject: 'Interlock Design Partner Pilot', body: 'Hi Maaz, I want to discuss a focused Interlock pilot. We operate agents against MCP tools we do not fully control. A good non-production workflow to start with is: ' } };
-  const encode = (value) => encodeURIComponent(value).replace(/%20/g, '+');
-  function openPanel(kind='pilot'){ const flow = flows[kind] || flows.pilot; title.textContent = flow.title; copy.textContent = flow.copy; template.textContent = flow.body; mail.href = `mailto:${email}?subject=${encode(flow.subject)}&body=${encode(flow.body)}`; panel.hidden = false; document.body.classList.add('modal-open'); close?.focus(); }
-  function closePanel(){ panel.hidden = true; document.body.classList.remove('modal-open'); }
-  window.addEventListener('scroll', () => nav.classList.toggle('scrolled', window.scrollY > 8), { passive:true });
-  menuToggle?.addEventListener('click', () => { const open = !mobileMenu.classList.contains('open'); mobileMenu.classList.toggle('open', open); menuToggle.setAttribute('aria-expanded', String(open)); });
-  document.querySelectorAll('[data-contact]').forEach((el) => el.addEventListener('click', (event) => { event.preventDefault(); openPanel(el.getAttribute('data-contact') || 'pilot'); mobileMenu?.classList.remove('open'); menuToggle?.setAttribute('aria-expanded','false'); }));
-  close?.addEventListener('click', closePanel); panel?.addEventListener('click', (event) => { if (event.target === panel) closePanel(); }); window.addEventListener('keydown', (event) => { if (event.key === 'Escape' && panel && !panel.hidden) closePanel(); });
-  copyEmail?.addEventListener('click', async () => { try { await navigator.clipboard.writeText(email); copyEmail.textContent = 'Copied email'; copyEmail.classList.add('copy-ok'); setTimeout(() => { copyEmail.textContent = 'Copy email'; copyEmail.classList.remove('copy-ok'); }, 1800); } catch { window.location.href = `mailto:${email}`; } });
-  const requestedContact = new URLSearchParams(window.location.search).get('contact'); if (requestedContact) window.setTimeout(() => openPanel(requestedContact), 120);
-  if ('IntersectionObserver' in window) { const observer = new IntersectionObserver((entries) => entries.forEach((entry) => { if (entry.isIntersecting) { entry.target.classList.add('in'); observer.unobserve(entry.target); } }), { threshold:.14 }); document.querySelectorAll('.reveal').forEach((el) => observer.observe(el)); } else { document.querySelectorAll('.reveal').forEach((el) => el.classList.add('in')); }
-})();
-</script>
+
+  <script>
+    (() => {
+      const nav = document.getElementById('site-nav');
+      const menuToggle = document.getElementById('menu-toggle');
+      const mobileMenu = document.getElementById('mobile-menu');
+      const modal = document.getElementById('contact-modal');
+      const closeModalButton = modal.querySelector('.contact-close');
+      const title = document.getElementById('contact-title');
+      const copy = document.getElementById('contact-copy');
+      const openEmail = document.getElementById('open-email');
+      const copyEmail = document.getElementById('copy-email');
+      const suggestedMessage = document.getElementById('suggested-message');
+      const email = 'maaz@getinterlock.dev';
+      let lastFocus = null;
+
+      const flows = {
+        pilot: {
+          kicker: 'Pilot request',
+          title: 'Book a focused Interlock pilot.',
+          copy: 'Start with one non-production MCP workflow. We baseline the approved tool, run a safe drift probe, review the quarantine decision, and inspect the Security Receipt.',
+          subject: 'Interlock Design Partner Pilot',
+          message: 'Hi Maaz, we operate agents against MCP tools we do not fully control. I would like to run a non-production drift check on one workflow.'
+        },
+        drift: {
+          kicker: 'Drift check',
+          title: 'Run one MCP drift check.',
+          copy: 'Send a candidate non-production MCP workflow. Interlock will show baseline behavior, runtime probe behavior, quarantine decisioning, and receipt evidence.',
+          subject: 'Run Interlock Drift Check',
+          message: 'Hi Maaz, I want to run an Interlock drift check. The MCP workflow I would like to test is:'
+        }
+      };
+
+      function encode(value) {
+        return encodeURIComponent(value).replace(/%20/g, '+');
+      }
+
+      function setMenu(open) {
+        mobileMenu.classList.toggle('is-open', open);
+        menuToggle.setAttribute('aria-expanded', String(open));
+        menuToggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+        document.body.classList.toggle('menu-open', open);
+      }
+
+      function openContact(kind) {
+        const flow = flows[kind] || flows.pilot;
+        lastFocus = document.activeElement;
+        modal.querySelector('.section-kicker').textContent = flow.kicker;
+        title.textContent = flow.title;
+        copy.textContent = flow.copy;
+        suggestedMessage.textContent = flow.message;
+        openEmail.href = 'mailto:' + email + '?subject=' + encode(flow.subject) + '&body=' + encode(flow.message);
+        modal.hidden = false;
+        document.body.classList.add('modal-open');
+        setMenu(false);
+        closeModalButton.focus();
+      }
+
+      function closeContact() {
+        modal.hidden = true;
+        document.body.classList.remove('modal-open');
+        if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
+      }
+
+      window.addEventListener('scroll', () => {
+        nav.classList.toggle('is-scrolled', window.scrollY > 8);
+      }, { passive: true });
+
+      menuToggle.addEventListener('click', () => {
+        setMenu(!mobileMenu.classList.contains('is-open'));
+      });
+
+      mobileMenu.querySelectorAll('a').forEach((link) => {
+        link.addEventListener('click', () => setMenu(false));
+      });
+
+      document.querySelectorAll('[data-contact]').forEach((trigger) => {
+        trigger.addEventListener('click', () => openContact(trigger.getAttribute('data-contact')));
+      });
+
+      closeModalButton.addEventListener('click', closeContact);
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeContact();
+      });
+
+      window.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          if (!modal.hidden) closeContact();
+          if (mobileMenu.classList.contains('is-open')) setMenu(false);
+        }
+      });
+
+      copyEmail.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(email);
+          copyEmail.textContent = 'Copied email';
+          copyEmail.classList.add('copy-ok');
+          window.setTimeout(() => {
+            copyEmail.textContent = 'Copy email';
+            copyEmail.classList.remove('copy-ok');
+          }, 1600);
+        } catch (error) {
+          window.location.href = 'mailto:' + email;
+        }
+      });
+
+      document.querySelectorAll('.tab-button').forEach((button) => {
+        button.addEventListener('click', () => {
+          const target = button.getAttribute('data-tab');
+          document.querySelectorAll('.tab-button').forEach((tab) => {
+            tab.setAttribute('aria-selected', String(tab === button));
+          });
+          document.querySelectorAll('.tab-panel').forEach((panel) => {
+            panel.classList.toggle('is-active', panel.getAttribute('data-panel') === target);
+          });
+        });
+      });
+
+      if ('IntersectionObserver' in window) {
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('is-visible');
+              observer.unobserve(entry.target);
+            }
+          });
+        }, { threshold: .14, rootMargin: '0px 0px -40px 0px' });
+
+        document.querySelectorAll('.reveal').forEach((element) => observer.observe(element));
+      } else {
+        document.querySelectorAll('.reveal').forEach((element) => element.classList.add('is-visible'));
+      }
+    })();
+  </script>
 </body>
 </html>
