@@ -1,17 +1,19 @@
 # Interlock
 
-Runtime security gateway for AI agents. A FastAPI reverse proxy that scans
-prompts and tool calls before they reach LLMs and MCP servers. Differentiator
-vs. Lakera/Protect AI/HiddenLayer: native **MCP gateway** with tool-definition
-validation, RBAC for agents, and per-key fail-mode policies.
+MCP runtime trust layer for AI agents. A FastAPI gateway that checks
+prompts, tool calls, MCP server/tool surfaces, response exposure, behavioral
+permission drift, and audit evidence before agents keep using risky tools. The
+core differentiator is post-approval MCP drift detection: is this still the
+approved tool/risk boundary?
 
 ## Positioning (read before naming things)
 
 The product is called **Interlock**. Public-facing copy uses the tagline
-**"Runtime security gateway for AI agents."** Do not call it an "LLM firewall."
-The firewall layer is commodity (LLM Guard, NeMo). The MCP gateway and agent
-RBAC are the moat. Do not generate landing-page copy or marketing material that
-calls this an "LLM firewall."
+**"MCP runtime trust layer for AI agents."** Do not call it an "LLM firewall."
+The firewall layer is commodity. The MCP drift engine, behavioral effective-
+permission proof, quarantine decisions, and Security Receipts are the moat. Do
+not generate landing-page copy or marketing material that calls this an "LLM
+firewall."
 
 ---
 
@@ -58,8 +60,8 @@ When working on agent security, edit those modules — not the prompt-scan layer
 
 ### Frontend
 
-- `index.html` — landing page (needs MCP-gateway repositioning)
-- `dashboard.html` — self-contained admin/analytics view
+- `interlock-web/index.html` — public landing page
+- `interlock-web/src/` — React dashboard/admin/audit views
 
 ---
 
@@ -70,8 +72,8 @@ When working on agent security, edit those modules — not the prompt-scan layer
 - All scan functions return a `ScanResult` (`models/schemas.py`). Required: `is_threat`, `threat_level`, `reason`. Set `confidence`, `layer_caught`, `scan_time_ms`, `risk_score` when you have them.
 - New per-key config goes in `core/db.py::api_keys` table. Add the column, update `PLAN_DEFAULTS` if it has a per-plan default, expose in `core/admin.py::UpdateKeyRequest`.
 - Webhooks and SIEM dispatch must NEVER raise into the scan path. Catch + log + continue.
-- Run `python test_db.py`, `python test_webhook_fix.py`, `python test_judge_failmodes.py` after touching the relevant module.
-- Use `pip install ... --break-system-packages` (no sudo, no venv-juggling for system installs).
+- Run focused `pytest` suites after touching relevant modules, plus `ruff`, `black`, and `mypy` before release commits.
+- Prefer project-local tooling/virtual environments. Do not suggest global package installs in public docs.
 
 ### DON'T
 
@@ -87,10 +89,9 @@ When working on agent security, edit those modules — not the prompt-scan layer
 ## Tech stack
 
 - Python 3.12+ / FastAPI / Uvicorn
-- Groq (`llama-3.3-70b-versatile`) for Layer 3 LLM judge. **No Gemini fallback exists yet** despite the env var — wiring it up is open work.
-- SQLite via `core/db.py`. WAL mode, single writer lock. Migration target: Postgres (connect string only).
-- In-memory rate-limit window — single-worker only. Redis is the next infra step for HA.
-- Docker + Helm chart in `helm/`. Production-ready (HPA, PDB, NetworkPolicy, ServiceMonitor).
+- Optional LLM judge providers through `core/router.py` and provider env vars.
+- SQLite for local/dev and controlled pilots; Postgres/Redis are the production-style path.
+- Docker + Helm chart in `helm/` with production-oriented examples, not a broad enterprise certification claim.
 
 ---
 
@@ -126,21 +127,20 @@ python test_judge_failmodes.py
 
 ---
 
-## Current priorities (week of 2026-05-07)
+## Current priorities (June 2026)
 
-1. **Repositioning** — `index.html` rewrite complete. Product is now Interlock with tagline "Runtime security gateway for AI agents."
-2. **Cold outreach** — 50-target design-partner list. Companies publishing MCP servers on GitHub, dev-tool startups, agent platforms.
-3. **MCP gateway tests** — `core/mcp_gateway.py` is the differentiator and has zero tests. Add `test_mcp_gateway.py` covering: trust registry, tool-name validation, description injection detection, dangerous schema fields, RBAC integration, response PII scanning.
-4. **Risk score on `/scan` path** — currently only set on `/inspect/tool-call` and `/scan/shadow`. Add `result.risk_score = calculate_risk_score(result)` inside `run_scan` before each return.
-5. **`requirements.txt`** is empty. Pin actual deps before any deploy.
-6. **Gemini fallback wiring** — either delete the env var or actually wire it as a Layer 3 fallback when Groq is rate-limited.
+1. **Correct ICP** — focus copy and outreach on teams operating agents against MCP tools they do not fully control: AI-agent teams, MCP gateways, internal platform/security teams, and products that let users bring external MCP servers.
+2. **Killer demo** — keep one impossible-to-misunderstand flow: approved tool -> same manifest/schema -> expected 403 denied becomes observed 200 allowed -> quarantine -> hash-chain verified receipt.
+3. **Reference win** — convert one non-production drift check into a public/private reference before adding more features.
+4. **Repo hygiene** — keep public files product-focused. Move founder outreach assets, private target lists, scratch state, and local proof clutter out of the public root.
+5. **Verification** — keep CI green with ruff, black, mypy, pytest, dashboard build, Docker/Helm checks.
 
 ## Known gotchas
 
 - `verify_key` does a DB hit on every request. Fine at low scale; cache via `functools.lru_cache` with TTL once you exceed ~100 RPS.
-- `request_counts = defaultdict(list)` is in-memory. Multiple uvicorn workers will not share state. Run with `--workers 1` until Redis is wired in.
-- Empty files in the rar archive (`detector.py`, `shadow_mode.py`, `webhook.py`, `llm_judge.py`) were a packaging artifact. The real implementations exist on the dev machine. Don't trust an empty file — verify with `wc -l`.
-- The `policy.py` topic blocklist contains `politics → "democrat|republican"` etc. Embarrassing in an enterprise demo. Make opt-in or remove before any pilot.
+- Rate limits and key usage should use Redis for multi-replica deployments; local memory paths are for local/dev and bounded pilots.
+- Do not overclaim production readiness. Public proof packs are technical evidence; production proof requires a customer-approved non-production canary and written scope.
+- The strongest sales proof is behavioral drift (expected 403 denied -> observed 200 allowed) plus receipt evidence. Keep broad drift coverage as supporting depth, not the headline.
 
 
 ## Git conventions

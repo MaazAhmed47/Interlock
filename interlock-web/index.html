@@ -504,7 +504,7 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
       <div class="hero-content">
         <div class="hero-label">MCP Runtime Trust Layer</div>
         <h1>Stop MCP <span class="grad">tool drift</span> before it executes.</h1>
-        <p class="hero-problem">MCP tools can change after you approve them. A tool approved as read-only can later gain export, write, or PII access under the same name, and static policy still sees the same tool.</p>
+        <p class="hero-problem">MCP tools can change after approval, especially when your agent uses vendor, community, forked, or separately operated tools your team does not fully control. A tool approved as read-only can later gain export, write, or PII access under the same name, and static policy still sees the same tool.</p>
         <p class="hero-sub">Interlock baselines the approved tool, detects the change at runtime, holds the risky call before it executes, and writes a tamper-evident receipt.</p>
         <div class="hero-cta">
           <a href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot" class="btn btn-primary">Run a Drift Check</a>
@@ -973,7 +973,7 @@ footer{border-top:1px solid var(--line);padding:48px 0 40px}
     <div class="pilot">
       <div class="eyebrow">Pilot</div>
       <h2 class="s-title">Run a drift check on one risky MCP workflow.</h2>
-      <p class="lead">For MCP builders and AI-agent teams: baseline one non-production workflow, simulate a safe drift, review the quarantine decision, and inspect the receipt evidence.</p>
+      <p class="lead">For teams operating agents against MCP tools they do not fully control: baseline one non-production workflow, simulate a safe drift, review the quarantine decision, and inspect the receipt evidence.</p>
       <div class="pilot-domains">
         <div class="pdomain"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>Databases</div>
         <div class="pdomain"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6-1.6A4 4 0 0 0 6 19Z"/></svg>Cloud / infra</div>

@@ -3,7 +3,7 @@
 # Interlock
 
 [![CI](https://github.com/MaazAhmed47/Interlock/actions/workflows/tests.yml/badge.svg)](https://github.com/MaazAhmed47/Interlock/actions)
-[![Tests](https://img.shields.io/badge/tests-297%20test%20cases-green)](https://github.com/MaazAhmed47/Interlock/actions)
+[![Quality](https://img.shields.io/badge/quality-ruff%20%7C%20black%20%7C%20mypy%20%7C%20tests-green)](https://github.com/MaazAhmed47/Interlock/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 Interlock is a self-hosted MCP runtime trust layer for AI agents.
@@ -14,7 +14,7 @@ It detects when approved MCP tools change their schema, data access, external re
 
 _Pre-release, design-partner stage — self-hosted, for trying drift detection on one non-production MCP workflow. [Quick start ↓](#quick-start)_
 
-[![Interlock Demo](./interlock_thumbnail.png)](https://youtu.be/zYDgD8Eo7uc)
+[![Interlock Demo](./docs/assets/proof/interlock_thumbnail.png)](https://youtu.be/zYDgD8Eo7uc)
 
 ### Stop MCP tools from doing what they were never approved to do.
 
@@ -49,7 +49,7 @@ Interlock focuses on post-approval tool and capability drift: the changes that h
 ## Verified Status
 | Check | Status |
 |-------|--------|
-| Backend tests | 297 test cases |
+| Backend tests | CI suite passing |
 | Code quality | ruff · black · mypy (core/routes) |
 | Docker build | passing |
 | Live demo | getinterlock.dev |
@@ -60,7 +60,7 @@ Interlock focuses on post-approval tool and capability drift: the changes that h
 
 ## When would I use this?
 
-Use Interlock when an AI agent can call MCP tools that touch real systems: files, internal documents, databases, Slack, GitHub, customer records, or deployment workflows.
+Use Interlock when an AI agent can call MCP tools that touch real systems: files, internal documents, databases, Slack, GitHub, customer records, or deployment workflows — especially when those tools are vendor, community, forked, or separately operated surfaces your team does not fully control.
 
 Example: you approved a read-only MCP tool for internal documents. Later, the same tool name gains external export behavior or starts exposing sensitive data fields. Interlock detects the drift, blocks or quarantines the tool before execution, and records a Security Receipt for review.
 
@@ -109,14 +109,14 @@ Use a non-production ASMI workflow only. First baseline `list_avatars`, then mak
 
 ## Design Partner Pilot
 
-I'm looking for 2-3 MCP builders, AI-agent teams, or security engineers this week to test Interlock on one real non-production MCP workflow.
+I'm looking for 2-3 AI-agent teams, MCP gateway/platform builders, internal platform teams, or security engineers this week to test Interlock on one real non-production MCP workflow.
 
 Best fit:
 
-* MCP server builders
-* AI agent teams with real tool access
-* DevTools / AI infra builders
-* security engineers evaluating MCP risk
+* teams operating agents against MCP tools they do not fully control
+* MCP gateways or platforms that let users bring/connect external MCP servers
+* AI agent teams with real write/send/delete/deploy/customer-data tool access
+* platform, DevOps, or security engineers evaluating runtime MCP risk
 
 Pilot mode:
 Self-hosted, local, or isolated demo environment only.
