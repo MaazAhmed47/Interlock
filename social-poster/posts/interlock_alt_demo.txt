@@ -1,1 +1,0 @@
-Interlock integration demo showing Python, JavaScript, and API examples for routing AI requests through the gateway.

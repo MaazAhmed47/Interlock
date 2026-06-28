@@ -1,1 +1,0 @@
-Interlock dashboard showing usage, MCP servers, drift/quarantine status, shadow findings, quick actions, and demo prompt library.

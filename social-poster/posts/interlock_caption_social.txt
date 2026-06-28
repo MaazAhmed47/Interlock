@@ -1,7 +1,0 @@
-Building Interlock: a runtime security gateway for AI agents.
-
-It scans prompts/outputs, tracks MCP servers, flags drift/quarantine, and keeps audit evidence visible for dev/security teams.
-
-Feedback welcome from anyone building with agents + MCP.
-
-#AISecurity #MCP #DevSecOps

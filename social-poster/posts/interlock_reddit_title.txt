@@ -1,1 +1,0 @@
-I’m building Interlock, a runtime security gateway for AI agents - would love feedback

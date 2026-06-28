@@ -1,7 +1,0 @@
-I’m building Interlock: a runtime security gateway for AI agents.
-
-It is focused on MCP security: prompt/output scanning, MCP server visibility, drift/quarantine state, role-aware policy, and audit evidence for dev/security teams.
-
-I attached the dashboard/demo screenshots. I’d love blunt feedback from anyone working with AI agents, MCP servers, DevSecOps, or internal agent tooling.
-
-What would make this dashboard more useful for a CTO/security lead evaluating it?
