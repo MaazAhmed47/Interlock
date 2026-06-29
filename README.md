@@ -30,6 +30,7 @@ Interlock focuses on post-approval tool and capability drift: the changes that h
 [Product Brief](https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664) ·
 [2-Minute Integration](#2-minute-chat-proxy-integration) ·
 [10-Minute Evaluation](docs/evaluator-quickstart.md) ·
+[Live-Proven Behavioral Drift](#live-proven-behavioral-drift) ·
 [Watch 2-min Demo](https://youtu.be/zYDgD8Eo7uc) ·
 [Drift Decision Object](docs/drift-decision-object.md) ·
 [Runtime Governance](docs/agentic-runtime-governance.md) ·
@@ -55,6 +56,47 @@ Interlock focuses on post-approval tool and capability drift: the changes that h
 | Live demo | getinterlock.dev |
 | Behavioral drift proof | expected 403 denied → observed 200 allowed; quarantined with receipt evidence |
 | Last verified | June 2026 |
+
+---
+
+## Live-proven behavioral drift
+
+Manifest and schema diffing are necessary, but they do not cover the hardest runtime drift case: the MCP surface can stay identical while the upstream permission boundary changes. Interlock's effective-permission probe path is built for that case.
+
+**Verified scenario:** same tool, same manifest, same schema, same arguments, different effective outcome.
+
+| Signal | Baseline | Drifted observation | Interlock result |
+|---|---:|---:|---|
+| Tool identity | `call_genesys_api` | `call_genesys_api` | same approved tool name |
+| Visible MCP surface | unchanged manifest/schema | unchanged manifest/schema | surface diff alone would miss it |
+| Probe arguments | fixed canary args | fixed canary args | argument hash unchanged |
+| Runtime outcome | `403 denied` | `200 allowed` | `effective_permission_expansion` / `behavioral_scope_drift` |
+| Decision | no drift | high-risk expansion | quarantine for operator review |
+| Evidence | baseline outcome | observed outcome | Security Receipt + hash-chain verification |
+
+Proof artifacts:
+
+- [Behavioral drift proof image](docs/assets/proof/behavioral-drift-proof-403-to-200.png)
+- [Proof suite run summary](docs/interlock-proof-suite-run.md)
+- [Effective-permission evidence schema](interlock-web/public/schemas/effective-permission-drift-record.v1.json)
+
+Reproduce the live-style proof locally:
+
+```bash
+python3 demo/run_effective_permission_probe_live.py
+```
+
+Security properties verified:
+
+- the real Interlock probe path runs an explicit non-production canary call over real HTTP and normalizes the provider outcome;
+- `expected denied` becoming `observed allowed` is classified as auth-scope/effective-permission drift;
+- the known tool is marked for quarantine before continued trusted use;
+- a receipt/audit record is emitted with the expected status, observed status, finding type, severity, decision, and recomputable evidence hash;
+- raw probe arguments, auth headers, bearer tokens, and full response bodies are not stored.
+
+False-positive controls are part of the design: `403 -> 403` remains clean, upstream errors/rate limits/timeouts are inconclusive rather than drift, and permission regressions such as `allowed -> denied` are monitored rather than treated as capability expansion.
+
+Scope note: this is behavioral verification, not provider-wide OAuth introspection. Interlock detects the observable runtime change that matters to the operator: a call that was approved as denied now succeeds, even though the visible MCP tool surface did not change.
 
 ---
 
