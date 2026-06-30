@@ -63,6 +63,19 @@ Run one controlled drift at a time. Keep all scenarios evidence-safe and non-pro
 | Same tool name maps to different server/version | The same approved tool name is served by a different server identity, version, endpoint, or provenance. | provenance/server-identity drift. | hold or require re-approval. | Approved server/version identity, current identity, decision, whether call was forwarded. |
 | Chain risk across tools | A planned run reads sensitive repo/config data, then sends it to a CI/action/external tool. | chain drift such as sensitive-read-to-external-effect or secret-to-execution. | deny before execution when the full chain is submitted/observed. | Planned chain hash, risky transition, denied step, no downstream boundary crossing. |
 
+### Scenario evidence status
+
+Use the first-pass scenarios to establish trust before expanding the evaluation. The remaining scenarios are intentionally marked as verify-together so an evaluator does not read them as equal public-proof claims before they run against their own workflow.
+
+| Scenario | Evidence maturity | First pass? | Notes |
+|---|---|---|---|
+| Schema / required parameter drift | first-pass proven | Yes | Use this to verify baseline vs changed tool surface and the receipt's baseline, drift, decision, and boundary-crossing claims. |
+| Read-only to write/external reach | proof-suite verified; verify together | Optional after first pass | Interlock has capability, effect, and external-reach coverage, but evaluator-specific destinations and action semantics should be validated against the local control-plane workflow. |
+| Auth/effective-permission expansion | first-pass proven for observable `403 -> 200` | Yes | Use `python3 demo/run_effective_permission_probe_live.py`; this detects behavioral outcome drift and does not claim provider OAuth introspection. |
+| Response/data exposure drift | proof-suite verified; verify together | Later | Validate against the evaluator's response profile, redaction expectations, and data-class policy. |
+| Same tool name maps to different server/version | design target; verify together | Later | Requires stable server identity, version, endpoint, or provenance metadata from the control plane or MCP server. |
+| Chain risk across tools | proof-suite verified; verify together | Later | Works best when the orchestrator submits or exposes the planned sequence before execution; Interlock cannot infer a chain it never observes. |
+
 ## Effective-permission proof command
 
 Interlock includes a local live-style proof for the hardest behavioral case: same tool, same manifest, same schema, same arguments, but expected `403 denied` becomes observed `200 allowed`.
@@ -111,14 +124,15 @@ Interlock passes the local control-plane evaluation when:
 - Interlock cannot prove a future chain it never sees or is never given.
 - Behavioral probes do not introspect every provider's OAuth or admin configuration. They detect observable outcome drift, such as denied to allowed.
 - Provider readback requires a safe readback path for the provider being tested.
+- Scenario labels are evidence-maturity labels, not guarantees that every evaluator-specific workflow will produce identical decisions without integration work.
 - Production proof requires a customer-approved non-production canary and written scope.
 - This evaluation is technical evidence for a design-partner workflow, not SOC 2, ISO, HIPAA, GDPR, or provider certification.
 
 ## Suggested next step
 
-Start with two scenarios only:
+Start with the two first-pass scenarios only:
 
 1. schema/capability drift on a local repo or docs tool;
 2. effective-permission drift using `demo/run_effective_permission_probe_live.py`.
 
-If those receipts satisfy the four-claim contract, expand to response exposure, provenance drift, and chain analysis.
+If those receipts satisfy the four-claim contract, expand to the verify-together scenarios: read-only to external reach, response exposure, provenance/server-version drift, and chain analysis.
