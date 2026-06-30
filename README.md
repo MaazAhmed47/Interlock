@@ -31,6 +31,7 @@ Interlock focuses on post-approval tool and capability drift: the changes that h
 [2-Minute Integration](#2-minute-chat-proxy-integration) ·
 [10-Minute Evaluation](docs/evaluator-quickstart.md) ·
 [Live-Proven Behavioral Drift](#live-proven-behavioral-drift) ·
+[Local Control-Plane Evaluation](docs/local-agent-control-plane-drift-evaluation.md) ·
 [Watch 2-min Demo](https://youtu.be/zYDgD8Eo7uc) ·
 [Drift Decision Object](docs/drift-decision-object.md) ·
 [Runtime Governance](docs/agentic-runtime-governance.md) ·
@@ -501,6 +502,7 @@ Interlock is strongest when agents are close to real systems: databases, Slack, 
 Evaluation docs:
 
 - [10-minute evaluator quickstart](docs/evaluator-quickstart.md)
+- [Local agent control-plane drift evaluation](docs/local-agent-control-plane-drift-evaluation.md)
 - [Drift Decision Object](docs/drift-decision-object.md)
 - [MCP Runtime Security Threat Model](docs/mcp-runtime-security-threat-model.md)
 - [MCP Runtime Security Coverage Map](docs/mcp-vulnerability-coverage-map.md) - what Interlock directly addresses, partially addresses, and does not claim to solve.
