@@ -792,6 +792,14 @@ When Interlock detects drift, it emits a content-addressed, recomputable drift-e
 
 Record schema: [`drift-record.v1.json`](interlock-web/public/schemas/drift-record.v1.json).
 
+### Strict tool-surface interop projection
+
+Interlock separates internal runtime triage from external replay semantics. Internal Security Receipts can surface low-confidence heuristic findings at `monitor` severity so an operator can investigate. The strict tool-surface interop projection in `core/tool_surface_interop.py` is narrower: it only emits `drifted` when evidence is verified, coverage is complete, and the finding is not based solely on inferred metadata. Missing hashes, partial coverage, digest failures, or inferred-only metadata findings produce `not_verifiable` instead of an overclaimed drift verdict.
+
+This gives enterprise evaluators a bounded composition record for evidence replay: one action/run context, approved and observed surface hashes, verification status, and a verdict of `unchanged`, `drifted`, or `not_verifiable`. Richer Interlock receipts can still carry monitor-level context separately; the interop record stays strict, digestable, and safe to compose with gateway-path evidence without creating a broad whole-action trust score.
+
+Interop schema: [`tool-surface-interop.v0.json`](interlock-web/public/schemas/tool-surface-interop.v0.json).
+
 ### Effective permission drift probes
 
 Some MCP providers expose generic tools whose manifest and schema stay stable while upstream authorization changes outside MCP, for example when an OAuth client is silently re-scoped server-side. Interlock supports an opt-in manual probe path for this case:

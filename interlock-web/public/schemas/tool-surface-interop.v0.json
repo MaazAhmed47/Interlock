@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://getinterlock.dev/schemas/tool-surface-interop.v0.json",
+  "title": "Interlock Tool Surface Interop Record (v0)",
+  "description": "A strict, bounded tool-surface replay/composition record. Unlike Interlock's richer internal runtime receipts, this interop projection only emits drifted when evidence is verified, coverage is complete, and the finding is not based solely on inferred metadata. Partial or unverified evidence remains not_verifiable.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "profile",
+    "action_id",
+    "run_id",
+    "coverage",
+    "approved_tool_surface_hash",
+    "observed_tool_surface_hash",
+    "evidence",
+    "verdict",
+    "finding",
+    "finding_types"
+  ],
+  "properties": {
+    "profile": {
+      "const": "interlock.tool-surface.v0"
+    },
+    "action_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "coverage": {
+      "type": "string",
+      "enum": ["complete", "partial", "missing", "unknown", ""]
+    },
+    "approved_tool_surface_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$|^$"
+    },
+    "observed_tool_surface_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$|^$"
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_verified"],
+      "properties": {
+        "evidence_verified": {
+          "type": "boolean"
+        }
+      }
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["unchanged", "drifted", "not_verifiable"]
+    },
+    "finding": {
+      "type": "string"
+    },
+    "finding_types": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
