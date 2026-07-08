@@ -250,7 +250,7 @@ def test_live_email_pack_surfaces_provider_send_errors_without_claiming_drift():
 
 def test_slack_provider_rejects_slack_api_ok_false(monkeypatch):
     provider = SlackProvider(
-        bot_token="xoxb-secret-token",
+        bot_token="slack-secret-token",
         channel_id="C123",
         canary_label="test-canary",
     )

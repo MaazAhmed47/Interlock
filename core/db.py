@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from threading import Lock
 from typing import Optional, List, Dict, Any
+from urllib.parse import urlparse
 from core.mcp_drift import classify_tool_drift
 
 logger = logging.getLogger("interlock.db")
@@ -35,6 +36,18 @@ DB_PATH = os.getenv("FIREWALL_DB_PATH", "data/firewall.db")
 _db_lock = Lock()  # SQLite is fine concurrent-read, one-writer; lock guards writes
 _pg_pool = None
 _pg_pool_lock = Lock()
+
+SEEDED_DEMO_SERVER_IDS = {"trusted-filesystem", "trusted-search"}
+INTENDED_DEMO_SERVER_IDS = {
+    *SEEDED_DEMO_SERVER_IDS,
+    "clean-proof-docs",
+    "demo-docs",
+    "demo-file-server",
+}
+KNOWN_UNAPPROVED_EXTERNAL_SERVER_IDS = {"asmi-demo"}
+KNOWN_UNAPPROVED_EXTERNAL_HOSTS = {"broen.tech"}
+DISPOSABLE_FIXTURE_SERVER_RE = re.compile(r"^m\d+$")
+PUBLIC_MOCK_HOST_SUFFIXES = (".web.val.run", ".localhost.run")
 
 
 # ── Connection helper ────────────────────────────────────────────────────────
@@ -1425,6 +1438,135 @@ def get_performance_metrics() -> Dict[str, Any]:
 # ── MCP server registry ───────────────────────────────────────────────────────
 
 
+def _is_loopback_host(host: str) -> bool:
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def _is_public_mock_host(host: str) -> bool:
+    return any(host.endswith(suffix) for suffix in PUBLIC_MOCK_HOST_SUFFIXES)
+
+
+def _classify_mcp_server(row: Dict[str, Any]) -> Dict[str, Any]:
+    d = dict(row or {})
+    sid = str(d.get("server_id") or "").strip()
+    description = str(d.get("description") or "")
+    host = (urlparse(str(d.get("url") or "")).hostname or "").lower()
+    lowered = f"{sid} {description}".lower()
+
+    registry_class = "operator_registered"
+    registry_note = "Operator-registered MCP server."
+    demo_visible = True
+
+    if sid in KNOWN_UNAPPROVED_EXTERNAL_SERVER_IDS or host in KNOWN_UNAPPROVED_EXTERNAL_HOSTS:
+        registry_class = "external_unapproved"
+        registry_note = "Known third-party server not owned by the Interlock demo."
+        demo_visible = False
+    elif sid in INTENDED_DEMO_SERVER_IDS:
+        registry_class = "intended_demo"
+        registry_note = "Buyer-facing Interlock demo server."
+    elif sid.startswith("_") or DISPOSABLE_FIXTURE_SERVER_RE.fullmatch(sid):
+        registry_class = "disposable_fixture"
+        registry_note = "Disposable test or matrix fixture."
+        demo_visible = False
+    elif _is_public_mock_host(host) and any(token in lowered for token in ("demo", "proof", "mock")):
+        registry_class = "intended_demo"
+        registry_note = "Public mock used to seed the buyer demo."
+    elif _is_loopback_host(host) and any(token in lowered for token in ("test", "fixture", "probe", "matrix", "mock")):
+        registry_class = "disposable_fixture"
+        registry_note = "Loopback-only proof or test server."
+        demo_visible = False
+    elif _is_loopback_host(host) and sid not in SEEDED_DEMO_SERVER_IDS:
+        registry_class = "disposable_fixture"
+        registry_note = "Loopback-only local fixture."
+        demo_visible = False
+
+    d["registry_class"] = registry_class
+    d["registry_note"] = registry_note
+    d["demo_visible"] = demo_visible
+    return d
+
+
+def canonicalize_mcp_tool_record(tool: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    d = dict(tool or {})
+    metadata = d.get("normalized_metadata") or {}
+    if isinstance(metadata, dict):
+        for key in (
+            "effects",
+            "side_effect",
+            "data_classes",
+            "externality",
+            "identity_mode",
+            "required_scopes",
+            "verification_level",
+            "confidence",
+            "warnings",
+            "source",
+            "inferred",
+        ):
+            if d.get(key) in (None, "", []):
+                value = metadata.get(key)
+                if value not in (None, ""):
+                    d[key] = copy.deepcopy(value)
+
+    raw_definition = d.get("raw_tool_definition") or {}
+    if isinstance(raw_definition, dict) and not d.get("description"):
+        d["description"] = raw_definition.get("description") or ""
+
+    status = d.get("status") or "active"
+    severity = d.get("drift_severity") or "none"
+    action = d.get("drift_action") or "allow"
+
+    if severity == "critical":
+        status = "quarantined"
+        action = "quarantine"
+    elif severity == "high" and action == "allow":
+        action = "deny"
+    elif severity in {"minor", "moderate"} and action == "allow":
+        action = "monitor"
+
+    if status == "quarantined":
+        action = "quarantine"
+        if severity == "none":
+            severity = "critical"
+    elif status == "changed" and action == "allow":
+        action = "monitor"
+        if severity == "none":
+            severity = "minor"
+    elif status == "active" and action == "quarantine":
+        status = "quarantined"
+        if severity == "none":
+            severity = "critical"
+    elif status == "active" and action in {"deny", "monitor"}:
+        status = "changed"
+        if severity == "none":
+            severity = "high" if action == "deny" else "minor"
+
+    d["status"] = status
+    d["drift_severity"] = severity
+    d["drift_action"] = action
+    return d
+
+
+def _annotate_mcp_tools_with_server_registry(
+    tools: List[Dict[str, Any]], *, demo_visible_only: bool = False
+) -> List[Dict[str, Any]]:
+    server_ids = sorted(
+        {str(tool.get("server_id") or "") for tool in tools if tool.get("server_id")}
+    )
+    server_lookup = {sid: lookup_mcp_server(sid) or {} for sid in server_ids}
+    annotated: List[Dict[str, Any]] = []
+
+    for tool in tools:
+        row = dict(tool)
+        server = server_lookup.get(str(row.get("server_id") or "")) or {}
+        row["server_registry_class"] = server.get("registry_class") or "operator_registered"
+        row["server_registry_note"] = server.get("registry_note") or ""
+        row["server_demo_visible"] = bool(server.get("demo_visible", True))
+        if not demo_visible_only or row["server_demo_visible"]:
+            annotated.append(row)
+    return annotated
+
+
 def _mcp_row_to_dict(row) -> Dict[str, Any]:
     d = dict(row)
     for col in ("allowed_tools", "blocked_tools"):
@@ -1443,7 +1585,7 @@ def _mcp_row_to_dict(row) -> Dict[str, Any]:
         except (json.JSONDecodeError, TypeError):
             d[col] = []
     d["verified"] = bool(d.get("verified", 0))
-    return d
+    return _classify_mcp_server(d)
 
 
 def _mcp_tool_metadata_row_to_dict(row) -> Dict[str, Any]:
@@ -1476,7 +1618,7 @@ def _mcp_tool_metadata_row_to_dict(row) -> Dict[str, Any]:
             d[col] = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             d[col] = []
-    return d
+    return canonicalize_mcp_tool_record(d)
 
 
 def _mcp_response_profile_row_to_dict(row) -> Dict[str, Any]:
@@ -1617,7 +1759,9 @@ def lookup_mcp_server_by_url(url: str) -> Optional[Dict[str, Any]]:
     return _mcp_row_to_dict(row) if row else None
 
 
-def list_mcp_servers(limit: Optional[int] = None) -> List[Dict[str, Any]]:
+def list_mcp_servers(
+    limit: Optional[int] = None, *, demo_visible_only: bool = False
+) -> List[Dict[str, Any]]:
     """Return registered MCP servers ordered by registration time."""
     with get_conn() as conn:
         if limit is not None:
@@ -1629,7 +1773,10 @@ def list_mcp_servers(limit: Optional[int] = None) -> List[Dict[str, Any]]:
             rows = conn.execute(
                 "SELECT * FROM mcp_servers ORDER BY registered_at ASC"
             ).fetchall()
-    return [_mcp_row_to_dict(r) for r in rows]
+    servers = [_mcp_row_to_dict(r) for r in rows]
+    if demo_visible_only:
+        servers = [server for server in servers if server.get("demo_visible", True)]
+    return servers
 
 
 def load_mcp04_policy() -> dict:
@@ -1939,11 +2086,18 @@ def lookup_mcp_tool_metadata(
             """,
             (server_id, tool_name),
         ).fetchone()
-    return _mcp_tool_metadata_row_to_dict(row) if row else None
+    if not row:
+        return None
+    tool = _mcp_tool_metadata_row_to_dict(row)
+    annotated = _annotate_mcp_tools_with_server_registry([tool])
+    return annotated[0] if annotated else tool
 
 
 def list_mcp_tool_metadata(
-    server_id: Optional[str] = None, limit: Optional[int] = None
+    server_id: Optional[str] = None,
+    limit: Optional[int] = None,
+    *,
+    demo_visible_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """List stored MCP tool metadata, optionally filtered by server."""
     with get_conn() as conn:
@@ -1980,7 +2134,10 @@ def list_mcp_tool_metadata(
                 SELECT * FROM mcp_tool_metadata
                  ORDER BY server_id ASC, tool_name ASC
                 """).fetchall()
-    return [_mcp_tool_metadata_row_to_dict(r) for r in rows]
+    tools = [_mcp_tool_metadata_row_to_dict(r) for r in rows]
+    return _annotate_mcp_tools_with_server_registry(
+        tools, demo_visible_only=demo_visible_only
+    )
 
 
 def get_known_tool_names(server_id: str) -> set:
@@ -2148,7 +2305,10 @@ def mark_mcp_tool_effective_permission_drift(
 
 
 def list_drifted_mcp_tools(
-    server_id: Optional[str] = None, limit: Optional[int] = None
+    server_id: Optional[str] = None,
+    limit: Optional[int] = None,
+    *,
+    demo_visible_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """List MCP tools that need operator review because they changed or are quarantined."""
     with get_conn() as conn:
@@ -2189,7 +2349,10 @@ def list_drifted_mcp_tools(
                  WHERE status != 'active' OR drift_severity != 'none' OR drift_action != 'allow'
                  ORDER BY last_changed DESC, server_id ASC, tool_name ASC
                 """).fetchall()
-    return [_mcp_tool_metadata_row_to_dict(r) for r in rows]
+    tools = [_mcp_tool_metadata_row_to_dict(r) for r in rows]
+    return _annotate_mcp_tools_with_server_registry(
+        tools, demo_visible_only=demo_visible_only
+    )
 
 
 def approve_mcp_tool_baseline(

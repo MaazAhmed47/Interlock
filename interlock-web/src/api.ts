@@ -184,6 +184,9 @@ export interface MCPServer {
   trust_level?: string;
   tool_count?: number;
   registered?: string;
+  registry_class?: string;
+  registry_note?: string;
+  demo_visible?: boolean;
   [key: string]: unknown;
 }
 
@@ -198,6 +201,9 @@ export interface MCPTool {
   side_effect?: string | string[];
   data_classes?: string | string[];
   last_seen?: string;
+  server_registry_class?: string;
+  server_registry_note?: string;
+  server_demo_visible?: boolean;
   [key: string]: unknown;
 }
 
@@ -698,11 +704,21 @@ export const api = {
   scanHistory: (limit = 100) => request<{ events: ScanHistoryEvent[] }>('GET', `/scan/history?limit=${limit}`),
   scanStats: () => request<ScanStats>('GET', '/scan/stats'),
   shadowStats: () => request<ShadowStats>('GET', '/shadow/stats'),
-  mcpServers: () => request<{ servers: MCPServer[] }>('GET', '/mcp/servers'),
-  mcpTools: (server_id?: string) =>
-    request<{ tools: MCPTool[] }>('GET', `/mcp/tools${server_id ? `?server_id=${encodeURIComponent(server_id)}` : ''}`),
-  mcpDrifted: (server_id?: string) =>
-    request<{ tools: MCPTool[] }>('GET', `/mcp/tools/drifted${server_id ? `?server_id=${encodeURIComponent(server_id)}` : ''}`),
+  mcpServers: (demoVisibleOnly = false) => request<{ servers: MCPServer[] }>('GET', `/mcp/servers${demoVisibleOnly ? '?demo_visible_only=true' : ''}`),
+  mcpTools: (server_id?: string, demoVisibleOnly = false) => {
+    const qs = new URLSearchParams()
+    if (server_id) qs.set('server_id', server_id)
+    if (demoVisibleOnly) qs.set('demo_visible_only', 'true')
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<{ tools: MCPTool[] }>('GET', `/mcp/tools${suffix}`)
+  },
+  mcpDrifted: (server_id?: string, demoVisibleOnly = false) => {
+    const qs = new URLSearchParams()
+    if (server_id) qs.set('server_id', server_id)
+    if (demoVisibleOnly) qs.set('demo_visible_only', 'true')
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    return request<{ tools: MCPTool[] }>('GET', `/mcp/tools/drifted${suffix}`)
+  },
   approveTool: (server_id: string, tool_name: string, payload: { reviewer?: string; reason?: string }) =>
     request<{ ok: boolean }>('POST', `/mcp/tools/${encodeURIComponent(server_id)}/${encodeURIComponent(tool_name)}/approve`, payload),
   quarantineTool: (server_id: string, tool_name: string, payload: { reviewer?: string; reason?: string }) =>

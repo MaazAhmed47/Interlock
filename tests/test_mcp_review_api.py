@@ -28,15 +28,15 @@ def cleanup():
 
 
 def seed_drifted_tool():
-    db.register_mcp_server("_review_server", {
+    db.register_mcp_server("clean-proof-docs", {
         "url": "http://localhost:9995/mcp",
         "description": "Review API test server",
         "allowed_tools": ["read_profile"],
         "blocked_tools": [],
         "rate_limit": 10,
     })
-    db.verify_mcp_server("_review_server")
-    db.upsert_mcp_tool_metadata("_review_server", {
+    db.verify_mcp_server("clean-proof-docs")
+    db.upsert_mcp_tool_metadata("clean-proof-docs", {
         "name": "read_profile",
         "description": "Read a profile.",
         "inputSchema": {"type": "object", "properties": {"profile_id": {"type": "string"}}},
@@ -49,7 +49,7 @@ def seed_drifted_tool():
         "confidence": 0.95,
         "warnings": [],
     })
-    db.upsert_mcp_tool_metadata("_review_server", {
+    db.upsert_mcp_tool_metadata("clean-proof-docs", {
         "name": "read_profile",
         "description": "Read a profile with optional format.",
         "inputSchema": {
@@ -70,11 +70,47 @@ def seed_drifted_tool():
     })
 
 
+def seed_hidden_fixture_with_broken_drift():
+    db.register_mcp_server("m14", {
+        "url": "http://localhost:8787/mcp",
+        "description": "Drift matrix fixture",
+        "allowed_tools": ["payments"],
+        "blocked_tools": [],
+        "rate_limit": 10,
+    })
+    db.verify_mcp_server("m14")
+    db.upsert_mcp_tool_metadata("m14", {
+        "name": "payments",
+        "description": "Read payment status.",
+        "inputSchema": {"type": "object", "properties": {"payment_id": {"type": "string"}}},
+    }, {
+        "effects": ["read"],
+        "side_effect": "read_only",
+        "data_classes": ["financial"],
+        "externality": "internal",
+        "verification_level": "interlock_meta",
+        "confidence": 0.95,
+        "warnings": [],
+    })
+    with db.get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE mcp_tool_metadata
+               SET status='changed',
+                   drift_severity='critical',
+                   drift_action='allow',
+                   drift_types='[\"side_effect_escalated\"]'
+             WHERE server_id='m14' AND tool_name='payments'
+            """
+        )
+
+
 try:
     db.init_db()
     TEST_KEY = db.generate_key("free", label="test-mcp-review")["raw_key"]
     db.seed_mcp_servers()
     seed_drifted_tool()
+    seed_hidden_fixture_with_broken_drift()
 
     print("Test 1: GET /mcp/tools includes server-policy fallback inventory ...")
     inventory = asyncio.run(proxy.mcp_tools(x_api_key=TEST_KEY))
@@ -82,17 +118,24 @@ try:
     assert any(t["server_id"] == "trusted-search" and t["tool_name"] == "search" for t in inventory["tools"])
     print("  OK")
 
-    print("Test 2: GET /mcp/tools/drifted lists review-needed tools ...")
+    print("Test 2: GET /mcp/tools/drifted canonicalizes action mismatches and hides fixtures in buyer view ...")
     data = asyncio.run(proxy.mcp_drifted_tools(x_api_key=TEST_KEY))
-    assert len(data["tools"]) == 1
-    assert data["tools"][0]["server_id"] == "_review_server"
-    assert data["tools"][0]["tool_name"] == "read_profile"
-    assert data["tools"][0]["drift_action"] == "monitor"
+    assert len(data["tools"]) == 2
+    visible = asyncio.run(proxy.mcp_drifted_tools(demo_visible_only=True, x_api_key=TEST_KEY))
+    assert len(visible["tools"]) == 1
+    assert visible["tools"][0]["server_id"] == "clean-proof-docs"
+    assert visible["tools"][0]["tool_name"] == "read_profile"
+    assert visible["tools"][0]["drift_action"] == "monitor"
+
+    fixture = next(tool for tool in data["tools"] if tool["server_id"] == "m14")
+    assert fixture["drift_action"] == "quarantine"
+    assert fixture["status"] == "quarantined"
+    assert fixture["server_demo_visible"] is False
     print("  OK")
 
     print("Test 3: approve endpoint resets drift baseline ...")
     data = asyncio.run(proxy.mcp_approve_tool_baseline(
-        "_review_server",
+        "clean-proof-docs",
         "read_profile",
         request=proxy.MCPToolReviewRequest(
             reviewer="maaz",
@@ -104,13 +147,13 @@ try:
     assert data["tool"]["status"] == "active"
     assert data["tool"]["drift_action"] == "allow"
 
-    data = asyncio.run(proxy.mcp_drifted_tools(server_id="_review_server", x_api_key=TEST_KEY))
+    data = asyncio.run(proxy.mcp_drifted_tools(server_id="clean-proof-docs", x_api_key=TEST_KEY))
     assert data["tools"] == []
     print("  OK")
 
     print("Test 4: quarantine endpoint marks the tool quarantined ...")
     data = asyncio.run(proxy.mcp_quarantine_tool(
-        "_review_server",
+        "clean-proof-docs",
         "read_profile",
         request=proxy.MCPToolReviewRequest(
             reviewer="maaz",
@@ -127,7 +170,7 @@ try:
     print("Test 5: approve missing tool returns 404 ...")
     try:
         asyncio.run(proxy.mcp_approve_tool_baseline(
-            "_review_server",
+            "clean-proof-docs",
             "missing_tool",
             request=proxy.MCPToolReviewRequest(reviewer="maaz"),
             x_api_key=TEST_KEY,

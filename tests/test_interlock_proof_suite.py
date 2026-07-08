@@ -4,6 +4,7 @@ Run: python3 -m pytest tests/test_interlock_proof_suite.py -q -s
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +12,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from demo.interlock_proof_suite import run_interlock_proof_suite, write_markdown_report
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text):
+    return ANSI_RE.sub("", text)
 
 
 def _by_key(report):
@@ -72,3 +79,74 @@ def test_interlock_proof_suite_cli_selected_json_runs():
     assert report["summary"]["all_passed"] is True
     assert report["results"][0]["key"] == "response-data-exposure"
     assert report["results"][0]["status"] == "PASS"
+
+
+def test_db_drift_demo_output_has_real_hashes_and_clean_control_call():
+    script = Path(__file__).resolve().parents[1] / "demo" / "run_db_drift_ab.py"
+
+    out = subprocess.run(
+        [sys.executable, str(script)],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    text = _plain(out.stdout)
+
+    assert "rbac_violation" not in text
+    assert "approved_surface_hash (none)" not in text
+    assert "current_surface_hash  (none)" not in text
+    assert re.search(r"approved_surface_hash\s+sha256:[0-9a-f]{20,}", text)
+    assert re.search(r"current_surface_hash\s+sha256:[0-9a-f]{20,}", text)
+    assert re.search(r"chain_verified\s+True", text)
+
+
+def test_clean_demo_command_runs_only_behavioral_and_capability_proofs():
+    script = Path(__file__).resolve().parents[1] / "demo" / "run_interlock_demo.py"
+
+    out = subprocess.run(
+        [sys.executable, str(script)],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    text = _plain(out.stdout)
+
+    assert "403->200" in text
+    assert "effective_permission_expansion" in text
+    assert "approved_surface_hash" in text
+    assert "current_surface_hash" in text
+    assert "chain_verified" in text
+    assert "SKIP" not in text
+    assert "response-data-exposure" not in text
+    assert "chain drift" not in text.lower()
+
+
+def test_clean_demo_command_has_scoped_render_repopulate_dry_run():
+    script = Path(__file__).resolve().parents[1] / "demo" / "run_interlock_demo.py"
+
+    out = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--repopulate-render",
+            "--dry-run",
+            "--skip-local-proof",
+            "--mock-url",
+            "https://example.test/mcp",
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    text = _plain(out.stdout)
+
+    assert "Render re-populate" in text
+    assert "POST /mcp/servers" in text
+    assert "POST /mcp/servers/clean-proof-docs/verify" in text
+    assert "POST /mcp/servers/clean-proof-docs/rebaseline" in text
+    assert "POST /mcp/discover" in text
+    assert "POST /mcp/call" in text
+    assert "read_document" in text
+    assert "response-data-exposure" not in text
+    assert "external-reach" not in text
+    assert "chain drift" not in text.lower()

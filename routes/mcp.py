@@ -38,12 +38,17 @@ MAX_MCP_AUDIT_LIMIT = 500
 
 
 def _tool_inventory_with_server_policy(
-    server_id: Optional[str] = None, limit: int = MAX_MCP_TOOL_LIMIT
+    server_id: Optional[str] = None,
+    limit: int = MAX_MCP_TOOL_LIMIT,
+    *,
+    demo_visible_only: bool = False,
 ) -> list[dict]:
-    tools = db.list_mcp_tool_metadata(server_id, limit=limit)
+    tools = db.list_mcp_tool_metadata(
+        server_id, limit=limit, demo_visible_only=demo_visible_only
+    )
     seen = {(tool.get("server_id"), tool.get("tool_name")) for tool in tools}
 
-    for server in list_mcp_servers(limit=limit):
+    for server in list_mcp_servers(limit=limit, demo_visible_only=demo_visible_only):
         sid = server.get("server_id")
         if server_id and sid != server_id:
             continue
@@ -64,6 +69,9 @@ def _tool_inventory_with_server_policy(
                         "side_effect": "unknown",
                         "data_classes": [],
                     },
+                    "server_registry_class": server.get("registry_class"),
+                    "server_registry_note": server.get("registry_note"),
+                    "server_demo_visible": server.get("demo_visible", True),
                 }
             )
             seen.add(key)
@@ -83,6 +91,9 @@ def _tool_inventory_with_server_policy(
                         "side_effect": "blocked",
                         "data_classes": [],
                     },
+                    "server_registry_class": server.get("registry_class"),
+                    "server_registry_note": server.get("registry_note"),
+                    "server_demo_visible": server.get("demo_visible", True),
                 }
             )
             seen.add(key)
@@ -91,11 +102,15 @@ def _tool_inventory_with_server_policy(
 
 
 @router.get("/mcp/servers")
-async def mcp_list_servers(limit: int = 100, x_api_key: Optional[str] = Header(None)):
+async def mcp_list_servers(
+    limit: int = 100,
+    demo_visible_only: bool = False,
+    x_api_key: Optional[str] = Header(None),
+):
     """List all registered MCP servers."""
     proxy.verify_key(x_api_key)
     safe_limit = clamp_limit(limit, default=100, maximum=MAX_MCP_SERVER_LIMIT)
-    return {"servers": list_mcp_servers(limit=safe_limit)}
+    return {"servers": list_mcp_servers(limit=safe_limit, demo_visible_only=demo_visible_only)}
 
 
 @router.post("/mcp/servers")
@@ -197,24 +212,26 @@ async def mcp_rebaseline_server(
 async def mcp_tools(
     server_id: Optional[str] = None,
     limit: int = 100,
+    demo_visible_only: bool = False,
     x_api_key: Optional[str] = Header(None),
 ):
     """List persisted MCP tool metadata, optionally for one server."""
     proxy.verify_key(x_api_key)
     safe_limit = clamp_limit(limit, default=100, maximum=MAX_MCP_TOOL_LIMIT)
-    return {"tools": _tool_inventory_with_server_policy(server_id, safe_limit)}
+    return {"tools": _tool_inventory_with_server_policy(server_id, safe_limit, demo_visible_only=demo_visible_only)}
 
 
 @router.get("/mcp/tools/drifted")
 async def mcp_drifted_tools(
     server_id: Optional[str] = None,
     limit: int = 100,
+    demo_visible_only: bool = False,
     x_api_key: Optional[str] = Header(None),
 ):
     """List MCP tools that need operator review because they changed or are quarantined."""
     proxy.verify_key(x_api_key)
     safe_limit = clamp_limit(limit, default=100, maximum=MAX_MCP_TOOL_LIMIT)
-    return {"tools": db.list_drifted_mcp_tools(server_id, limit=safe_limit)}
+    return {"tools": db.list_drifted_mcp_tools(server_id, limit=safe_limit, demo_visible_only=demo_visible_only)}
 
 
 @router.post("/mcp/tools/{server_id}/{tool_name}/approve")

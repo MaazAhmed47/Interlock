@@ -191,13 +191,13 @@ function DashboardDataProvider({ children }: { children: ReactNode }) {
     setErrors(prev => clearErrors(prev, ['servers', 'tools', 'drifted']))
 
     await Promise.all([
-      api.mcpServers()
+      api.mcpServers(true)
         .then(data => setServers(data.servers))
         .catch(error => setErrors(prev => ({ ...prev, servers: errorMessage(error) }))),
-      api.mcpTools()
+      api.mcpTools(undefined, true)
         .then(data => setTools(data.tools))
         .catch(error => setErrors(prev => ({ ...prev, tools: errorMessage(error) }))),
-      api.mcpDrifted()
+      api.mcpDrifted(undefined, true)
         .then(data => setDrifted(data.tools))
         .catch(error => setErrors(prev => ({ ...prev, drifted: errorMessage(error) }))),
     ])

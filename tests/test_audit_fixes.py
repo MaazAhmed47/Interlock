@@ -81,7 +81,7 @@ def test_operator_quarantine_reason_not_duplicated_as_drift_bullet():
     # Mutation produces real detected drift signals on the tool row.
     db.upsert_mcp_tool_metadata(
         "_dup_test", MUTATED_TOOL,
-        {"effects": ["read", "export", "share"], "side_effect": "read_only", "data_classes": ["pii"], "externality": "external"},
+        {"effects": ["read", "export"], "side_effect": "read_only", "data_classes": ["pii"], "externality": "external"},
     )
 
     reason = "Operator note: held pending data-owner sign-off on the new export field."

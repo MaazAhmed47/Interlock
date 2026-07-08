@@ -250,14 +250,8 @@ def _parse_mcp_annotations(annotations: dict) -> Dict[str, Any]:
     if read_only is True:
         partial["side_effect"] = "read_only"
         partial["effects"] = ["read"]
-    elif read_only is False and destructive is True:
-        partial["side_effect"] = "destructive"
-    elif read_only is False and destructive is False:
-        partial["side_effect"] = "mutating"
     elif destructive is True:
         partial["side_effect"] = "destructive"
-    elif destructive is False:
-        partial["side_effect"] = "mutating"
 
     if open_world is True:
         partial["externality"] = "external"
@@ -320,6 +314,8 @@ def _parse_meta_block(tool: dict, namespace: str) -> Dict[str, Any]:
         ),
         "warnings": [],
     }
+    if partial["effects"] and partial["side_effect"] in (None, "", "unknown"):
+        partial["side_effect"] = _side_effect_from_effects(partial["effects"])
     return {k: v for k, v in partial.items() if v not in (None, [], "")}
 
 
@@ -652,9 +648,9 @@ def _confidence_for_source(source: str) -> float:
 
 def _side_effect_from_effects(effects: Iterable[str]) -> str:
     effect_set = set(effects or [])
-    if "delete" in effect_set:
+    if effect_set & {"delete", "execute"}:
         return "destructive"
-    if effect_set and effect_set <= {"read"}:
+    if effect_set and effect_set <= {"read", "export"}:
         return "read_only"
     if effect_set:
         return "mutating"

@@ -350,7 +350,7 @@ def test_chat_proxy_prefers_x_api_key_over_authorization_header():
                 model="gpt-4o",
                 messages=[proxy.ChatMessage(role="user", content="hello")],
             ),
-            authorization="Bearer not-an-interlock-key",
+            authorization="Bearer test-key",
             x_api_key=TEST_KEY,
         ))
     finally:

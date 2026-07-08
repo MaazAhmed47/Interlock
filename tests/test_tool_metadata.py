@@ -82,7 +82,7 @@ metadata = normalize_tool_metadata(
         "_meta": {
             "security": {
                 "effects": ["export"],
-                "side_effect": "mutating",
+                "side_effect": "read_only",
                 "externality": "external",
                 "data_classes": ["financial", "internal"],
                 "identity_mode": "service_account",
@@ -97,7 +97,7 @@ metadata = normalize_tool_metadata(
 assert metadata["verification_level"] == "security_meta"
 assert metadata["source"] == "security_meta"
 assert metadata["effects"] == ["export"]
-assert metadata["side_effect"] == "mutating"
+assert metadata["side_effect"] == "read_only"
 assert metadata["externality"] == "external"
 assert names(metadata["data_classes"]) == {"financial", "internal"}
 assert metadata["identity_mode"] == "service_account"
@@ -175,6 +175,37 @@ metadata = normalize_tool_metadata(
 assert metadata["side_effect"] == "read_only"
 assert metadata["externality"] == "external"
 assert "read" in metadata["effects"]
+print("  OK")
+
+print("Test 7b: declared export effects beat weaker non-readonly MCP hints ...")
+metadata = normalize_tool_metadata(
+    {
+        "name": "read_document",
+        "description": "Read a document and optionally export it to an external recipient.",
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "openWorldHint": True,
+        },
+        "_meta": {
+            "interlock": {
+                "effects": ["read", "export"],
+                "externality": "external",
+                "data_classes": ["pii", "user_content"],
+            }
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "doc_id": {"type": "string"},
+                "recipient_email": {"type": "string"},
+            },
+        },
+    }
+)
+assert metadata["side_effect"] == "read_only"
+assert names(metadata["effects"]) == {"read", "export"}
+assert metadata["externality"] == "external"
 print("  OK")
 
 print("Test 8: benign policy/status prose does not infer mutating effects ...")

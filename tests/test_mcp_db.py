@@ -123,6 +123,32 @@ assert rec is not None, "Server was lost after simulated restart — CREATE TABL
 assert rec["url"] == "http://localhost:5000/mcp"
 print("  OK — data survived restart")
 
+print("Test 11: registry classification hides disposable and unapproved demo servers ...")
+db.register_mcp_server("m14", {
+    "url": "http://localhost:8787/mcp",
+    "description": "Drift matrix fixture",
+    "allowed_tools": ["payments"],
+    "blocked_tools": [],
+    "rate_limit": 10,
+})
+db.register_mcp_server("asmi-demo", {
+    "url": "https://broen.tech/api/asmi/mcp",
+    "description": "Third-party hosted server",
+    "allowed_tools": ["read_document"],
+    "blocked_tools": [],
+    "rate_limit": 10,
+})
+fixture = db.lookup_mcp_server("m14")
+external = db.lookup_mcp_server("asmi-demo")
+assert fixture["registry_class"] == "disposable_fixture"
+assert fixture["demo_visible"] is False
+assert external["registry_class"] == "external_unapproved"
+assert external["demo_visible"] is False
+visible_ids = {s["server_id"] for s in db.list_mcp_servers(demo_visible_only=True)}
+assert "m14" not in visible_ids
+assert "asmi-demo" not in visible_ids
+print("  OK")
+
 # ── Cleanup ────────────────────────────────────────────────────────────────────
 
 for path in (_tmp_db, _tmp_db + "-wal", _tmp_db + "-shm"):
@@ -131,4 +157,4 @@ for path in (_tmp_db, _tmp_db + "-wal", _tmp_db + "-shm"):
     except OSError:
         pass
 
-print("\nAll MCP DB tests passed. (10/10)")
+print("\nAll MCP DB tests passed. (11/11)")

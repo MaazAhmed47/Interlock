@@ -1337,25 +1337,10 @@ def _stored_tool_drift_context(
     if not stored_tool:
         return None
 
+    stored_tool = db.canonicalize_mcp_tool_record(stored_tool)
     status = stored_tool.get("status") or "active"
     severity = stored_tool.get("drift_severity") or "none"
     action = stored_tool.get("drift_action") or "allow"
-    if severity == "critical":
-        status = "quarantined"
-        action = "quarantine"
-    elif severity == "high" and action == "allow":
-        action = "deny"
-    elif severity in {"minor", "moderate"} and action == "allow":
-        action = "monitor"
-
-    if status == "quarantined":
-        action = "quarantine"
-        if severity == "none":
-            severity = "critical"
-    elif status == "changed" and action == "allow":
-        action = "monitor"
-        if severity == "none":
-            severity = "minor"
 
     if status == "active" and severity == "none" and action == "allow":
         return None
@@ -1685,6 +1670,8 @@ def register_mcp_server(server_id: str, config: dict) -> dict:
     return {"ok": True, "server_id": server_id, "verified": False}
 
 
-def list_mcp_servers(limit: Optional[int] = None) -> list:
+def list_mcp_servers(
+    limit: Optional[int] = None, *, demo_visible_only: bool = False
+) -> list:
     """List registered MCP servers from the DB."""
-    return db.list_mcp_servers(limit=limit)
+    return db.list_mcp_servers(limit=limit, demo_visible_only=demo_visible_only)

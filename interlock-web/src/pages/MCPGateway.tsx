@@ -143,12 +143,13 @@ export default function MCPGateway() {
           ? <div style={{ padding: 16 }}><EmptyState message={errors.servers ? 'Server registry is unavailable right now.' : 'No MCP servers registered.'} showSettingsLink={false} /></div>
           : <div className="table-wrap">
               <table className="data-table">
-                <thead><tr><th>Server ID</th><th>URL</th><th>Trust</th></tr></thead>
+                <thead><tr><th>Server ID</th><th>URL</th><th>Kind</th><th>Trust</th></tr></thead>
                 <tbody>
                   {servers.map(s => (
                     <tr key={s.server_id}>
                       <td className="mono">{s.server_id}</td>
                       <td className="mono dim">{formatValue(s.url)}</td>
+                      <td className="dim">{formatValue(typeof s.registry_class === 'string' ? s.registry_class.replace(/_/g, ' ') : '-')}</td>
                       <td>{s.trust_level ? <StatusBadge value={String(s.trust_level)} /> : <span className="dim">{formatValue(s.verified ? 'verified' : 'unknown')}</span>}</td>
                     </tr>
                   ))}

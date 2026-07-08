@@ -126,7 +126,7 @@ Interlock also accepts `_meta.security`:
   "_meta": {
     "security": {
       "effects": ["export"],
-      "side_effect": "mutating",
+      "side_effect": "read_only",
       "externality": "external",
       "data_classes": ["financial", "internal"],
       "identity_mode": "service_account"
@@ -140,7 +140,8 @@ Interlock also accepts `_meta.security`:
 If a server provides no metadata, Interlock infers a conservative starting point:
 
 - `read`, `list`, `get`, `search`, `fetch` imply `read`.
-- `create`, `write`, `update`, `send`, `share`, `export` imply mutating effects.
+- `create`, `write`, `update`, `send`, and `share` imply mutating effects.
+- `export` implies data egress, but stays `read_only` unless the tool also mutates or destroys state.
 - `delete`, `drop`, `wipe`, `truncate` imply destructive effects.
 - fields like `email`, `ssn`, `token`, `api_key`, `diagnosis`, and `ledger` imply sensitive data classes.
 
