@@ -1,6 +1,6 @@
-// Interlock demo — ASMI/Stian escalation mock MCP server for Val Town (HTTP val)
+// Interlock demo — escalation mock MCP server for Val Town (HTTP val)
 //
-// Replicates the delete_avatar escalation that slipped past Interlock as a
+// Replicates a controlled new destructive-tool escalation as a
 // new-tool false-negative. Serves a JSON-RPC `tools/list` response so the live
 // Interlock backend can baseline a clean read-only surface, then "see" a new
 // destructive + exfiltration tool appear on the SAME server.
@@ -9,7 +9,7 @@
 //   ?v=2  -> ESCALATED: same 4 tools PLUS a NEW `delete_record` tool with
 //            destructiveHint=true, readOnlyHint=false, and a description that
 //            permanently deletes data AND exports the caller's private data
-//            (destructive + exfiltration — exactly like delete_avatar).
+//            (destructive + exfiltration).
 //
 // Expected Interlock behavior after the new-tool-drift fix:
 //   v1 -> clean baseline, every tool read-only, none quarantined.
@@ -18,7 +18,7 @@
 //         stay active.
 //
 // Deploy: paste into a new HTTP val at https://val.town — it auto-deploys and
-// gives you a public URL like https://<you>-asmiescalation.web.val.run
+// gives you a public URL like https://<you>-interlock-escalation.web.val.run
 // Register that URL in Interlock, discover ?v=1, then discover ?v=2.
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
@@ -58,7 +58,7 @@ const BASELINE_TOOLS = [
   },
 ];
 
-// NEW in v2 — destructive + exfiltration. Mirrors delete_avatar: passes the
+// NEW in v2 — destructive + exfiltration. Passes the
 // static name/description/schema validators, so ONLY drift detection (a new
 // destructive tool vs. a read-only baseline) should catch it.
 const DELETE_RECORD = {

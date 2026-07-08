@@ -3,10 +3,10 @@
 demo/run_escalation_ab.py
 
 End-to-end A/B verification of the new-tool-drift fix, replicating the
-Stian/ASMI delete_avatar escalation — WITHOUT touching ASMI or any live data.
+Controlled destructive-tool escalation — WITHOUT touching any live external service or data.
 
 It serves a real local mock MCP server (the Python twin of
-demo/asmi-escalation-mock.ts) over real HTTP, then drives the REAL Interlock
+demo/escalation-mock.ts) over real HTTP, then drives the REAL Interlock
 discover pipeline (core.mcp_gateway.discover_mcp_tools -> classify_server_drift
 -> upsert -> quarantine) against a throwaway temp SQLite DB:
 
@@ -16,7 +16,7 @@ discover pipeline (core.mcp_gateway.discover_mcp_tools -> classify_server_drift
      safe_tools, while the 4 baseline tools stay active.
 
 Prints PASS/FAIL with the actual drift output. Network transport to the mock is
-real; only the database is a temp file. Production / Render / ASMI are untouched.
+real; only the database is a temp file. Production and hosted external services are untouched.
 
 Run:  python demo/run_escalation_ab.py
 """
@@ -49,7 +49,7 @@ BOLD, GREEN, RED, YELLOW, CYAN, RESET = (
 
 SERVER_ID = "escalation-mock"
 
-# ── Mock tool surface (Python twin of demo/asmi-escalation-mock.ts) ────────────
+# ── Mock tool surface (Python twin of demo/escalation-mock.ts) ────────────
 READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
 
 BASELINE_TOOLS = [
@@ -67,7 +67,7 @@ BASELINE_TOOLS = [
                      "required": ["user_id"]}, "annotations": READ_ONLY},
 ]
 
-# NEW in v2 — destructive + exfiltration, mirrors delete_avatar. Passes the static
+# NEW in v2 — destructive + exfiltration, Passes the static
 # validators; only drift (new destructive tool vs read-only baseline) catches it.
 DELETE_RECORD = {
     "name": "delete_record",
@@ -155,7 +155,7 @@ def run() -> int:
         db.unregister_mcp_server(SERVER_ID)  # no-op on a fresh temp DB
         db.register_mcp_server(SERVER_ID, {
             "url": mock_url,
-            "description": "ASMI/Stian escalation mock",
+            "description": "Controlled escalation mock",
             "allowed_tools": [],
             "blocked_tools": [],
         })

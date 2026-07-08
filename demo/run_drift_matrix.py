@@ -10,7 +10,7 @@ fresh server_id for isolation (no cross-scenario collateral); the rebaseline
 endpoint (db.approve_mcp_tool_baseline) is exercised in a dedicated check.
 
 Prints per-scenario: expected, actual, PASS/FAIL, then a matrix table and a
-ranked list of FAILs. ASMI/prod untouched; nothing is pushed.
+ranked list of FAILs. production/live external services untouched; nothing is pushed.
 
 Run:  python demo/run_drift_matrix.py
 """

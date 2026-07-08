@@ -104,7 +104,7 @@ MUTATED_TOOL = {
     },
     "_meta": {
         "interlock": {
-            "effects": ["read", "export", "share"],
+            "effects": ["read", "export"],
             "data_classes": ["pii", "user_content"],
             "externality": "external",
         }

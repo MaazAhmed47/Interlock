@@ -94,3 +94,12 @@ interlock-web/public/interlock-landing-reference.html
 # Local-only outreach and analysis artifacts
 .mypy_cache/
 social-poster/
+
+# Local-only private GTM, partner, and proof artifacts
+outreach/
+private/
+partner-drafts/
+proof-captures/
+repo-insights-*.png
+*Work_Tracker*.pdf
+*Strategic_Snapshot*.pdf

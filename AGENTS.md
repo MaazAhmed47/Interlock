@@ -23,7 +23,7 @@ firewall."
 
 Five layers, short-circuits on first hit:
 
-1. `check_learned_patterns(prompt)` — fingerprint cache from prior LLM-judge results. Sub-ms hits. The differentiator vs. competitors who re-run the LLM every time.
+1. `check_learned_patterns(prompt)` — fingerprint cache from prior LLM-judge results. Sub-ms hits.
 2. `policy_scan(prompt, api_key)` — per-key custom policies (blocked keywords/topics/length).
 3. `rule_based_scan` (`core/detector.py`) — regex/keyword. Layer 1 in marketing.
 4. `pattern_match_scan` (`core/pattern_matcher.py`) — pattern matching. Layer 2.
@@ -41,7 +41,7 @@ When working on agent security, edit those modules — not the prompt-scan layer
 ### Entry points
 
 - `proxy.py` — main FastAPI app. All routes live here.
-- (No `api.py` or `main.py` — those were hallucinated by the AGENTS.md auto-generator. If you see them now, they're new.)
+- (No `api.py` or `main.py`; if you see them now, they are new.)
 
 ### Core modules
 
@@ -127,20 +127,18 @@ python test_judge_failmodes.py
 
 ---
 
-## Current priorities (June 2026)
+## Current engineering priorities
 
-1. **Correct ICP** — focus copy and outreach on teams operating agents against MCP tools they do not fully control: AI-agent teams, MCP gateways, internal platform/security teams, and products that let users bring external MCP servers.
-2. **Killer demo** — keep one impossible-to-misunderstand flow: approved tool -> same manifest/schema -> expected 403 denied becomes observed 200 allowed -> quarantine -> hash-chain verified receipt.
-3. **Reference win** — convert one non-production drift check into a public/private reference before adding more features.
-4. **Repo hygiene** — keep public files product-focused. Move founder outreach assets, private target lists, scratch state, and local proof clutter out of the public root.
-5. **Verification** — keep CI green with ruff, black, mypy, pytest, dashboard build, Docker/Helm checks.
+1. Keep runtime evidence boundaries honest: internal triage may be richer, but public/replay records must not overstate what was verified.
+2. Keep the core proof path reproducible: approved tool -> same identity/surface -> changed risk or behavior -> hold/quarantine -> hash-chain verified receipt.
+3. Keep public repository artifacts product-focused and evidence-safe. Local non-product notes, partner-specific drafts, and raw proof captures stay out of git.
+4. Keep CI green with ruff, black, mypy, pytest, dashboard build, Docker/Helm checks.
 
 ## Known gotchas
 
 - `verify_key` does a DB hit on every request. Fine at low scale; cache via `functools.lru_cache` with TTL once you exceed ~100 RPS.
 - Rate limits and key usage should use Redis for multi-replica deployments; local memory paths are for local/dev and bounded pilots.
 - Do not overclaim production readiness. Public proof packs are technical evidence; production proof requires a customer-approved non-production canary and written scope.
-- The strongest sales proof is behavioral drift (expected 403 denied -> observed 200 allowed) plus receipt evidence. Keep broad drift coverage as supporting depth, not the headline.
 
 
 ## Git conventions

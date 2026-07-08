@@ -122,7 +122,7 @@ For Slack:
 ```powershell
 $env:INTERLOCK_ALLOW_LIVE_PROVIDER_PROOFS = "1"
 $env:INTERLOCK_LIVE_PROVIDER = "slack"
-$env:INTERLOCK_SLACK_BOT_TOKEN = "xoxb-sandbox-token"
+$env:INTERLOCK_SLACK_BOT_TOKEN = "<sandbox-slack-bot-token>"
 $env:INTERLOCK_SLACK_CHANNEL_ID = "C-sandbox-channel-id"
 $env:INTERLOCK_LIVE_CANARY_LABEL = "interlock-slack-canary-001"
 python demo\run_email_live_proof_pack.py

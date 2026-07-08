@@ -10,7 +10,7 @@ it and quarantines it before execution, while unchanged control tools stay clean
 
 Runs the REAL discover + tool-call pipeline (core.mcp_gateway) over REAL HTTP
 against a local twin of demo/db-drift-mock.ts, on a throwaway temp DB. This is
-the SAME code that runs on Render; only the DB is a temp file. ASMI/prod untouched.
+the SAME code that runs on Render; only the DB is a temp file. production/live external services untouched.
 
 Flow:
   1. Register + verify mock, approve [query_customers, get_schema, list_tables].
@@ -34,6 +34,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 _tmpdir = tempfile.mkdtemp()
 os.environ["FIREWALL_DB_PATH"] = os.path.join(_tmpdir, "interlock-db-drift-ab.db")
+os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+os.environ.pop("DATABASE_URL", None)
 os.environ["INTERLOCK_ALLOW_PRIVATE_OUTBOUND"] = "true"  # allow the localhost mock
 
 _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -322,7 +324,7 @@ def run():
         )
         _kv("call ok", call.get("ok"))
         _kv("error", call.get("error"))
-        _kv("message", str(call.get("message"))[:96])
+        _kv("message", call.get("message"))
         if call.get("ok") is not False or call.get("error") != "tool_quarantined":
             fails.append(f"query_customers call not quarantined: {call.get('error')}")
 
@@ -357,11 +359,11 @@ def run():
             _kv("evidence record_type", rec.get("record_type"))
             _kv(
                 "approved_surface_hash",
-                (rec.get("approved_surface_hash") or "(none)")[:28],
+                rec.get("approved_surface_hash") or "(none)",
             )
             _kv(
                 "current_surface_hash",
-                (rec.get("current_surface_hash") or "(none)")[:28],
+                rec.get("current_surface_hash") or "(none)",
             )
             _kv("evidence finding_types", rec.get("finding_types"))
             _kv(
@@ -372,15 +374,22 @@ def run():
         else:
             fails.append("no audit event / receipt generated for the quarantined call")
 
-        # Control tool must remain callable (not drift-denied).
+        # Control tool must remain callable (not drift-denied). Use admin_agent
+        # so the demo isolates drift enforcement from unrelated role allow-list
+        # policy noise.
+        control_role = "admin_agent"
         ctl = asyncio.run(
-            proxy_mcp_tool_call(SERVER_ID, "get_schema", {}, role="data_analyst")
+            proxy_mcp_tool_call(SERVER_ID, "get_schema", {}, role=control_role)
         )
+        _kv("get_schema role", control_role)
         _kv("get_schema call ok", ctl.get("ok"))
-        _kv("get_schema error", ctl.get("error"))
-        _kv("get_schema reason", str(ctl.get("message") or ctl.get("reason"))[:90])
+        if not ctl.get("ok"):
+            _kv("get_schema error", ctl.get("error"))
+            _kv("get_schema reason", str(ctl.get("message") or ctl.get("reason"))[:90])
         if ctl.get("error") == "tool_quarantined":
             fails.append("control get_schema wrongly quarantined (FALSE POSITIVE)")
+        elif ctl.get("ok") is not True:
+            fails.append(f"control get_schema not callable: {ctl.get('error')}")
 
         # ── 6) AUDIT TIMELINE — detection at discovery -> denial at enforcement ─
         _banner("F) AUDIT TIMELINE — query_customers (detected -> denied)", CYAN)
@@ -425,7 +434,7 @@ def run():
         f"  {GREEN}destructive+write/export+PII+external under the SAME name; Interlock detected"
     )
     print(
-        f"  the full capability drift, QUARANTINED it, denied the call with a verified Security"
+        "  the full capability drift, QUARANTINED it, denied the call with a verified Security"
     )
     print(
         f"  Receipt, and left the unchanged control tools ACTIVE (zero false positives).{RESET}"

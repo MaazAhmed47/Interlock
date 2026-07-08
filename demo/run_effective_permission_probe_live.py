@@ -27,6 +27,7 @@ _tmp = tempfile.mkdtemp()
 DB_PATH = os.path.join(_tmp, "eperm-live.db")
 os.environ["FIREWALL_DB_PATH"] = DB_PATH
 os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+os.environ.pop("DATABASE_URL", None)
 os.environ["INTERLOCK_ENV"] = "test"  # force non-production
 os.environ["INTERLOCK_ALLOW_PRIVATE_OUTBOUND"] = "true"  # allow the localhost upstream
 UPSTREAM_TOKEN = "super-secret-token"  # sent as Bearer; must never be stored

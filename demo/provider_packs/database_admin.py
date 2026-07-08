@@ -347,11 +347,13 @@ def _admin_directory_to_disable_user_chain_drift() -> Dict[str, Any]:
 
 
 def _reset_sqlite_sandbox(path: str) -> None:
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.unlink(path + suffix)
+        except OSError:
+            pass
     with sqlite3.connect(path) as conn:
+        conn.execute("DROP TABLE IF EXISTS customers")
         conn.execute(
             "CREATE TABLE customers (id INTEGER PRIMARY KEY, email TEXT, active INTEGER, version INTEGER)"
         )

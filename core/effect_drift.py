@@ -549,6 +549,11 @@ def compute_effect_drift_digest(record: Dict[str, Any]) -> str:
 def build_effect_drift_record_from_audit_row(
     row: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
+    if (
+        row.get("drift_status") != "effect_drift"
+        and row.get("matched_rule") != "effect_drift"
+    ):
+        return None
     finding_types = row.get("drift_types") or []
     if isinstance(finding_types, str):
         try:

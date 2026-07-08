@@ -125,28 +125,28 @@ Windows PowerShell:
 
 The script creates `.env` if needed, starts the gateway, waits for `/health`, and runs a blocked-prompt smoke test. For the full evaluation path, use the [10-minute evaluator quickstart](docs/evaluator-quickstart.md).
 
-### Testing ASMI hosted MCP safely
+### Testing an authenticated hosted MCP safely
 
-ASMI's hosted MCP endpoint requires bearer auth. Store the token in your local `.env`; do not paste the raw token into Interlock server config or public docs:
+For any hosted MCP endpoint that requires bearer or API-key auth, store the token in your local `.env`; do not paste raw tokens into Interlock server config, tickets, screenshots, or public docs:
 
 ```env
-ASMI_MCP_TOKEN=<YOUR_ASMI_MCP_TOKEN>
+HOSTED_MCP_TOKEN=<YOUR_NON_PRODUCTION_MCP_TOKEN>
 ```
 
-Register the server with the env var name only:
+Register the server with the environment variable name only:
 
 ```json
 {
-  "server_id": "asmi-demo",
-  "url": "https://broen.tech/api/asmi/mcp",
-  "description": "ASMI hosted MCP test server",
-  "allowed_tools": ["list_avatars"],
+  "server_id": "hosted-mcp-demo",
+  "url": "https://your-non-production-host.example.com/mcp",
+  "description": "Hosted MCP test server",
+  "allowed_tools": ["safe_read_tool"],
   "auth_type": "bearer",
-  "auth_token_env": "ASMI_MCP_TOKEN"
+  "auth_token_env": "HOSTED_MCP_TOKEN"
 }
 ```
 
-Use a non-production ASMI workflow only. First baseline `list_avatars`, then make or simulate a safe function change and verify that Interlock detects the changed tool surface before execution.
+Use a non-production workflow only. Baseline a safe read-only tool, then make or simulate one safe surface change and verify that Interlock detects the changed tool boundary before execution.
 
 ---
 

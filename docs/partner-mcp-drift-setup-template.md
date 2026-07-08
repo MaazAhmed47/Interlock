@@ -1,6 +1,6 @@
-# Interlock — Design Partner Setup: Post‑Approval MCP Drift Detection
+# Interlock — Non-Production MCP Drift Evaluation Template
 
-**Audience:** Devopam (maintains a Postgres MCP server, HTTP transport).
+**Audience:** MCP operators or maintainers evaluating a database/admin MCP server over HTTP.
 **Scope:** non‑production, sample DB, no real data.
 **Goal:** stand up Interlock locally, point it at your MCP server over HTTP,
 baseline your high‑risk (write / DDL / role‑changing) tools, then prove Interlock
@@ -64,7 +64,7 @@ ADMIN_TOKEN=$(grep '^ADMIN_TOKEN=' .env | cut -d= -f2-)
 # (a) scoped operator token
 curl -s -X POST http://localhost:8001/admin/tokens \
   -H "x-admin-token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"label":"devopam-operator","role":"operator"}'
+  -d '{"label":"eval-operator","role":"operator"}'
 # -> copy the "raw_token" from the response into SCOPED below
 
 SCOPED='<raw_token-from-above>'
@@ -72,7 +72,7 @@ SCOPED='<raw_token-from-above>'
 # (b) the Interlock API key you will actually use
 curl -s -X POST http://localhost:8001/admin/keys \
   -H "x-admin-token: $SCOPED" -H "Content-Type: application/json" \
-  -d '{"plan":"developer","label":"devopam-eval","fail_mode":"fail_open_safe"}'
+  -d '{"plan":"developer","label":"mcp-drift-eval","fail_mode":"fail_open_safe"}'
 # -> copy the returned key into KEY below
 
 export KEY='<your-interlock-api-key>'
@@ -89,9 +89,9 @@ exercise in `allowed_tools`; put genuinely dangerous ones in `blocked_tools`.
 curl -s -X POST http://localhost:8001/mcp/servers \
   -H "x-api-key: $KEY" -H "Content-Type: application/json" \
   -d '{
-        "server_id": "devopam-postgres",
+        "server_id": "eval-postgres",
         "url": "https://your-host.example.com/mcp",
-        "description": "Devopam Postgres MCP (sample DB, non-prod)",
+        "description": "Evaluation Postgres MCP (sample DB, non-prod)",
         "allowed_tools": ["list_tables","write_query","create_table","alter_table"],
         "blocked_tools": ["drop_table"],
         "rate_limit": 60,
@@ -106,17 +106,17 @@ put the token in the request body:
 ```jsonc
 "auth_type": "bearer",
 "auth_header": "Authorization",       // header Interlock will send
-"auth_token_env": "DEVOPAM_MCP_TOKEN" // env var NAME; value lives in the container
+"auth_token_env": "MCP_SERVER_TOKEN" // env var NAME; value lives in the container
 ```
 
-Then add `DEVOPAM_MCP_TOKEN=...` to `.env` and `docker compose up -d --build`.
+Then add `MCP_SERVER_TOKEN=...` to `.env` and `docker compose up -d --build`.
 Interlock reads that env var at discovery/call time and injects the header upstream.
 
 **Mark the server verified** (registration returns `verified:false`; `/mcp/call`
 refuses to proxy until verified — this is the deliberate human‑in‑the‑loop gate):
 
 ```bash
-curl -s -X POST http://localhost:8001/mcp/servers/devopam-postgres/verify \
+curl -s -X POST http://localhost:8001/mcp/servers/eval-postgres/verify \
   -H "x-api-key: $KEY"
 ```
 
@@ -142,13 +142,13 @@ Discovery pulls `tools/list`, **validates every tool**, and persists a trusted
 ```bash
 curl -s -X POST http://localhost:8001/mcp/discover \
   -H "x-api-key: $KEY" -H "Content-Type: application/json" \
-  -d '{"server_url":"https://your-host.example.com/mcp","server_id":"devopam-postgres"}' | jq
+  -d '{"server_url":"https://your-host.example.com/mcp","server_id":"eval-postgres"}' | jq
 ```
 
 Confirm your write/DDL/role tools are baselined and clean:
 
 ```bash
-curl -s "http://localhost:8001/mcp/tools?server_id=devopam-postgres" -H "x-api-key: $KEY" \
+curl -s "http://localhost:8001/mcp/tools?server_id=eval-postgres" -H "x-api-key: $KEY" \
   | jq '.tools[] | {tool_name, status, drift_severity, drift_action}'
 ```
 
@@ -158,9 +158,9 @@ Optionally **pin** the current surface as an explicit operator‑approved baseli
 (belt‑and‑suspenders; resets drift state to clean):
 
 ```bash
-curl -s -X POST http://localhost:8001/mcp/tools/devopam-postgres/write_query/approve \
+curl -s -X POST http://localhost:8001/mcp/tools/eval-postgres/write_query/approve \
   -H "x-api-key: $KEY" -H "Content-Type: application/json" \
-  -d '{"reviewer":"devopam","reason":"Initial trusted baseline"}'
+  -d '{"reviewer":"operator","reason":"Initial trusted baseline"}'
 ```
 
 > **Naming gotcha for DB tools.** The discovery‑time validator pre‑blocks tools
@@ -205,7 +205,7 @@ Re‑run discovery so Interlock re‑reads the surface and compares it to the ba
 ```bash
 curl -s -X POST http://localhost:8001/mcp/discover \
   -H "x-api-key: $KEY" -H "Content-Type: application/json" \
-  -d '{"server_url":"https://your-host.example.com/mcp","server_id":"devopam-postgres"}' | jq
+  -d '{"server_url":"https://your-host.example.com/mcp","server_id":"eval-postgres"}' | jq
 ```
 
 What Interlock classifies here (and why it's **critical → quarantine**):
@@ -217,7 +217,7 @@ What Interlock classifies here (and why it's **critical → quarantine**):
 The max severity (critical) wins. See it in the review queue:
 
 ```bash
-curl -s "http://localhost:8001/mcp/tools/drifted?server_id=devopam-postgres" -H "x-api-key: $KEY" \
+curl -s "http://localhost:8001/mcp/tools/drifted?server_id=eval-postgres" -H "x-api-key: $KEY" \
   | jq '.tools[] | {tool_name, status, drift_severity, drift_action, drift_reasons}'
 # write_query -> status "quarantined", drift_severity "critical", drift_action "quarantine"
 ```
@@ -228,7 +228,7 @@ your server:
 ```bash
 curl -s -X POST http://localhost:8001/mcp/call \
   -H "x-api-key: $KEY" -H "Content-Type: application/json" \
-  -d '{"server_id":"devopam-postgres","tool_name":"write_query","arguments":{"sql":"UPDATE accounts SET note='\''x'\'' WHERE id=1"}}' | jq
+  -d '{"server_id":"eval-postgres","tool_name":"write_query","arguments":{"sql":"UPDATE accounts SET note='\''x'\'' WHERE id=1"}}' | jq
 ```
 
 Expected — execution is refused, with the drift attached:
@@ -255,9 +255,9 @@ existing `maxLength`). Re‑discover:
 ```bash
 curl -s -X POST http://localhost:8001/mcp/discover \
   -H "x-api-key: $KEY" -H "Content-Type: application/json" \
-  -d '{"server_url":"https://your-host.example.com/mcp","server_id":"devopam-postgres"}' | jq
+  -d '{"server_url":"https://your-host.example.com/mcp","server_id":"eval-postgres"}' | jq
 
-curl -s "http://localhost:8001/mcp/tools?server_id=devopam-postgres" -H "x-api-key: $KEY" \
+curl -s "http://localhost:8001/mcp/tools?server_id=eval-postgres" -H "x-api-key: $KEY" \
   | jq '.tools[] | select(.tool_name=="list_tables") | {status, drift_severity, drift_action}'
 ```
 
@@ -267,7 +267,7 @@ Interlock records the change but classifies it `minor` with **no security findin
 ```bash
 curl -s -X POST http://localhost:8001/mcp/call \
   -H "x-api-key: $KEY" -H "Content-Type: application/json" \
-  -d '{"server_id":"devopam-postgres","tool_name":"list_tables","arguments":{}}' | jq '.ok, .result'
+  -d '{"server_id":"eval-postgres","tool_name":"list_tables","arguments":{}}' | jq '.ok, .result'
 # ok: true, with real rows from your sample DB
 ```
 
