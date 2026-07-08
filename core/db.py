@@ -2139,10 +2139,12 @@ def list_mcp_tool_metadata(
                 (limit,),
             ).fetchall()
         else:
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT * FROM mcp_tool_metadata
                  ORDER BY server_id ASC, tool_name ASC
-                """).fetchall()
+                """
+            ).fetchall()
     tools = [_mcp_tool_metadata_row_to_dict(r) for r in rows]
     return _annotate_mcp_tools_with_server_registry(
         tools, demo_visible_only=demo_visible_only
@@ -2353,11 +2355,13 @@ def list_drifted_mcp_tools(
                 (limit,),
             ).fetchall()
         else:
-            rows = conn.execute("""
+            rows = conn.execute(
+                """
                 SELECT * FROM mcp_tool_metadata
                  WHERE status != 'active' OR drift_severity != 'none' OR drift_action != 'allow'
                  ORDER BY last_changed DESC, server_id ASC, tool_name ASC
-                """).fetchall()
+                """
+            ).fetchall()
     tools = [_mcp_tool_metadata_row_to_dict(r) for r in rows]
     return _annotate_mcp_tools_with_server_registry(
         tools, demo_visible_only=demo_visible_only
