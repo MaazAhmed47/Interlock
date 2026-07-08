@@ -1457,7 +1457,10 @@ def _classify_mcp_server(row: Dict[str, Any]) -> Dict[str, Any]:
     registry_note = "Operator-registered MCP server."
     demo_visible = True
 
-    if sid in KNOWN_UNAPPROVED_EXTERNAL_SERVER_IDS or host in KNOWN_UNAPPROVED_EXTERNAL_HOSTS:
+    if (
+        sid in KNOWN_UNAPPROVED_EXTERNAL_SERVER_IDS
+        or host in KNOWN_UNAPPROVED_EXTERNAL_HOSTS
+    ):
         registry_class = "external_unapproved"
         registry_note = "Known third-party server not owned by the Interlock demo."
         demo_visible = False
@@ -1468,10 +1471,14 @@ def _classify_mcp_server(row: Dict[str, Any]) -> Dict[str, Any]:
         registry_class = "disposable_fixture"
         registry_note = "Disposable test or matrix fixture."
         demo_visible = False
-    elif _is_public_mock_host(host) and any(token in lowered for token in ("demo", "proof", "mock")):
+    elif _is_public_mock_host(host) and any(
+        token in lowered for token in ("demo", "proof", "mock")
+    ):
         registry_class = "intended_demo"
         registry_note = "Public mock used to seed the buyer demo."
-    elif _is_loopback_host(host) and any(token in lowered for token in ("test", "fixture", "probe", "matrix", "mock")):
+    elif _is_loopback_host(host) and any(
+        token in lowered for token in ("test", "fixture", "probe", "matrix", "mock")
+    ):
         registry_class = "disposable_fixture"
         registry_note = "Loopback-only proof or test server."
         demo_visible = False
@@ -1559,7 +1566,9 @@ def _annotate_mcp_tools_with_server_registry(
     for tool in tools:
         row = dict(tool)
         server = server_lookup.get(str(row.get("server_id") or "")) or {}
-        row["server_registry_class"] = server.get("registry_class") or "operator_registered"
+        row["server_registry_class"] = (
+            server.get("registry_class") or "operator_registered"
+        )
         row["server_registry_note"] = server.get("registry_note") or ""
         row["server_demo_visible"] = bool(server.get("demo_visible", True))
         if not demo_visible_only or row["server_demo_visible"]:
