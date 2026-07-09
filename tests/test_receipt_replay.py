@@ -385,6 +385,24 @@ def test_probe_row_binds_approved_surface_hash(monkeypatch):
     assert snapshot is not None
 
 
+# ── receipt binding block ─────────────────────────────────────────────────────
+
+
+def test_receipt_carries_binding_block():
+    from core import receipt as receipt_mod
+
+    saved = _log_event()
+    row = db.get_mcp_audit_log(saved["id"])
+    receipt = receipt_mod.build_receipt(row, chain_verified=True)
+    binding = receipt.get("binding")
+    assert binding is not None, "receipts must carry a context binding block"
+    assert binding["call_id"] == saved["call_id"]
+    assert binding["target"] == "demo-docs/read_document"
+    assert binding["argument_hash"] == "sha256:" + "a" * 64
+    assert binding["surface_hash"] == "sha256:" + "c" * 64
+    assert binding["approved_surface_hash"] == "sha256:" + "b" * 64
+
+
 # ── offline demo key seed ─────────────────────────────────────────────────────
 
 

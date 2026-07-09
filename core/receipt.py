@@ -290,6 +290,25 @@ def derive_drift_evidence(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
+def derive_binding(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The context this receipt is bound to. Verification (core/receipt_verify.py)
+    fails a presented receipt whose target, argument hash, call id, or surface
+    hash differ from these recorded values — the anti-replay invariant. Fields
+    are empty strings on rows written before binding existed; verification
+    fails CLOSED on those rather than passing silently.
+    """
+    server_id = row.get("server_id") or ""
+    tool_name = row.get("tool_name") or ""
+    return {
+        "call_id": row.get("call_id") or "",
+        "target": f"{server_id}/{tool_name}",
+        "argument_hash": row.get("argument_hash") or "",
+        "surface_hash": row.get("drift_current_hash") or "",
+        "approved_surface_hash": row.get("drift_baseline_hash") or "",
+    }
+
+
 def build_receipt(row: Dict[str, Any], chain_verified: bool = False) -> Dict[str, Any]:
     """Map a single mcp_audit_log row to a Security Receipt."""
     ts = row.get("ts") or ""
@@ -313,6 +332,7 @@ def build_receipt(row: Dict[str, Any], chain_verified: bool = False) -> Dict[str
         "redactions": redactions,
         "drift": derive_drift(row),
         "drift_evidence": derive_drift_evidence(row),
+        "binding": derive_binding(row),
         "integrity_hash": row.get("integrity_hash") or "",
         "prev_hash": row.get("prev_hash") or "",
         "chain_verified": bool(chain_verified),
