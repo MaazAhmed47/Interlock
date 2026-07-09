@@ -21,7 +21,7 @@ from core.policy import policy_scan, ROLE_POLICIES
 from core.shadow_mode import calculate_risk_score
 from core.siem import trigger_siem_dispatch
 from core.webhook import trigger_webhook
-from config import api_docs_enabled, cors_allowed_origins
+from config import api_docs_enabled, cors_allowed_origins, offline_demo_enabled
 from models.schemas import (  # noqa: F401
     ChatMessage,
     ChatRequest,
@@ -54,6 +54,8 @@ async def lifespan(app: FastAPI):
     db.seed_legacy_keys()
     db.seed_mcp_servers()
     db.seed_default_policies(ROLE_POLICIES, policy_type="role")
+    if offline_demo_enabled():
+        db.seed_offline_demo_key()
     if not os.getenv("REDIS_URL"):
         logger.warning(
             "WARNING: Using in-memory rate limiting. "
@@ -389,3 +391,5 @@ mcp_unregister = mcp_routes.mcp_unregister  # type: ignore[has-type]
 
 get_receipt = audit_routes.get_receipt  # type: ignore[has-type]
 export_receipts = audit_routes.export_receipts  # type: ignore[has-type]
+verify_receipt = audit_routes.verify_receipt  # type: ignore[has-type]
+receipt_claims = audit_routes.receipt_claims  # type: ignore[has-type]

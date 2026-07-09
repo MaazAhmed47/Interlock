@@ -1,0 +1,128 @@
+# ============================================================================
+# Interlock — offline buyer demo
+#
+#   cd demo/offline && docker compose up -d --build
+#
+# Brings up the full self-contained demo: gateway, bundled mock MCP server,
+# dashboard, and a one-shot seeder. No external network, no API keys, no
+# hosted services. Core demo paths:
+#
+#   python run_demo.py scenario-a     # capability drift (default path)
+#   python run_demo.py scenario-b     # behavioral drift (advanced path)
+#   python run_demo.py smoke          # prove demo readiness end-to-end
+#   python run_demo.py reset          # repopulate baseline
+#
+# No host Python? Use the bundled runner instead:
+#   docker compose run --rm demo-runner scenario-a
+#
+# Dashboard: http://localhost:8080/dashboard
+#   Settings -> API URL http://localhost:8001, API key lf-demo-offline-key
+# ============================================================================
+services:
+  gateway:
+    image: interlock:demo
+    build:
+      context: ../..
+    container_name: interlock-demo-gateway
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      # Local demo posture: non-production, no external judge required.
+      INTERLOCK_ENV: local
+      # Opt-in: seeds the fixed, clearly-labeled demo API key at startup.
+      INTERLOCK_OFFLINE_DEMO: "true"
+      # The mock lives on the compose network under a single-label hostname.
+      INTERLOCK_ALLOW_PRIVATE_OUTBOUND: "true"
+      FIREWALL_DB_PATH: /app/data/firewall.db
+      SHADOW_SCAN_ENABLED: "false"
+      LOG_LEVEL: info
+    volumes:
+      - demo-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - demo-net
+
+  mcp-mock:
+    image: interlock-demo-mock:local
+    build:
+      context: ./mock_server
+    container_name: interlock-demo-mock
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    networks:
+      - demo-net
+
+  dashboard:
+    image: interlock-demo-dashboard:local
+    build:
+      context: ../../interlock-web
+      args:
+        # Baked into the SPA — this is the gateway URL as seen by the BROWSER.
+        VITE_INTERLOCK_API_URL: http://localhost:8001
+    container_name: interlock-demo-dashboard
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    networks:
+      - demo-net
+
+  # One-shot: registers, verifies, and approves the demo baseline on `up`.
+  seeder:
+    image: python:3.12-slim
+    container_name: interlock-demo-seeder
+    volumes:
+      - .:/demo:ro
+    environment:
+      INTERLOCK_DEMO_GATEWAY: http://gateway:8001
+      INTERLOCK_DEMO_MOCK_ADMIN: http://mcp-mock:9100
+      INTERLOCK_DEMO_MOCK_INTERNAL: http://mcp-mock:9100
+      INTERLOCK_DEMO_DASHBOARD: http://dashboard:80
+    command: ["python", "/demo/run_demo.py", "seed"]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      mcp-mock:
+        condition: service_started
+    restart: "no"
+    networks:
+      - demo-net
+
+  # On-demand runner so the demo needs no host Python:
+  #   docker compose run --rm demo-runner scenario-a
+  demo-runner:
+    image: python:3.12-slim
+    profiles: ["tools"]
+    volumes:
+      - .:/demo:ro
+    environment:
+      INTERLOCK_DEMO_GATEWAY: http://gateway:8001
+      INTERLOCK_DEMO_MOCK_ADMIN: http://mcp-mock:9100
+      INTERLOCK_DEMO_MOCK_INTERNAL: http://mcp-mock:9100
+      INTERLOCK_DEMO_DASHBOARD: http://dashboard:80
+    entrypoint: ["python", "/demo/run_demo.py"]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      mcp-mock:
+        condition: service_started
+    networks:
+      - demo-net
+
+volumes:
+  demo-data:
+
+networks:
+  demo-net:
+    driver: bridge

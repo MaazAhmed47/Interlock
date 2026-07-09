@@ -268,6 +268,14 @@ export interface ReceiptEvidence {
   };
 }
 
+export interface ReceiptBinding {
+  call_id: string;
+  target: string;
+  argument_hash: string;
+  surface_hash: string;
+  approved_surface_hash: string;
+}
+
 export interface SecurityReceipt {
   receipt_id: string;
   audit_id?: number;
@@ -284,9 +292,95 @@ export interface SecurityReceipt {
   redactions: string[];
   drift: ReceiptDrift;
   drift_evidence?: ReceiptEvidence | null;
+  binding?: ReceiptBinding;
   integrity_hash: string;
   prev_hash: string;
   chain_verified: boolean;
+}
+
+export interface ReceiptVerifyContext {
+  server_id: string;
+  tool_name: string;
+  argument_hash: string;
+  call_id: string;
+  surface_hash: string;
+}
+
+export interface ReceiptVerifyMismatch {
+  field: string;
+  presented: string;
+  recorded: string;
+}
+
+export interface ReceiptVerifyResult {
+  verified: boolean;
+  audit_id?: number | null;
+  checks: {
+    record_found: boolean;
+    chain: boolean;
+    receipt_match?: boolean | null;
+    evidence_digest?: boolean | null;
+    binding: boolean;
+  };
+  mismatches: ReceiptVerifyMismatch[];
+  reason: string;
+}
+
+export interface ClaimApproved {
+  approved_surface_hash: string;
+  inspect_path?: string | null;
+  expected_outcome?: string;
+  expected_status_code?: number | null;
+  basis: string;
+}
+
+export interface ClaimObserved {
+  observed_surface_hash: string;
+  inspect_path?: string | null;
+  schema_unchanged?: boolean | null;
+  changes: string[];
+  observed_outcome?: string;
+  observed_status_code?: number | null;
+  basis: string;
+}
+
+export interface ClaimDecision {
+  decision: string;
+  rule_fired: string;
+  reason: string;
+  drift_severity: string;
+  drift_types: string[];
+  basis: string;
+}
+
+export interface ClaimExecution {
+  detection_audit_id?: number;
+  detection_ts: string;
+  boundary_crossing_executed: boolean;
+  executed_count: number;
+  executed_calls: Array<Record<string, unknown>>;
+  blocked_attempts: number;
+  blocked_examples: Array<Record<string, unknown>>;
+  event_count: number;
+  evaluated_at: string;
+  basis: string;
+}
+
+export interface ReceiptClaims {
+  audit_id: number;
+  receipt_id: string;
+  chain_verified?: boolean;
+  claim_1_approved: ClaimApproved;
+  claim_2_observed: ClaimObserved;
+  claim_3_decision: ClaimDecision;
+  claim_4_execution_after_detection: ClaimExecution;
+}
+
+export interface SurfaceSnapshot {
+  surface_hash: string;
+  canonical_json: string;
+  canonicalization: string;
+  created_at: string;
 }
 
 export interface ReceiptBatch {
@@ -726,6 +820,15 @@ export const api = {
   mcpAudit: (limit = 100) => request<{ events: AuditEvent[] }>('GET', `/mcp/audit?limit=${limit}`),
   adminAudit: (accessToken: string, limit = 100) => adminRequest<{ events: AdminAuditEvent[] }>('GET', `/admin/audit?limit=${limit}`, accessToken),
   receipt: (auditId: number) => request<SecurityReceipt>('GET', `/audit/receipt/${auditId}`),
+  receiptClaims: (auditId: number) => request<ReceiptClaims>('GET', `/audit/receipt/${auditId}/claims`),
+  verifyReceipt: (context: ReceiptVerifyContext, receipt?: SecurityReceipt, auditId?: number) =>
+    request<ReceiptVerifyResult>('POST', '/audit/receipt/verify', {
+      context,
+      receipt: receipt ?? null,
+      audit_id: auditId ?? null,
+    }),
+  surfaceSnapshot: (surfaceHash: string) =>
+    request<SurfaceSnapshot>('GET', `/audit/evidence/surface/${surfaceHash}`),
   exportReceipts: (from?: string, to?: string) => {
     const qs = new URLSearchParams({ format: 'json' });
     if (from) qs.set('from', from);

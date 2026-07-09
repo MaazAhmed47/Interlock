@@ -20,12 +20,16 @@ def _truthy(value: str | None) -> bool:
 def interlock_env() -> str:
     """Return the configured runtime environment name."""
     return (
-        os.getenv("INTERLOCK_ENV")
-        or os.getenv("APP_ENV")
-        or os.getenv("ENVIRONMENT")
-        or os.getenv("ENV")
-        or ""
-    ).strip().lower()
+        (
+            os.getenv("INTERLOCK_ENV")
+            or os.getenv("APP_ENV")
+            or os.getenv("ENVIRONMENT")
+            or os.getenv("ENV")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
 
 
 def is_production() -> bool:
@@ -86,3 +90,12 @@ def protect_outbound_urls() -> bool:
 def allow_private_outbound_urls() -> bool:
     """Emergency/local override for private outbound URLs."""
     return _truthy(os.getenv("INTERLOCK_ALLOW_PRIVATE_OUTBOUND"))
+
+
+def offline_demo_enabled() -> bool:
+    """
+    Opt-in for the bundled docker-compose demo (demo/offline/). Seeds a fixed,
+    clearly-labeled demo API key at startup. Never enable on hosted or
+    production deployments.
+    """
+    return _truthy(os.getenv("INTERLOCK_OFFLINE_DEMO"))

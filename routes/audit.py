@@ -1,15 +1,24 @@
 """
 Security Receipt endpoints.
 
-  GET /audit/receipt/export       - batch of receipts for a time range as a
-                                    single downloadable artifact (JSON now,
-                                    CSV/PDF later).
-  GET /audit/receipt/{audit_id}   - one tamper-evident receipt for one event.
-  GET /audit/evidence/surface/{surface_hash}
-                                  - canonical tool-surface bytes behind a
-                                    drift-evidence hash (client recomputation).
+  GET  /audit/receipt/export       - batch of receipts for a time range as a
+                                     single downloadable artifact (JSON now,
+                                     CSV/PDF later).
+  POST /audit/receipt/verify       - verify a receipt against the context it
+                                     is presented FOR (anti-replay: fails if
+                                     target, argument hash, call id, or
+                                     surface hash differ from the record).
+  GET  /audit/receipt/{audit_id}   - one tamper-evident receipt for one event.
+  GET  /audit/receipt/{audit_id}/claims
+                                   - four-claim evidence view (approved /
+                                     observed / decision / execution-after-
+                                     detection, the last backed by a real
+                                     audit-log query).
+  GET  /audit/evidence/surface/{surface_hash}
+                                   - canonical tool-surface bytes behind a
+                                     drift-evidence hash (client recomputation).
 
-Both require API-key auth (same surface as GET /mcp/audit, which serves the
+All require API-key auth (same surface as GET /mcp/audit, which serves the
 underlying runtime audit log to the dashboard).
 
 NOTE: /audit/receipt/export is declared before /audit/receipt/{audit_id} so the
@@ -25,6 +34,8 @@ import proxy
 from core import db
 from core.limits import clamp_limit
 from core import receipt as receipt_builder
+from core import receipt_verify as receipt_verify_mod
+from models.schemas import ReceiptVerifyRequest
 
 router = APIRouter()
 
@@ -103,6 +114,26 @@ async def get_surface_snapshot(
     }
 
 
+@router.post("/audit/receipt/verify")
+async def verify_receipt(
+    request: ReceiptVerifyRequest, x_api_key: Optional[str] = Header(None)
+):
+    """
+    Verify a Security Receipt against a presented context.
+
+    Hard invariant: verification fails when the presented target
+    (server_id/tool_name), argument_hash, call_id, or surface_hash differ
+    from the hash-chained audit record — a replayed/forwarded receipt cannot
+    be re-pointed at a different call.
+    """
+    proxy.verify_key(x_api_key)
+    return receipt_verify_mod.verify_receipt_against_context(
+        request.context,
+        presented_receipt=request.receipt,
+        audit_id=request.audit_id,
+    )
+
+
 @router.get("/audit/receipt/{audit_id}")
 async def get_receipt(audit_id: int, x_api_key: Optional[str] = Header(None)):
     """Return a single tamper-evident Security Receipt for one audit event."""
@@ -116,3 +147,25 @@ async def get_receipt(audit_id: int, x_api_key: Optional[str] = Header(None)):
     return receipt_builder.build_receipt(
         row, chain_verified=verification.get("chain_verified", False)
     )
+
+
+@router.get("/audit/receipt/{audit_id}/claims")
+async def receipt_claims(audit_id: int, x_api_key: Optional[str] = Header(None)):
+    """
+    Four-claim evidence view for one audit event: what was approved, what
+    changed, what runtime decision fired, and whether any boundary-crossing
+    call executed after detection (a real audit-log query, not copy).
+    """
+    proxy.verify_key(x_api_key)
+
+    row = db.get_mcp_audit_log(audit_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Audit event not found.")
+
+    verification = db.verify_mcp_audit_record(audit_id)
+    receipt = receipt_builder.build_receipt(
+        row, chain_verified=verification.get("chain_verified", False)
+    )
+    claims = receipt_verify_mod.build_claims(row, receipt)
+    claims["chain_verified"] = verification.get("chain_verified", False)
+    return claims

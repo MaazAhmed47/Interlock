@@ -7,7 +7,6 @@ introspection and they do not run automatically.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 from datetime import datetime, timezone
@@ -50,8 +49,7 @@ AUTH_REDIRECT_TOKENS = ("login", "signin", "sign-in", "oauth", "authorize", "aut
 
 def arguments_hash(arguments: Dict[str, Any]) -> str:
     """Hash probe arguments without storing their raw values."""
-    canonical = drift_evidence.canonical_json_bytes(arguments or {})
-    return "sha256:" + hashlib.sha256(canonical).hexdigest()
+    return drift_evidence.arguments_hash(arguments)
 
 
 def normalize_observed_result(
@@ -300,6 +298,7 @@ async def run_effective_permission_probe(
         "evaluation": evaluation,
         "evidence": {
             "audit_id": audit_id,
+            "call_id": audit.get("call_id") or "",
             "argument_hash": stored_probe["argument_hash"],
         },
         "quarantine_applied": quarantine_applied,
@@ -406,6 +405,27 @@ async def _call_upstream_for_observation(
         return normalize_observed_result(error_class=exc.__class__.__name__)
 
 
+def _approved_surface_hash(server_id: str, tool_name: str) -> str:
+    """
+    Content address of the tool surface the probe ran against. Behavioral
+    drift is same-schema by definition, so the probe's audit row records this
+    hash as BOTH baseline and current surface — proof the schema did not
+    change while the observed behavior did. Best-effort: never breaks probes.
+    """
+    try:
+        stored = db.lookup_mcp_tool_metadata(server_id, tool_name) or {}
+        raw_def = stored.get("raw_tool_definition") or {}
+        if not raw_def:
+            return ""
+        surface_hash = drift_evidence.tool_surface_hash(raw_def)
+        db.save_tool_surface_snapshot(
+            surface_hash, drift_evidence.canonical_surface_json(raw_def)
+        )
+        return surface_hash
+    except Exception:
+        return ""
+
+
 def _log_probe_audit_event(
     *,
     probe: Dict[str, Any],
@@ -415,6 +435,7 @@ def _log_probe_audit_event(
     finding_types = evaluation.get("finding_types") or []
     drift_detected = bool(evaluation.get("drift_detected"))
     action = evaluation.get("decision") or "monitor"
+    surface_hash = _approved_surface_hash(probe["server_id"], probe["tool_name"])
     event = {
         "server_id": probe["server_id"],
         "tool_name": probe["tool_name"],
@@ -443,6 +464,8 @@ def _log_probe_audit_event(
         "observed_outcome": evaluation.get("observed_outcome") or "unknown",
         "observed_status_code": evaluation.get("observed_status_code"),
         "observed_error_class": evaluation.get("observed_error_class") or "",
+        "drift_baseline_hash": surface_hash,
+        "drift_current_hash": surface_hash,
         "scan_time_ms": scan_time_ms,
     }
     return db.log_mcp_audit_event(event)

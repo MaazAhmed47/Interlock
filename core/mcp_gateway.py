@@ -647,7 +647,7 @@ async def proxy_mcp_tool_call(
     # 1. Verify server is trusted
     server = db.lookup_mcp_server(server_id)
     if not server:
-        _log_mcp_gateway_audit(
+        saved = _log_mcp_gateway_audit(
             server_id=server_id,
             tool_name=tool_name,
             role=role,
@@ -661,10 +661,11 @@ async def proxy_mcp_tool_call(
             "ok": False,
             "error": "untrusted_mcp_server",
             "message": f"MCP server '{server_id}' is not in the trusted registry. Add it via /mcp/servers endpoint first.",
+            "audit": _audit_ref(saved),
         }
 
     if not server.get("verified"):
-        _log_mcp_gateway_audit(
+        saved = _log_mcp_gateway_audit(
             server_id=server_id,
             tool_name=tool_name,
             role=role,
@@ -678,6 +679,7 @@ async def proxy_mcp_tool_call(
             "ok": False,
             "error": "unverified_mcp_server",
             "message": f"MCP server '{server_id}' is registered but not verified. Cannot proxy calls.",
+            "audit": _audit_ref(saved),
         }
 
     # Fetch per-key volume thresholds for the response scanner (O(1) hash lookup).
@@ -688,7 +690,7 @@ async def proxy_mcp_tool_call(
     blocked = server.get("blocked_tools", [])
 
     if blocked and tool_name in blocked:
-        _log_mcp_gateway_audit(
+        saved = _log_mcp_gateway_audit(
             server_id=server_id,
             tool_name=tool_name,
             role=role,
@@ -702,10 +704,11 @@ async def proxy_mcp_tool_call(
             "ok": False,
             "error": "tool_blocked",
             "message": f"Tool '{tool_name}' is in the blocked list for server '{server_id}'.",
+            "audit": _audit_ref(saved),
         }
 
     if allowed is not None and (not allowed or tool_name not in allowed):
-        _log_mcp_gateway_audit(
+        saved = _log_mcp_gateway_audit(
             server_id=server_id,
             tool_name=tool_name,
             role=role,
@@ -719,6 +722,7 @@ async def proxy_mcp_tool_call(
             "ok": False,
             "error": "tool_not_allowed",
             "message": f"Tool '{tool_name}' is not in the allowed list for server '{server_id}'. Allowed: {allowed}",
+            "audit": _audit_ref(saved),
         }
 
     # 3. Normalize runtime metadata and apply metadata-aware policy.
@@ -760,6 +764,11 @@ async def proxy_mcp_tool_call(
         role=role,
         tool_metadata=tool_metadata,
     )
+    # Bind every audit row this call produces to the exact argument set. Only
+    # the hash is recorded; raw argument values never enter the audit log.
+    policy_decision.setdefault("audit_context", {})["argument_hash"] = (
+        drift_evidence.arguments_hash(arguments or {})
+    )
     _attach_drift_context(policy_decision, drift_context)
 
     if drift_context and (
@@ -771,13 +780,14 @@ async def proxy_mcp_tool_call(
             "Stored MCP tool metadata drift is critical; the tool is quarantined until reviewed.",
         )
         _set_policy_decision(policy_decision, "deny", "tool_quarantined", reason)
-        _log_mcp_policy_audit(policy_decision, blocked_by="tool_quarantined")
+        saved = _log_mcp_policy_audit(policy_decision, blocked_by="tool_quarantined")
         return {
             "ok": False,
             "error": "tool_quarantined",
             "message": reason,
             "drift": drift_context,
             "policy_decision": policy_decision,
+            "audit": _audit_ref(saved),
         }
 
     if drift_context and (
@@ -788,13 +798,14 @@ async def proxy_mcp_tool_call(
             "Stored MCP tool metadata drift is high risk; blocking execution until reviewed.",
         )
         _set_policy_decision(policy_decision, "deny", "tool_metadata_drift", reason)
-        _log_mcp_policy_audit(policy_decision, blocked_by="metadata_drift")
+        saved = _log_mcp_policy_audit(policy_decision, blocked_by="metadata_drift")
         return {
             "ok": False,
             "error": "metadata_drift_violation",
             "message": reason,
             "drift": drift_context,
             "policy_decision": policy_decision,
+            "audit": _audit_ref(saved),
         }
 
     if (
@@ -815,12 +826,13 @@ async def proxy_mcp_tool_call(
         policy_decision["audit_context"]["warnings"] = policy_decision["warnings"]
 
     if policy_decision["action"] == "deny":
-        _log_mcp_policy_audit(policy_decision, blocked_by="metadata_policy")
+        saved = _log_mcp_policy_audit(policy_decision, blocked_by="metadata_policy")
         return {
             "ok": False,
             "error": "metadata_policy_violation",
             "message": policy_decision["reason"],
             "policy_decision": policy_decision,
+            "audit": _audit_ref(saved),
         }
 
     # 3. Run through standard tool call inspector
@@ -1275,11 +1287,12 @@ async def proxy_mcp_tool_call(
             else:
                 effective_result = response_text
 
-            _log_mcp_policy_audit(policy_decision, blocked_by="")
+            saved = _log_mcp_policy_audit(policy_decision, blocked_by="")
             return {
                 "ok": True,
                 "server_id": server_id,
                 "tool_name": tool_name,
+                "audit": _audit_ref(saved),
                 "result": json.loads(effective_result),
                 "scanned": True,
                 "threat_flags": (
@@ -1317,18 +1330,29 @@ async def proxy_mcp_tool_call(
         return {"ok": False, "error": "mcp_server_error", "message": str(e)[:200]}
 
 
+def _audit_ref(saved: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compact reference to the audit row backing a gateway response, so the
+    caller can fetch the Security Receipt and verify its context binding."""
+    saved = saved or {}
+    return {
+        "audit_id": saved.get("id"),
+        "call_id": saved.get("call_id") or "",
+        "argument_hash": saved.get("argument_hash") or "",
+    }
+
+
 def _log_mcp_policy_audit(
     policy_decision: Dict[str, Any],
     blocked_by: str = "",
     extra: Optional[Dict[str, Any]] = None,
-) -> None:
+) -> Dict[str, Any]:
     audit = dict(policy_decision.get("audit_context") or {})
     audit["action"] = audit.get("decision") or policy_decision.get("action", "")
     audit["blocked_by"] = blocked_by
     audit["scan_time_ms"] = _elapsed_ms()
     if extra:
         audit.update(extra)
-    db.log_mcp_audit_event(audit)
+    return db.log_mcp_audit_event(audit)
 
 
 def _stored_tool_drift_context(
@@ -1603,8 +1627,8 @@ def _log_mcp_gateway_audit(
     reason: str,
     arguments: dict,
     blocked_by: str,
-) -> None:
-    db.log_mcp_audit_event(
+) -> Dict[str, Any]:
+    return db.log_mcp_audit_event(
         {
             "server_id": server_id,
             "tool_name": tool_name,
@@ -1620,6 +1644,7 @@ def _log_mcp_gateway_audit(
             "confidence": 0.0,
             "warnings": [],
             "argument_keys": sorted((arguments or {}).keys()),
+            "argument_hash": drift_evidence.arguments_hash(arguments or {}),
             "blocked_by": blocked_by,
             "scan_time_ms": _elapsed_ms(),
         }
