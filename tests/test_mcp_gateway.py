@@ -360,7 +360,7 @@ def test_discovery_metadata_and_persistence():
     db.register_mcp_server(
         "_test_discovery_persist",
         {
-            "url": "http://example.test/mcp",
+            "url": "http://localhost:9778/mcp",
             "description": "Discovery persistence test server",
             "allowed_tools": ["share_file"],
             "blocked_tools": [],
@@ -419,7 +419,7 @@ def test_discovery_sends_bearer_upstream_auth_from_env(monkeypatch):
     db.register_mcp_server(
         "_test_discovery_bearer",
         {
-            "url": "http://auth.example/mcp",
+            "url": "http://localhost:9780/mcp",
             "description": "Bearer auth discovery test server",
             "allowed_tools": ["list_avatars"],
             "blocked_tools": [],
@@ -440,7 +440,7 @@ def test_discovery_sends_bearer_upstream_auth_from_env(monkeypatch):
         with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
             discovery = asyncio.run(
                 discover_mcp_tools(
-                    "http://auth.example/mcp",
+                    "http://localhost:9780/mcp",
                     server_id="_test_discovery_bearer",
                 )
             )
@@ -463,7 +463,7 @@ def test_server_rebaseline_resets_tool_metadata_without_losing_auth(monkeypatch)
     db.register_mcp_server(
         server_id,
         {
-            "url": "http://rebaseline.example/mcp",
+            "url": "http://localhost:9781/mcp",
             "description": "Rebaseline test server",
             "allowed_tools": ["list_avatars"],
             "blocked_tools": [],
@@ -569,7 +569,7 @@ def test_server_rebaseline_resets_tool_metadata_without_losing_auth(monkeypatch)
 
             changed = asyncio.run(
                 discover_mcp_tools(
-                    "http://rebaseline.example/mcp",
+                    "http://localhost:9781/mcp",
                     server_id=server_id,
                 )
             )
@@ -595,7 +595,7 @@ def test_discovery_jsonrpc_error_fails_closed():
     mock_client.post = AsyncMock(return_value=mock_discovery_resp)
 
     with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
-        discovery = asyncio.run(discover_mcp_tools("http://auth.example/mcp"))
+        discovery = asyncio.run(discover_mcp_tools("http://localhost:9780/mcp"))
 
     assert discovery["ok"] is False
     assert discovery["error"] == "mcp_discovery_error"
@@ -633,7 +633,7 @@ def test_discovery_removed_tool_is_quarantined():
     db.register_mcp_server(
         server_id,
         {
-            "url": "http://example.test/mcp",
+            "url": "http://localhost:9779/mcp",
             "description": "Removal drift test server",
             "allowed_tools": ["read_profile"],
             "blocked_tools": [],
@@ -700,7 +700,7 @@ def test_discovery_added_destructive_tool_is_quarantined():
     db.register_mcp_server(
         server_id,
         {
-            "url": "http://added.example/mcp",
+            "url": "http://localhost:9782/mcp",
             "description": "Addition drift test server",
             "allowed_tools": ["list_avatars"],
             "blocked_tools": [],
@@ -764,7 +764,7 @@ def test_discovery_added_destructive_tool_is_quarantined():
     try:
         with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
             discovery = asyncio.run(
-                discover_mcp_tools("http://added.example/mcp", server_id=server_id)
+                discover_mcp_tools("http://localhost:9782/mcp", server_id=server_id)
             )
         assert discovery["ok"] is True
         # The destructive newcomer must NOT be offered as a safe tool.
@@ -794,7 +794,7 @@ def test_discovery_existing_tool_escalation_emits_drift_detected_receipt():
     audit/receipt until an agent called the tool (call-time enforcement only).
     """
     server_id = "_test_drift_detected_discovery"
-    url = "http://drift-detected.example/mcp"
+    url = "http://localhost:9783/mcp"
     db.register_mcp_server(
         server_id,
         {
@@ -895,7 +895,7 @@ def test_call_time_capability_drift_receipt_uses_surface_hashes():
     but its receipt evidence is still a tool-surface drift record.
     """
     server_id = "_test_call_time_surface_receipt"
-    url = "http://call-time-surface-receipt.example/mcp"
+    url = "http://localhost:9784/mcp"
     db.register_mcp_server(
         server_id,
         {
@@ -1001,7 +1001,7 @@ def test_discovery_existing_tool_quarantine_surfaced_in_response():
     existing-tool capability drift left the headline JSON showing it as safe.
     """
     server_id = "_test_drift_response_surfacing"
-    url = "http://drift-surface.example/mcp"
+    url = "http://localhost:9785/mcp"
     db.register_mcp_server(
         server_id,
         {
@@ -1107,7 +1107,7 @@ def test_call_sends_x_api_key_upstream_auth_and_does_not_log_token(monkeypatch):
     db.register_mcp_server(
         "_test_call_x_api_key",
         {
-            "url": "http://auth.example/mcp",
+            "url": "http://localhost:9780/mcp",
             "description": "x-api-key auth call test server",
             "allowed_tools": ["list_avatars"],
             "blocked_tools": [],

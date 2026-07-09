@@ -9,6 +9,11 @@ GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY") or "").strip() or None
 # Groq model to use (fast + free)
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
+MCP_REGISTRY_ALLOWED_HOSTS = os.getenv("MCP_REGISTRY_ALLOWED_HOSTS", "")
+MCP_REGISTRY_ALLOWED_HOST_SUFFIXES = os.getenv(
+    "MCP_REGISTRY_ALLOWED_HOST_SUFFIXES", ".web.val.run,.localhost.run"
+)
+
 # Threat levels
 THREAT_LEVELS = {"SAFE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 

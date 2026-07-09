@@ -28,18 +28,18 @@ _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-from core import db                                      # noqa: E402
-from core.tool_metadata import normalize_tool_metadata   # noqa: E402
+from core import db  # noqa: E402
+from core.tool_metadata import normalize_tool_metadata  # noqa: E402
 
 # ── Terminal colors ───────────────────────────────────────────────────────────
-BOLD   = "\033[1m"
-GREEN  = "\033[92m"
-RED    = "\033[91m"
+BOLD = "\033[1m"
+GREEN = "\033[92m"
+RED = "\033[91m"
 YELLOW = "\033[93m"
-CYAN   = "\033[96m"
-RESET  = "\033[0m"
+CYAN = "\033[96m"
+RESET = "\033[0m"
 
-SERVER_ID = "demo-file-server"
+SERVER_ID = f"{db.FIXTURE_SERVER_PREFIX}demo-file-server"
 
 
 def _banner(text: str, color: str = BOLD) -> None:
@@ -115,12 +115,15 @@ MUTATED_TOOL = {
 def run() -> None:
     # ── Initialize database ───────────────────────────────────────────────────
     db.init_db()
-    db.register_mcp_server(SERVER_ID, {
-        "url": "http://localhost:9000/mcp",
-        "description": "Demo internal document server",
-        "allowed_tools": [],
-        "blocked_tools": [],
-    })
+    db.register_mcp_server(
+        SERVER_ID,
+        {
+            "url": "http://localhost:9000/mcp",
+            "description": "Demo internal document server",
+            "allowed_tools": [],
+            "blocked_tools": [],
+        },
+    )
 
     # ── Step 1: Establish clean baseline ─────────────────────────────────────
     clean_meta = normalize_tool_metadata(CLEAN_TOOL)
@@ -161,33 +164,35 @@ def run() -> None:
     print(f"  until an operator reviews and approves the new schema.{RESET}")
 
     # ── Step 5: Write audit log entry ─────────────────────────────────────────
-    audit = db.log_mcp_audit_event({
-        "server_id": SERVER_ID,
-        "tool_name": MUTATED_TOOL["name"],
-        "role": "interlock_gateway",
-        "action": "quarantine",
-        "matched_rule": "schema_drift_critical",
-        "reason": (
-            "Tool schema changed: external sharing capability and PII data class "
-            "added after baseline approval."
-        ),
-        "effects": mutated_meta.get("effects", []),
-        "side_effect": mutated_meta.get("side_effect", "unknown"),
-        "data_classes": mutated_meta.get("data_classes", []),
-        "externality": mutated_meta.get("externality", "unknown"),
-        "verification_level": mutated_meta.get("verification_level", "unknown"),
-        "confidence": mutated_meta.get("confidence", 0.0),
-        "warnings": mutated_meta.get("warnings", []),
-        "argument_keys": list(
-            MUTATED_TOOL["inputSchema"].get("properties", {}).keys()
-        ),
-        "blocked_by": "drift_detector",
-        "drift_status": "quarantined",
-        "drift_severity": result["drift_severity"],
-        "drift_action": result["drift_action"],
-        "drift_types": result["drift_types"],
-        "drift_reasons": result["drift_reasons"],
-    })
+    audit = db.log_mcp_audit_event(
+        {
+            "server_id": SERVER_ID,
+            "tool_name": MUTATED_TOOL["name"],
+            "role": "interlock_gateway",
+            "action": "quarantine",
+            "matched_rule": "schema_drift_critical",
+            "reason": (
+                "Tool schema changed: external sharing capability and PII data class "
+                "added after baseline approval."
+            ),
+            "effects": mutated_meta.get("effects", []),
+            "side_effect": mutated_meta.get("side_effect", "unknown"),
+            "data_classes": mutated_meta.get("data_classes", []),
+            "externality": mutated_meta.get("externality", "unknown"),
+            "verification_level": mutated_meta.get("verification_level", "unknown"),
+            "confidence": mutated_meta.get("confidence", 0.0),
+            "warnings": mutated_meta.get("warnings", []),
+            "argument_keys": list(
+                MUTATED_TOOL["inputSchema"].get("properties", {}).keys()
+            ),
+            "blocked_by": "drift_detector",
+            "drift_status": "quarantined",
+            "drift_severity": result["drift_severity"],
+            "drift_action": result["drift_action"],
+            "drift_types": result["drift_types"],
+            "drift_reasons": result["drift_reasons"],
+        }
+    )
 
     _banner("AUDIT EVENT WRITTEN", CYAN)
     _kv("audit_id", audit.get("id"))
@@ -201,8 +206,10 @@ def run() -> None:
     _kv("drift_action", audit.get("drift_action"))
     _kv("drift_types", audit.get("drift_types"))
 
-    print(f"\n{GREEN}Demo complete.{RESET} Interlock detected and quarantined a "
-          f"critical schema drift.\n")
+    print(
+        f"\n{GREEN}Demo complete.{RESET} Interlock detected and quarantined a "
+        f"critical schema drift.\n"
+    )
 
 
 if __name__ == "__main__":

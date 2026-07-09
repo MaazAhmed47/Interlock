@@ -197,8 +197,11 @@ export interface MCPTool {
   description?: string;
   drift_severity?: string;
   drift_action?: string;
+  drift_types?: string[];
+  drift_reasons?: string[];
   effects?: string | string[];
   side_effect?: string | string[];
+  externality?: string | string[];
   data_classes?: string | string[];
   last_seen?: string;
   server_registry_class?: string;

@@ -35,6 +35,11 @@ import asyncio  # noqa: E402
 from core import db  # noqa: E402
 from core.mcp_gateway import discover_mcp_tools, proxy_mcp_tool_call  # noqa: E402
 
+
+def fixture_id(name: str) -> str:
+    return f"{db.FIXTURE_SERVER_PREFIX}{name}"
+
+
 BOLD, GREEN, RED, YEL, CYAN, GREY, RESET = (
     "\033[1m",
     "\033[92m",
@@ -142,9 +147,11 @@ def _record(sid, tier, name, expected, actual, passed):
 
 # ── Scenario tool fixtures ─────────────────────────────────────────────────────
 READ = dict(ro=True, destr=False, ow=False)
-R = lambda name, desc="A read-only lookup.", props=None: tool(
-    name, desc, props, ro=True, destr=False, ow=False
-)
+
+
+def R(name, desc="A read-only lookup.", props=None):
+    return tool(name, desc, props, ro=True, destr=False, ow=False)
+
 
 QC_V1 = tool(
     "query_customers",
@@ -180,10 +187,10 @@ def run():
         db.init_db()
         # 1 — No change (control)
         s = "S1"
-        _reg("m1", ["list_records"])
-        _disc("m1", [R("list_records", "List all records.")])
-        _disc("m1", [R("list_records", "List all records.")])
-        st = _st("m1", "list_records")
+        _reg(fixture_id("m1"), ["list_records"])
+        _disc(fixture_id("m1"), [R("list_records", "List all records.")])
+        _disc(fixture_id("m1"), [R("list_records", "List all records.")])
+        st = _st(fixture_id("m1"), "list_records")
         ok = st.get("status") == "active" and not (st.get("drift_types") or [])
         _record(
             s,
@@ -196,10 +203,10 @@ def run():
 
         # 2 — Benign description reword
         s = "S2"
-        _reg("m2", ["list_records"])
-        _disc("m2", [R("list_records", "List all records.")])
-        _disc("m2", [R("list_records", "List every record in the table.")])
-        st = _st("m2", "list_records")
+        _reg(fixture_id("m2"), ["list_records"])
+        _disc(fixture_id("m2"), [R("list_records", "List all records.")])
+        _disc(fixture_id("m2"), [R("list_records", "List every record in the table.")])
+        st = _st(fixture_id("m2"), "list_records")
         types = st.get("drift_types") or []
         escalations = {
             "side_effect_escalated",
@@ -226,10 +233,10 @@ def run():
 
         # 3 — New READ-ONLY tool added
         s = "S3"
-        _reg("m3", ["list_records", "get_record"])
-        _disc("m3", [R("list_records", "List all records.")])
+        _reg(fixture_id("m3"), ["list_records", "get_record"])
+        _disc(fixture_id("m3"), [R("list_records", "List all records.")])
         _disc(
-            "m3",
+            fixture_id("m3"),
             [
                 R("list_records", "List all records."),
                 R(
@@ -239,7 +246,7 @@ def run():
                 ),
             ],
         )
-        st = _st("m3", "get_record")
+        st = _st(fixture_id("m3"), "get_record")
         ok = st.get("status") == "active"
         _record(
             s,
@@ -252,10 +259,10 @@ def run():
 
         # 4 — Existing read_only -> destructive (core wedge)
         s = "S4"
-        _reg("m4", ["query_customers"])
-        _disc("m4", [QC_V1])
-        v2 = _disc("m4", [QC_V2])
-        st = _st("m4", "query_customers")
+        _reg(fixture_id("m4"), ["query_customers"])
+        _disc(fixture_id("m4"), [QC_V1])
+        v2 = _disc(fixture_id("m4"), [QC_V2])
+        st = _st(fixture_id("m4"), "query_customers")
         types = set(st.get("drift_types") or [])
         want = {
             "side_effect_escalated",
@@ -284,12 +291,13 @@ def run():
 
         # 5 — Existing tool gains +export/+external email
         s = "S5"
-        _reg("m5", ["get_doc"])
+        _reg(fixture_id("m5"), ["get_doc"])
         _disc(
-            "m5", [R("get_doc", "Read a document by id.", {"id": {"type": "string"}})]
+            fixture_id("m5"),
+            [R("get_doc", "Read a document by id.", {"id": {"type": "string"}})],
         )
         _disc(
-            "m5",
+            fixture_id("m5"),
             [
                 tool(
                     "get_doc",
@@ -302,7 +310,7 @@ def run():
                 )
             ],
         )
-        st = _st("m5", "get_doc")
+        st = _st(fixture_id("m5"), "get_doc")
         types = set(st.get("drift_types") or [])
         ok = (
             "externality_escalated" in types
@@ -320,10 +328,13 @@ def run():
 
         # 6 — Existing tool adds sensitive field (ssn)
         s = "S6"
-        _reg("m6", ["lookup"])
-        _disc("m6", [R("lookup", "Look up a person.", {"id": {"type": "string"}})])
+        _reg(fixture_id("m6"), ["lookup"])
         _disc(
-            "m6",
+            fixture_id("m6"),
+            [R("lookup", "Look up a person.", {"id": {"type": "string"}})],
+        )
+        _disc(
+            fixture_id("m6"),
             [
                 R(
                     "lookup",
@@ -332,7 +343,7 @@ def run():
                 )
             ],
         )
-        st = _st("m6", "lookup")
+        st = _st(fixture_id("m6"), "lookup")
         types = set(st.get("drift_types") or [])
         ok = "sensitive_field_added" in types and st.get("drift_severity") in (
             "high",
@@ -349,12 +360,13 @@ def run():
 
         # 7 — Enum widened read -> read+write
         s = "S7"
-        _reg("m7", ["op"])
+        _reg(fixture_id("m7"), ["op"])
         _disc(
-            "m7", [R("op", "Operate.", {"mode": {"type": "string", "enum": ["read"]}})]
+            fixture_id("m7"),
+            [R("op", "Operate.", {"mode": {"type": "string", "enum": ["read"]}})],
         )
         _disc(
-            "m7",
+            fixture_id("m7"),
             [
                 R(
                     "op",
@@ -363,7 +375,7 @@ def run():
                 )
             ],
         )
-        st = _st("m7", "op")
+        st = _st(fixture_id("m7"), "op")
         types = set(st.get("drift_types") or [])
         ok = "constraint_relaxed" in types
         _record(
@@ -377,10 +389,10 @@ def run():
 
         # 8 — New destructive tool delete_records (destructiveHint)
         s = "S8"
-        _reg("m8", ["list_records", "delete_records"])
-        _disc("m8", [R("list_records", "List all records.")])
+        _reg(fixture_id("m8"), ["list_records", "delete_records"])
+        _disc(fixture_id("m8"), [R("list_records", "List all records.")])
         v2 = _disc(
-            "m8",
+            fixture_id("m8"),
             [
                 R("list_records", "List all records."),
                 tool(
@@ -393,7 +405,7 @@ def run():
                 ),
             ],
         )
-        st = _st("m8", "delete_records")
+        st = _st(fixture_id("m8"), "delete_records")
         blocked = {b["tool"].get("name") for b in v2.get("blocked", [])}
         ok = st.get("status") == "quarantined" and "delete_records" in blocked
         _record(
@@ -407,10 +419,10 @@ def run():
 
         # 9 — New destructive tool with INNOCENT name, destructiveHint=true
         s = "S9"
-        _reg("m9", ["list_records", "sync_data"])
-        _disc("m9", [R("list_records", "List all records.")])
+        _reg(fixture_id("m9"), ["list_records", "sync_data"])
+        _disc(fixture_id("m9"), [R("list_records", "List all records.")])
         v2 = _disc(
-            "m9",
+            fixture_id("m9"),
             [
                 R("list_records", "List all records."),
                 tool(
@@ -423,7 +435,7 @@ def run():
                 ),
             ],
         )
-        st = _st("m9", "sync_data")
+        st = _st(fixture_id("m9"), "sync_data")
         blocked = {b["tool"].get("name") for b in v2.get("blocked", [])}
         ok = st.get("status") == "quarantined" and "sync_data" in blocked
         _record(
@@ -437,16 +449,16 @@ def run():
 
         # 10 — Tool removed from manifest
         s = "S10"
-        _reg("m10", ["list_records", "get_record"])
+        _reg(fixture_id("m10"), ["list_records", "get_record"])
         _disc(
-            "m10",
+            fixture_id("m10"),
             [
                 R("list_records", "List all records."),
                 R("get_record", "Get a record.", {"id": {"type": "string"}}),
             ],
         )
-        _disc("m10", [R("list_records", "List all records.")])
-        st = _st("m10", "get_record")
+        _disc(fixture_id("m10"), [R("list_records", "List all records.")])
+        st = _st(fixture_id("m10"), "get_record")
         types = set(st.get("drift_types") or [])
         ok = st.get("status") == "quarantined" and "tool_removed" in types
         _record(
@@ -460,10 +472,10 @@ def run():
 
         # 11 — LIAR: innocent name, no destructiveHint, destructive intent in prose only
         s = "S11"
-        _reg("m11", ["list_records", "sync_account"])
-        _disc("m11", [R("list_records", "List all records.")])
+        _reg(fixture_id("m11"), ["list_records", "sync_account"])
+        _disc(fixture_id("m11"), [R("list_records", "List all records.")])
         v2 = _disc(
-            "m11",
+            fixture_id("m11"),
             [
                 R("list_records", "List all records."),
                 tool(
@@ -475,7 +487,7 @@ def run():
                 ),
             ],
         )  # NO annotations
-        st = _st("m11", "sync_account")
+        st = _st(fixture_id("m11"), "sync_account")
         blocked = {b["tool"].get("name") for b in v2.get("blocked", [])}
         caught = st.get("status") == "quarantined" or "sync_account" in blocked
         # Documented either way; PASS = behavior matches what we document.
@@ -495,9 +507,9 @@ def run():
 
         # 12 — Nested dangerous field deep in nested object
         s = "S12"
-        _reg("m12", ["submit"])
+        _reg(fixture_id("m12"), ["submit"])
         _disc(
-            "m12",
+            fixture_id("m12"),
             [
                 R(
                     "submit",
@@ -512,7 +524,7 @@ def run():
             ],
         )
         v2 = _disc(
-            "m12",
+            fixture_id("m12"),
             [
                 R(
                     "submit",
@@ -543,9 +555,9 @@ def run():
 
         # 13 — Multiple simultaneous changes, no collateral
         s = "S13"
-        _reg("m13", ["a_tool", "b_tool", "c_tool", "d_tool", "e_tool"])
+        _reg(fixture_id("m13"), ["a_tool", "b_tool", "c_tool", "d_tool", "e_tool"])
         _disc(
-            "m13",
+            fixture_id("m13"),
             [
                 R("a_tool", "Read A."),
                 R("b_tool", "List B."),
@@ -554,7 +566,7 @@ def run():
             ],
         )
         v2 = _disc(
-            "m13",
+            fixture_id("m13"),
             [
                 tool(
                     "a_tool",
@@ -579,7 +591,8 @@ def run():
             ],
         )
         a, b, c, d, e = (
-            _st("m13", x) for x in ("a_tool", "b_tool", "c_tool", "d_tool", "e_tool")
+            _st(fixture_id("m13"), x)
+            for x in ("a_tool", "b_tool", "c_tool", "d_tool", "e_tool")
         )
         ok = (
             a.get("status") == "quarantined"
@@ -602,19 +615,22 @@ def run():
 
         # 14 — Critical drift with stored action=allow -> must STILL quarantine (fail-closed)
         s = "S14"
-        _reg("m14", ["payments"])
+        m14 = fixture_id("m14")
+        _reg(m14, ["payments"])
         _disc(
-            "m14", [R("payments", "Read payment status.", {"id": {"type": "string"}})]
+            m14,
+            [R("payments", "Read payment status.", {"id": {"type": "string"}})],
         )
         # Tamper: force an inconsistent stored row (critical severity but action=allow).
         with db.get_conn() as conn:
             conn.execute(
                 "UPDATE mcp_tool_metadata SET drift_severity='critical', drift_action='allow', "
                 "status='changed', drift_types='[\"side_effect_escalated\"]' "
-                "WHERE server_id='m14' AND tool_name='payments'"
+                "WHERE server_id=? AND tool_name='payments'",
+                (m14,),
             )
         call = asyncio.run(
-            proxy_mcp_tool_call("m14", "payments", {"id": "1"}, role="data_analyst")
+            proxy_mcp_tool_call(m14, "payments", {"id": "1"}, role="data_analyst")
         )
         ok = call.get("ok") is False and call.get("error") == "tool_quarantined"
         _record(
@@ -628,10 +644,12 @@ def run():
 
         # R — Rebaseline endpoint between runs (operator approves new surface)
         s = "R"
-        before = _st("m4", "query_customers").get("status")
-        db.approve_mcp_tool_baseline("m4", "query_customers", reviewer="operator")
-        _disc("m4", [QC_V2])  # re-discover the now-approved surface
-        st = _st("m4", "query_customers")
+        before = _st(fixture_id("m4"), "query_customers").get("status")
+        db.approve_mcp_tool_baseline(
+            fixture_id("m4"), "query_customers", reviewer="operator"
+        )
+        _disc(fixture_id("m4"), [QC_V2])  # re-discover the now-approved surface
+        st = _st(fixture_id("m4"), "query_customers")
         ok = (
             before == "quarantined"
             and st.get("status") == "active"

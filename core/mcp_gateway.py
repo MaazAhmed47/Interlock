@@ -1668,7 +1668,14 @@ def register_mcp_server(server_id: str, config: dict) -> dict:
             "message": str(exc),
         }
 
-    ok = db.register_mcp_server(server_id, config)
+    try:
+        ok = db.register_mcp_server(server_id, config)
+    except (RuntimeError, ValueError) as exc:
+        return {
+            "ok": False,
+            "error": "registration_rejected",
+            "message": str(exc),
+        }
     if not ok:
         return {"ok": False, "error": "already_exists"}
     try:
