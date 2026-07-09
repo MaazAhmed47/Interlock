@@ -85,6 +85,21 @@ class MCPToolReviewRequest(BaseModel):
     reason: Optional[str] = ""
 
 
+class ReceiptVerifyRequest(BaseModel):
+    """
+    Verify a Security Receipt against the context it is presented FOR.
+
+    context must carry server_id, tool_name, argument_hash, call_id, and
+    surface_hash — verification fails if any differ from the audit record
+    (the anti-replay invariant). receipt is optional: when present, its
+    tamper-evident fields and drift-evidence digest are also verified.
+    """
+
+    context: dict
+    receipt: Optional[dict] = None
+    audit_id: Optional[int] = None
+
+
 class MCPEffectivePermissionProbeRequest(BaseModel):
     probe_id: Optional[str] = None
     tool_name: str

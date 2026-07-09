@@ -218,3 +218,71 @@ def test_claims_surface_inspect_paths_when_snapshot_retained():
     )
     # No snapshot retained for the observed hash → no inspect path claimed.
     assert claims["claim_2_observed"]["inspect_path"] is None
+
+
+# ── route surface ─────────────────────────────────────────────────────────────
+
+
+def test_routes_verify_and_claims():
+    import asyncio
+
+    import proxy
+    from models.schemas import ReceiptVerifyRequest
+
+    test_key = db.generate_key("free", label="test-claims-routes")["raw_key"]
+
+    detection = _detection_row("route-server", "read_document")
+    _blocked_attempt("route-server", "read_document")
+    row = db.get_mcp_audit_log(detection["id"])
+
+    receipt = asyncio.run(proxy.get_receipt(detection["id"], x_api_key=test_key))
+    assert receipt["binding"]["call_id"] == row["call_id"]
+
+    claims = asyncio.run(proxy.receipt_claims(detection["id"], x_api_key=test_key))
+    assert claims["claim_3_decision"]["decision"] == "quarantine"
+    assert (
+        claims["claim_4_execution_after_detection"]["boundary_crossing_executed"]
+        is False
+    )
+    assert claims["chain_verified"] is True
+
+    context = {
+        "server_id": "route-server",
+        "tool_name": "read_document",
+        "argument_hash": row["argument_hash"],
+        "call_id": row["call_id"],
+        "surface_hash": row["drift_current_hash"],
+    }
+    ok = asyncio.run(
+        proxy.verify_receipt(
+            ReceiptVerifyRequest(context=context, receipt=receipt),
+            x_api_key=test_key,
+        )
+    )
+    assert ok["verified"] is True
+
+    replayed = dict(context, argument_hash="sha256:" + "e" * 64)
+    bad = asyncio.run(
+        proxy.verify_receipt(
+            ReceiptVerifyRequest(context=replayed, receipt=receipt),
+            x_api_key=test_key,
+        )
+    )
+    assert bad["verified"] is False
+    assert any(m["field"] == "argument_hash" for m in bad["mismatches"])
+
+
+def test_routes_require_api_key():
+    import asyncio
+
+    import proxy
+    from models.schemas import ReceiptVerifyRequest
+
+    with pytest.raises(proxy.HTTPException):
+        asyncio.run(proxy.receipt_claims(1, x_api_key=None))
+    with pytest.raises(proxy.HTTPException):
+        asyncio.run(
+            proxy.verify_receipt(
+                ReceiptVerifyRequest(context={}), x_api_key="not-a-real-key"
+            )
+        )

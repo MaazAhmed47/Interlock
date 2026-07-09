@@ -389,3 +389,5 @@ mcp_unregister = mcp_routes.mcp_unregister  # type: ignore[has-type]
 
 get_receipt = audit_routes.get_receipt  # type: ignore[has-type]
 export_receipts = audit_routes.export_receipts  # type: ignore[has-type]
+verify_receipt = audit_routes.verify_receipt  # type: ignore[has-type]
+receipt_claims = audit_routes.receipt_claims  # type: ignore[has-type]
