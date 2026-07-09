@@ -1,5 +1,9 @@
 # Interlock - Live Demo
 
+> **Self-serve offline demo:** the buyer-ready, fully local demo (gateway +
+> mock MCP server + dashboard, one `docker compose up`, no external services)
+> lives in [`demo/offline/`](offline/README.md). Start there.
+
 Live endpoint: https://interlock.onrender.com
 
 The old public demo key has been retired. Mint your own key on the gateway
