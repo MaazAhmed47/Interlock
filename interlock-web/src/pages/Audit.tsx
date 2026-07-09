@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Download, LockKeyhole, LogIn, Printer, Receipt, RefreshCw, ShieldCheck } from 'lucide-react'
+import { BadgeCheck, Download, LockKeyhole, LogIn, Printer, Receipt, RefreshCw, ShieldCheck } from 'lucide-react'
 import { AdminAuditEvent, api, AuditEvent, ScanHistoryEvent, SecurityReceipt } from '../api'
 import { authDisplayName, beginOidcLogin, useAuthSession } from '../auth'
 import { useDashboardData } from '../components/DashLayout'
 import ReceiptModal from '../components/ReceiptModal'
+import VerificationModal from '../components/VerificationModal'
 import AuditPrintView from '../components/AuditPrintView'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
@@ -127,6 +128,7 @@ export default function Audit() {
   const [exporting, setExporting] = useState(false)
   const [exportNote, setExportNote] = useState('')
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false)
+  const [verifyAuditId, setVerifyAuditId] = useState<number | null>(null)
   const session = useAuthSession()
 
   function selectView(next: 'runtime' | 'admin') {
@@ -339,9 +341,14 @@ export default function Audit() {
                           </td>
                           <td>
                             {e.auditId != null
-                              ? <button className="btn btn-ghost btn-sm receipt-row-btn" onClick={() => openReceipt(e.auditId as number)}>
-                                  <Receipt size={12} />Receipt
-                                </button>
+                              ? <span className="receipt-row-actions">
+                                  <button className="btn btn-ghost btn-sm receipt-row-btn" onClick={() => openReceipt(e.auditId as number)}>
+                                    <Receipt size={12} />Receipt
+                                  </button>
+                                  <button className="btn btn-ghost btn-sm receipt-row-btn" title="Four-claim evidence + replay-proof verification" onClick={() => setVerifyAuditId(e.auditId as number)}>
+                                    <BadgeCheck size={12} />Verify
+                                  </button>
+                                </span>
                               : <span className="dim">—</span>}
                           </td>
                         </tr>
@@ -415,6 +422,10 @@ export default function Audit() {
           error={receiptError}
           onClose={closeReceipt}
         />
+      )}
+
+      {verifyAuditId != null && (
+        <VerificationModal auditId={verifyAuditId} onClose={() => setVerifyAuditId(null)} />
       )}
 
       {printPreviewOpen && (
