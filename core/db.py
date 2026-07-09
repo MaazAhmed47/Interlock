@@ -21,6 +21,7 @@ import hashlib
 import logging
 import copy
 import re
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from threading import Lock
@@ -316,11 +317,14 @@ CREATE TABLE IF NOT EXISTS mcp_audit_log (
     drift_baseline_hash TEXT    NOT NULL DEFAULT '',
     drift_current_hash  TEXT    NOT NULL DEFAULT '',
     scan_time_ms        REAL,
+    call_id             TEXT    NOT NULL DEFAULT '',
+    hash_v              INTEGER NOT NULL DEFAULT 1,
     prev_hash           TEXT    NOT NULL DEFAULT '',
     integrity_hash      TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_ts ON mcp_audit_log(ts);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_call_id ON mcp_audit_log(call_id);
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_server_tool ON mcp_audit_log(server_id, tool_name);
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_action ON mcp_audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_drift_severity ON mcp_audit_log(drift_severity);
@@ -600,6 +604,8 @@ def init_db() -> None:
         _ensure_column(
             conn, "mcp_audit_log", "drift_current_hash", "TEXT NOT NULL DEFAULT ''"
         )
+        _ensure_column(conn, "mcp_audit_log", "call_id", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "mcp_audit_log", "hash_v", "INTEGER NOT NULL DEFAULT 1")
         _ensure_column(conn, "admin_audit_log", "prev_hash", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(
             conn, "admin_audit_log", "integrity_hash", "TEXT NOT NULL DEFAULT ''"
@@ -673,6 +679,71 @@ def _compute_audit_hash(
 ) -> str:
     data = f"{prev_hash}|{ts}|{action}|{tool_or_target}|{role}|{reason}"
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
+def _compute_audit_hash_v2(
+    prev_hash: str,
+    ts: str,
+    action: str,
+    tool_name: str,
+    role: str,
+    reason: str,
+    server_id: str,
+    call_id: str,
+    argument_hash: str,
+    drift_baseline_hash: str,
+    drift_current_hash: str,
+) -> str:
+    """
+    v2 mcp_audit_log chain hash. Extends v1 by committing to the receipt
+    binding fields (target, call id, argument hash, before/after surface
+    hashes) so a replayed receipt cannot be re-pointed at a different context
+    without breaking chain verification. Rows written before this change keep
+    hash_v=1 and verify under _compute_audit_hash.
+    """
+    data = "|".join(
+        [
+            prev_hash,
+            ts,
+            action,
+            tool_name,
+            role,
+            reason,
+            server_id,
+            call_id,
+            argument_hash,
+            drift_baseline_hash,
+            drift_current_hash,
+            "v=2",
+        ]
+    )
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
+def _recompute_mcp_audit_hash(row: Dict[str, Any]) -> str:
+    """Recompute one mcp_audit_log row's integrity hash per its hash_v."""
+    if int(row.get("hash_v") or 1) >= 2:
+        return _compute_audit_hash_v2(
+            row.get("prev_hash") or "",
+            row.get("ts") or "",
+            row.get("action") or "",
+            row.get("tool_name") or "",
+            row.get("role") or "",
+            row.get("reason") or "",
+            row.get("server_id") or "",
+            row.get("call_id") or "",
+            row.get("argument_hash") or "",
+            row.get("drift_baseline_hash") or "",
+            row.get("drift_current_hash") or "",
+        )
+    return _compute_audit_hash(
+        row.get("prev_hash") or "",
+        row.get("ts") or "",
+        row.get("action") or "",
+        row.get("tool_name") or "",
+        row.get("role") or "",
+        row.get("reason") or "",
+    )
 
 
 def _is_postgres_conn(conn) -> bool:
@@ -1168,10 +1239,17 @@ def verify_audit_chain() -> Dict[str, Any]:
     ]
 
     for table, key, action_col, target_col, role_col in checks:
+        extra_cols = (
+            ", server_id, call_id, argument_hash, drift_baseline_hash, "
+            "drift_current_hash, hash_v"
+            if table == "mcp_audit_log"
+            else ""
+        )
         with get_conn() as conn:
             rows = conn.execute(
                 f"SELECT id, ts, {action_col}, {target_col}, {role_col}, "
-                f"reason, prev_hash, integrity_hash FROM {table} ORDER BY id ASC"
+                f"reason, prev_hash, integrity_hash{extra_cols} "
+                f"FROM {table} ORDER BY id ASC"
             ).fetchall()
 
         if not rows:
@@ -1190,14 +1268,20 @@ def verify_audit_chain() -> Dict[str, Any]:
                 result["broken_at"] = {"table": table, "record_id": record["id"]}
                 result["reason"] = "pre-integrity records found"
                 return result
-            expected = _compute_audit_hash(
-                prev_hash,
-                record.get("ts") or "",
-                record.get(action_col) or "",
-                record.get(target_col) or "",
-                record.get(role_col) or "",
-                record.get("reason") or "",
-            )
+            if table == "mcp_audit_log":
+                # mcp rows carry a per-row hash version (v1 legacy, v2 with
+                # receipt-binding fields); recompute with the walked prev_hash
+                # so content and linkage are proven together, as for admin rows.
+                expected = _recompute_mcp_audit_hash({**record, "prev_hash": prev_hash})
+            else:
+                expected = _compute_audit_hash(
+                    prev_hash,
+                    record.get("ts") or "",
+                    record.get(action_col) or "",
+                    record.get(target_col) or "",
+                    record.get(role_col) or "",
+                    record.get("reason") or "",
+                )
             if expected != stored_hash:
                 result["valid"] = False
                 result["broken_at"] = {"table": table, "record_id": record["id"]}
@@ -1253,6 +1337,47 @@ def seed_legacy_keys() -> None:
     callers. Issue keys via generate_key() / POST /admin/keys instead.
     """
     return
+
+
+# Raw value of the offline-demo API key. Seeded ONLY when the deployment opts
+# in via INTERLOCK_OFFLINE_DEMO=true (the bundled docker-compose demo). Unlike
+# the revoked legacy keys above, this key never ships enabled on hosted or
+# default installs — see config.offline_demo_enabled().
+OFFLINE_DEMO_KEY = "lf-demo-offline-key"
+
+
+def seed_offline_demo_key() -> None:
+    """Idempotently seed the fixed offline-demo API key (hash only stored)."""
+    key_hash = _hash_key(OFFLINE_DEMO_KEY)
+    defaults = PLAN_DEFAULTS["developer"]
+    with _db_lock, get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id FROM api_keys WHERE key_hash = ?", (key_hash,)
+        ).fetchone()
+        if existing:
+            return
+        conn.execute(
+            """
+            INSERT INTO api_keys
+              (key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
+               fail_mode, is_active, created_at, max_response_bytes, max_array_items)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                key_hash,
+                OFFLINE_DEMO_KEY[:12],
+                "offline demo key — local docker-compose demo only",
+                "developer",
+                defaults["monthly_limit"],
+                defaults["rate_per_min"],
+                defaults["fail_mode"],
+                True,
+                datetime.now(timezone.utc).isoformat(),
+                defaults["max_response_bytes"],
+                defaults["max_array_items"],
+            ),
+        )
+    logger.info("Offline demo API key seeded (INTERLOCK_OFFLINE_DEMO).")
 
 
 # ── Retention policy ─────────────────────────────────────────────────────────
@@ -3117,18 +3242,24 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
     """Persist a durable MCP policy/audit event."""
     event = event or {}
     ts = event.get("ts") or datetime.now(timezone.utc).isoformat()
+    call_id = str(event.get("call_id") or "") or uuid.uuid4().hex
     with _db_lock, get_conn() as conn:
         row = conn.execute(
             "SELECT integrity_hash FROM mcp_audit_log ORDER BY id DESC LIMIT 1"
         ).fetchone()
         prev_hash = (dict(row).get("integrity_hash") if row else None) or "GENESIS"
-        integrity_hash = _compute_audit_hash(
+        integrity_hash = _compute_audit_hash_v2(
             prev_hash,
             ts,
             event.get("action", ""),
             event.get("tool_name", ""),
             event.get("role", "") or "",
             event.get("reason", ""),
+            event.get("server_id", ""),
+            call_id,
+            event.get("argument_hash", "") or "",
+            event.get("drift_baseline_hash", "") or "",
+            event.get("drift_current_hash", "") or "",
         )
         cursor = conn.execute(
             """
@@ -3140,8 +3271,8 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
                observed_outcome, observed_status_code, observed_error_class,
                drift_status, drift_severity, drift_action, drift_types, drift_reasons,
                drift_baseline_hash, drift_current_hash,
-               scan_time_ms, prev_hash, integrity_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               scan_time_ms, call_id, hash_v, prev_hash, integrity_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ts,
@@ -3175,6 +3306,8 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
                 event.get("drift_baseline_hash", "") or "",
                 event.get("drift_current_hash", "") or "",
                 event.get("scan_time_ms"),
+                call_id,
+                2,
                 prev_hash,
                 integrity_hash,
             ),
@@ -3184,6 +3317,8 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
     saved = dict(event)
     saved["id"] = event_id
     saved["ts"] = ts
+    saved["call_id"] = call_id
+    saved["hash_v"] = 2
     return saved
 
 
@@ -3230,6 +3365,50 @@ def get_mcp_audit_log(audit_id: int) -> Optional[Dict[str, Any]]:
     return _mcp_audit_row_to_dict(row)
 
 
+def get_mcp_audit_log_by_call_id(call_id: str) -> Optional[Dict[str, Any]]:
+    """Return the MCP audit event bound to a runtime call id, or None."""
+    if not call_id:
+        return None
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM mcp_audit_log WHERE call_id = ? ORDER BY id ASC LIMIT 1",
+            (call_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return _mcp_audit_row_to_dict(row)
+
+
+def list_mcp_audit_after(
+    server_id: str,
+    tool_name: str,
+    after_ts: str,
+    exclude_id: Optional[int] = None,
+    limit: int = 500,
+) -> List[Dict[str, Any]]:
+    """
+    Return audit events for one server/tool at or after a timestamp, oldest
+    first. This is the evidence query behind receipt claim 4 ("did any
+    boundary-crossing call execute after drift detection?"): the caller splits
+    the result into forwarded (action=allow) vs blocked rows. Ties on ts are
+    resolved by id so events logged in the same instant as the detection row
+    are still included.
+    """
+    anchor_id = exclude_id if exclude_id is not None else -1
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM mcp_audit_log
+             WHERE server_id = ? AND tool_name = ?
+               AND (ts > ? OR (ts = ? AND id > ?))
+             ORDER BY ts ASC, id ASC
+             LIMIT ?
+            """,
+            (server_id, tool_name, after_ts, after_ts, anchor_id, limit),
+        ).fetchall()
+    return [_mcp_audit_row_to_dict(r) for r in rows]
+
+
 def list_mcp_audit_logs_between(
     from_ts: Optional[str] = None,
     to_ts: Optional[str] = None,
@@ -3273,8 +3452,9 @@ def verify_mcp_audit_record(audit_id: int) -> Dict[str, Any]:
     """
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id, ts, action, tool_name, role, reason, prev_hash, "
-            "integrity_hash FROM mcp_audit_log WHERE id = ?",
+            "SELECT id, ts, action, tool_name, role, reason, server_id, call_id, "
+            "argument_hash, drift_baseline_hash, drift_current_hash, hash_v, "
+            "prev_hash, integrity_hash FROM mcp_audit_log WHERE id = ?",
             (audit_id,),
         ).fetchone()
         if not row:
@@ -3291,14 +3471,7 @@ def verify_mcp_audit_record(audit_id: int) -> Dict[str, Any]:
         return {"chain_verified": False, "reason": "missing_integrity_hash"}
 
     expected_prev = (dict(prev).get("integrity_hash") if prev else None) or "GENESIS"
-    recomputed = _compute_audit_hash(
-        row.get("prev_hash") or "",
-        row.get("ts") or "",
-        row.get("action") or "",
-        row.get("tool_name") or "",
-        row.get("role") or "",
-        row.get("reason") or "",
-    )
+    recomputed = _recompute_mcp_audit_hash(row)
     content_ok = recomputed == stored_hash
     link_ok = (row.get("prev_hash") or "") == expected_prev
     verified = content_ok and link_ok
