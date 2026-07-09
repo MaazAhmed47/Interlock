@@ -818,6 +818,24 @@ def _ensure_column(conn, table: str, column: str, definition: str) -> None:
         raise
 
 
+def _insert_returning_id(conn, sql: str, params) -> Optional[int]:
+    """
+    Execute an INSERT and return the new row's id on both backends.
+
+    psycopg2's ``cursor.lastrowid`` carries row-OID semantics — 0 on modern
+    Postgres tables — so the Postgres path appends ``RETURNING id`` and reads
+    the real id; SQLite keeps ``cursor.lastrowid``.
+    """
+    if _is_postgres_conn(conn):
+        cur = conn.execute(sql.rstrip().rstrip(";") + " RETURNING id", params)
+        row = cur.fetchone()
+        if row is None:
+            return None
+        value = row_value(row, "id", 0)
+        return int(value) if value is not None else None
+    return conn.execute(sql, params).lastrowid
+
+
 def _unique_list(values: List[Any]) -> List[Any]:
     out = []
     for value in values:
@@ -1178,7 +1196,8 @@ def log_admin_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
             event.get("actor_role") or "",
             event.get("reason") or "",
         )
-        cursor = conn.execute(
+        event_id = _insert_returning_id(
+            conn,
             """
             INSERT INTO admin_audit_log
               (ts, actor_auth_type, actor_role, actor_label, actor_email, actor_subject,
@@ -1205,9 +1224,7 @@ def log_admin_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
             ),
         )
     stored = dict(event)
-    stored.update(
-        {"id": cursor.lastrowid, "ts": now, "details": event.get("details") or {}}
-    )
+    stored.update({"id": event_id, "ts": now, "details": event.get("details") or {}})
     return stored
 
 
@@ -3261,7 +3278,8 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
             event.get("drift_baseline_hash", "") or "",
             event.get("drift_current_hash", "") or "",
         )
-        cursor = conn.execute(
+        event_id = _insert_returning_id(
+            conn,
             """
             INSERT INTO mcp_audit_log
               (ts, server_id, tool_name, role, action, matched_rule, reason,
@@ -3312,7 +3330,6 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
                 integrity_hash,
             ),
         )
-        event_id = cursor.lastrowid
 
     saved = dict(event)
     saved["id"] = event_id
