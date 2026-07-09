@@ -403,6 +403,143 @@ def test_receipt_carries_binding_block():
     assert binding["approved_surface_hash"] == "sha256:" + "b" * 64
 
 
+# ── replay / freshness verification (the hard invariant) ─────────────────────
+
+
+def _context_for(row):
+    return {
+        "server_id": row["server_id"],
+        "tool_name": row["tool_name"],
+        "argument_hash": row["argument_hash"],
+        "call_id": row["call_id"],
+        "surface_hash": row["drift_current_hash"],
+    }
+
+
+def _receipt_for(row):
+    from core import receipt as receipt_mod
+
+    return receipt_mod.build_receipt(row, chain_verified=True)
+
+
+def test_verify_matching_context_passes():
+    from core import receipt_verify
+
+    saved = _log_event()
+    row = db.get_mcp_audit_log(saved["id"])
+    result = receipt_verify.verify_receipt_against_context(
+        _context_for(row), presented_receipt=_receipt_for(row)
+    )
+    assert result["verified"] is True, result
+    assert result["mismatches"] == []
+    assert result["checks"]["chain"] is True
+    assert result["checks"]["binding"] is True
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("server_id", "attacker-server"),
+        ("tool_name", "attacker_tool"),
+        ("argument_hash", "sha256:" + "e" * 64),
+        ("call_id", "some-other-call-id"),
+        ("surface_hash", "sha256:" + "9" * 64),
+    ],
+)
+def test_replayed_receipt_fails_when_context_differs(field, value):
+    from core import receipt_verify
+
+    saved = _log_event()
+    row = db.get_mcp_audit_log(saved["id"])
+    context = _context_for(row)
+    context[field] = value
+    result = receipt_verify.verify_receipt_against_context(
+        context, presented_receipt=_receipt_for(row)
+    )
+    assert (
+        result["verified"] is False
+    ), f"replaying against a changed {field} MUST fail verification"
+    mismatch_fields = {m["field"] for m in result["mismatches"]}
+    assert field in mismatch_fields, result
+
+
+def test_tampered_receipt_hash_fails():
+    from core import receipt_verify
+
+    saved = _log_event()
+    row = db.get_mcp_audit_log(saved["id"])
+    receipt = _receipt_for(row)
+    receipt["integrity_hash"] = "0" * 64
+    result = receipt_verify.verify_receipt_against_context(
+        _context_for(row), presented_receipt=receipt
+    )
+    assert result["verified"] is False
+    assert result["checks"]["receipt_match"] is False
+
+
+def test_tampered_receipt_evidence_fails():
+    from core import receipt_verify
+
+    saved = _log_event()
+    row = db.get_mcp_audit_log(saved["id"])
+    receipt = _receipt_for(row)
+    assert receipt["drift_evidence"], "drift row must carry evidence"
+    receipt["drift_evidence"]["record"]["severity"] = "none"  # forged record
+    result = receipt_verify.verify_receipt_against_context(
+        _context_for(row), presented_receipt=receipt
+    )
+    assert result["verified"] is False
+    assert result["checks"]["evidence_digest"] is False
+
+
+def test_legacy_row_fails_closed():
+    from core import receipt_verify
+
+    legacy_id = _insert_legacy_v1_row()
+    result = receipt_verify.verify_receipt_against_context(
+        {
+            "server_id": "legacy-server",
+            "tool_name": "legacy_tool",
+            "argument_hash": "",
+            "call_id": "",
+            "surface_hash": "",
+        },
+        audit_id=legacy_id,
+    )
+    assert result["verified"] is False
+    assert result["reason"] == "row_predates_binding_fields"
+
+
+def test_incomplete_context_fails():
+    from core import receipt_verify
+
+    saved = _log_event()
+    row = db.get_mcp_audit_log(saved["id"])
+    context = _context_for(row)
+    del context["argument_hash"]
+    result = receipt_verify.verify_receipt_against_context(
+        context, presented_receipt=_receipt_for(row)
+    )
+    assert result["verified"] is False
+    assert result["reason"] == "context_incomplete"
+
+
+def test_unknown_call_id_fails():
+    from core import receipt_verify
+
+    result = receipt_verify.verify_receipt_against_context(
+        {
+            "server_id": "x",
+            "tool_name": "y",
+            "argument_hash": "sha256:" + "a" * 64,
+            "call_id": "does-not-exist",
+            "surface_hash": "",
+        }
+    )
+    assert result["verified"] is False
+    assert result["checks"]["record_found"] is False
+
+
 # ── offline demo key seed ─────────────────────────────────────────────────────
 
 
