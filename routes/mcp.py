@@ -127,7 +127,16 @@ async def mcp_register(
         ensure_safe_outbound_url(request.url, context="MCP server")
     except OutboundUrlRejected as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return register_mcp_server(request.server_id, request.dict())
+    payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
+    result = register_mcp_server(request.server_id, payload)
+    if result.get("error") in {
+        "invalid_upstream_auth_config",
+        "registration_rejected",
+    }:
+        raise HTTPException(
+            status_code=400, detail=result.get("message") or result["error"]
+        )
+    return result
 
 
 @router.post("/mcp/servers/{server_id}/verify")

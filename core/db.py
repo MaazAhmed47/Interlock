@@ -42,13 +42,119 @@ SEEDED_DEMO_SERVER_IDS = {"trusted-filesystem", "trusted-search"}
 INTENDED_DEMO_SERVER_IDS = {
     *SEEDED_DEMO_SERVER_IDS,
     "clean-proof-docs",
-    "demo-docs",
-    "demo-file-server",
+}
+FIXTURE_SERVER_PREFIX = "_fixture_"
+LEGACY_DISPOSABLE_FIXTURE_SERVER_IDS = {
+    "mock-test",
+    "demo-docs2",
+    "escalation-demo",
+    "db-drift-demo",
+    "db-drift-mock",
+    "genesys-probe-live",
 }
 KNOWN_UNAPPROVED_EXTERNAL_SERVER_IDS = {"asmi-demo"}
 KNOWN_UNAPPROVED_EXTERNAL_HOSTS = {"broen.tech"}
 DISPOSABLE_FIXTURE_SERVER_RE = re.compile(r"^m\d+$")
 PUBLIC_MOCK_HOST_SUFFIXES = (".web.val.run", ".localhost.run")
+DEFAULT_MCP_REGISTRATION_ALLOWED_HOSTS = {
+    "mcp.acme-corp.internal",
+}
+DEFAULT_MCP_REGISTRATION_ALLOWED_SUFFIXES = PUBLIC_MOCK_HOST_SUFFIXES
+PRODUCTION_DATABASE_MARKERS = (
+    "supabase.co",
+    "supabase.com",
+    "pooler.supabase.com",
+)
+
+
+def _csv_env(name: str) -> List[str]:
+    raw = os.getenv(name, "")
+    return [item.strip().lower() for item in raw.split(",") if item.strip()]
+
+
+def _configured_allowed_mcp_hosts() -> set:
+    return {
+        *DEFAULT_MCP_REGISTRATION_ALLOWED_HOSTS,
+        *_csv_env("MCP_REGISTRY_ALLOWED_HOSTS"),
+    }
+
+
+def _configured_allowed_mcp_suffixes() -> tuple:
+    suffixes = [
+        *DEFAULT_MCP_REGISTRATION_ALLOWED_SUFFIXES,
+        *_csv_env("MCP_REGISTRY_ALLOWED_HOST_SUFFIXES"),
+    ]
+    return tuple(
+        suffix if suffix.startswith(".") else f".{suffix}" for suffix in suffixes
+    )
+
+
+def is_production_database_url(database_url: str = "") -> bool:
+    """Return True when a database URL points at managed production-like state."""
+    raw = (database_url or DATABASE_URL or "").strip().lower()
+    if not raw:
+        return False
+    if any(marker in raw for marker in PRODUCTION_DATABASE_MARKERS):
+        return True
+    host = (urlparse(raw).hostname or "").lower()
+    return any(marker in host for marker in PRODUCTION_DATABASE_MARKERS)
+
+
+def is_fixture_mcp_server_id(server_id: str) -> bool:
+    sid = str(server_id or "").strip()
+    return (
+        sid.startswith(FIXTURE_SERVER_PREFIX)
+        or sid.startswith("_test_")
+        or sid.startswith("_st_")
+        or sid in LEGACY_DISPOSABLE_FIXTURE_SERVER_IDS
+        or bool(DISPOSABLE_FIXTURE_SERVER_RE.fullmatch(sid))
+    )
+
+
+def assert_not_production_fixture_write(
+    server_id: str, context: str = "MCP registry"
+) -> None:
+    """Refuse fixture writes when DATABASE_URL targets live production data."""
+    if is_fixture_mcp_server_id(server_id) and is_production_database_url():
+        raise RuntimeError(
+            f"Refusing to write fixture MCP server '{server_id}' via {context}: "
+            "DATABASE_URL points at Supabase/production."
+        )
+
+
+def validate_mcp_registration_target(server_id: str, url: str) -> None:
+    """Enforce fixture namespacing and explicit external-host registration."""
+    sid = str(server_id or "").strip()
+    assert_not_production_fixture_write(sid, "MCP server registration")
+
+    parsed = urlparse(str(url or ""))
+    host = (parsed.hostname or "").lower()
+    if (
+        is_production_database_url()
+        and sid not in INTENDED_DEMO_SERVER_IDS
+        and (not host or _is_loopback_host(host))
+    ):
+        raise RuntimeError(
+            f"Refusing to register non-demo MCP server '{sid}' against "
+            "Supabase/production DATABASE_URL."
+        )
+    if not host or _is_loopback_host(host):
+        return
+
+    if sid in INTENDED_DEMO_SERVER_IDS:
+        return
+
+    allowed_hosts = _configured_allowed_mcp_hosts()
+    allowed_suffixes = _configured_allowed_mcp_suffixes()
+    if host in allowed_hosts or any(
+        host.endswith(suffix) for suffix in allowed_suffixes
+    ):
+        return
+
+    raise ValueError(
+        "External MCP server registration is restricted to the explicit allowlist. "
+        f"Host '{host}' is not allowed."
+    )
 
 
 # ── Connection helper ────────────────────────────────────────────────────────
@@ -1609,15 +1715,10 @@ def _classify_mcp_server(row: Dict[str, Any]) -> Dict[str, Any]:
     elif sid in INTENDED_DEMO_SERVER_IDS:
         registry_class = "intended_demo"
         registry_note = "Buyer-facing Interlock demo server."
-    elif sid.startswith("_") or DISPOSABLE_FIXTURE_SERVER_RE.fullmatch(sid):
+    elif is_fixture_mcp_server_id(sid) or sid.startswith("_"):
         registry_class = "disposable_fixture"
         registry_note = "Disposable test or matrix fixture."
         demo_visible = False
-    elif _is_public_mock_host(host) and any(
-        token in lowered for token in ("demo", "proof", "mock")
-    ):
-        registry_class = "intended_demo"
-        registry_note = "Public mock used to seed the buyer demo."
     elif _is_loopback_host(host) and any(
         token in lowered for token in ("test", "fixture", "probe", "matrix", "mock")
     ):
@@ -1858,6 +1959,7 @@ def _mcp_permission_probe_row_to_dict(row) -> Dict[str, Any]:
 
 def register_mcp_server(server_id: str, config: dict) -> bool:
     """Insert a new MCP server. Returns False if server_id already exists."""
+    validate_mcp_registration_target(server_id, str(config.get("url") or ""))
     try:
         with _db_lock, get_conn() as conn:
             conn.execute(
@@ -2050,6 +2152,7 @@ def upsert_mcp_tool_metadata(
     server_id: str, tool: dict, normalized_metadata: dict
 ) -> Dict[str, Any]:
     """Insert or update normalized metadata for one discovered MCP tool."""
+    assert_not_production_fixture_write(server_id, "MCP tool metadata upsert")
     tool = tool or {}
     tool_name = tool.get("name")
     if not server_id:

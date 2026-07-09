@@ -208,6 +208,32 @@ assert names(metadata["effects"]) == {"read", "export"}
 assert metadata["externality"] == "external"
 print("  OK")
 
+print("Test 7c: read/export/share is egress exposure, not mutation ...")
+metadata = normalize_tool_metadata(
+    {
+        "name": "read_document",
+        "description": "Reads a document and optionally exports it to an external email address.",
+        "_meta": {
+            "interlock": {
+                "effects": ["read", "export", "share"],
+                "externality": "external",
+                "data_classes": ["pii", "user_content"],
+            }
+        },
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "doc_id": {"type": "string"},
+                "recipient_email": {"type": "string"},
+            },
+        },
+    }
+)
+assert metadata["side_effect"] == "read_only"
+assert names(metadata["effects"]) == {"read", "export", "share"}
+assert metadata["externality"] == "external"
+print("  OK")
+
 print("Test 8: benign policy/status prose does not infer mutating effects ...")
 metadata = normalize_tool_metadata(
     {
@@ -306,4 +332,4 @@ assert "user_content" not in metadata["data_classes"]
 assert "internal" in metadata["data_classes"]
 print("  OK")
 
-print("\nAll tool metadata tests passed. (12/12)")
+print("\nAll tool metadata tests passed.")

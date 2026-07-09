@@ -650,7 +650,9 @@ def _side_effect_from_effects(effects: Iterable[str]) -> str:
     effect_set = set(effects or [])
     if effect_set & {"delete", "execute"}:
         return "destructive"
-    if effect_set and effect_set <= {"read", "export"}:
+    if effect_set == {"share"}:
+        return "mutating"
+    if effect_set and effect_set <= {"read", "export", "share"}:
         return "read_only"
     if effect_set:
         return "mutating"

@@ -57,7 +57,7 @@ BOLD, GREEN, RED, YELLOW, CYAN, GREY, RESET = (
     "\033[0m",
 )
 
-SERVER_ID = "db-drift-mock"
+SERVER_ID = f"{db.FIXTURE_SERVER_PREFIX}db-drift-mock"
 APPROVED = ["query_customers", "get_schema", "list_tables"]
 
 # ── Mock tool surface (Python twin of demo/db-drift-mock.ts) ───────────────────

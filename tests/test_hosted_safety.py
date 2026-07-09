@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Hosted-mode safety hardening tests."""
 
 import asyncio
@@ -16,12 +17,15 @@ os.environ.pop("DATABASE_URL", None)
 TEST_DB = tempfile.mktemp(suffix="_hosted_safety_test.db")
 os.environ["FIREWALL_DB_PATH"] = TEST_DB
 
-import config
-import proxy
-from core import db
-from core.limits import clamp_limit
-from core.siem import send_to_siem
-from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
+import config  # noqa: E402
+import proxy  # noqa: E402
+from core import db  # noqa: E402
+from core.limits import clamp_limit  # noqa: E402
+from core.siem import send_to_siem  # noqa: E402
+from core.url_security import (
+    OutboundUrlRejected,
+    ensure_safe_outbound_url,
+)  # noqa: E402
 
 TEST_KEY = None  # minted in the seeded_db fixture via db.generate_key
 
@@ -110,6 +114,23 @@ def test_mcp_register_rejects_unsafe_url_in_production(monkeypatch):
 
     assert exc.value.status_code == 400
     assert "not allowed" in str(exc.value.detail)
+
+
+def test_mcp_register_rejects_unallowlisted_external_url():
+    with pytest.raises(proxy.HTTPException) as exc:
+        run(
+            proxy.mcp_register(
+                proxy.MCPRegisterRequest(
+                    server_id="asmi-demo",
+                    url="https://broen.tech/api/asmi/mcp",
+                ),
+                x_api_key=TEST_KEY,
+            )
+        )
+
+    assert exc.value.status_code == 400
+    assert "not allowed" in str(exc.value.detail)
+    assert db.lookup_mcp_server("asmi-demo") is None
 
 
 def test_siem_test_does_not_call_private_webhook_in_production(monkeypatch):

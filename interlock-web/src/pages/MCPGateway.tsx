@@ -13,10 +13,50 @@ function formatValue(value: unknown) {
   return String(value)
 }
 
+function fieldValues(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map(v => String(v).trim()).filter(Boolean)
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map(v => v.trim()).filter(Boolean)
+  }
+  return []
+}
+
 function toolField(tool: MCPTool, key: string) {
   const normalized = tool.normalized_metadata as Record<string, unknown> | undefined
   const rawDefinition = tool.raw_tool_definition as Record<string, unknown> | undefined
   return tool[key] ?? normalized?.[key] ?? rawDefinition?.[key]
+}
+
+function driftReasons(tool: MCPTool) {
+  const reasons = fieldValues(tool.drift_reasons)
+  if (reasons.length > 0) return reasons
+
+  const types = fieldValues(tool.drift_types)
+  if (types.length === 0) return []
+
+  const effects = fieldValues(toolField(tool, 'effects'))
+  const externality = formatValue(toolField(tool, 'externality'))
+  const inferred: string[] = []
+
+  if (types.includes('effect_escalated')) {
+    inferred.push(effects.length > 0 ? `Effects escalated: ${effects.join(', ')}.` : 'Effects escalated.')
+  }
+  if (types.includes('externality_escalated')) {
+    inferred.push(externality !== '-' ? `Externality escalated to ${externality}.` : 'Externality escalated.')
+  }
+  if (types.includes('data_class_escalated')) {
+    inferred.push('Data class sensitivity escalated.')
+  }
+  if (types.includes('sensitive_field_added')) {
+    inferred.push('Sensitive schema fields were added.')
+  }
+  if (types.includes('side_effect_escalated')) {
+    inferred.push('Side effect escalated.')
+  }
+
+  return inferred
 }
 
 export default function MCPGateway() {
@@ -89,6 +129,7 @@ export default function MCPGateway() {
             {drifted.map(tool => {
               const k = `${tool.server_id}/${tool.tool_name}`
               const isQ = tool.status === 'quarantined'
+              const reasons = driftReasons(tool)
               return (
                 <div key={k} className={`drift-card${isQ ? ' quarantined' : ''}`}>
                   <div className="drift-card-header">
@@ -103,8 +144,12 @@ export default function MCPGateway() {
                   )}
                   <div className="drift-card-field"><strong>Effects:</strong> {formatValue(toolField(tool, 'effects'))}</div>
                   <div className="drift-card-field"><strong>Side effect:</strong> {formatValue(toolField(tool, 'side_effect'))}</div>
+                  <div className="drift-card-field"><strong>Externality:</strong> {formatValue(toolField(tool, 'externality'))}</div>
                   <div className="drift-card-field"><strong>Data classes:</strong> {formatValue(toolField(tool, 'data_classes'))}</div>
                   <div className="drift-card-field"><strong>Drift action:</strong> {formatValue(tool.drift_action)}</div>
+                  {reasons.length > 0 && (
+                    <div className="drift-card-field"><strong>Why quarantined:</strong> {reasons.join(' ')}</div>
+                  )}
                   {quarantinePending === k ? (
                     <div className="drift-card-actions" style={{ flexDirection: 'column', gap: 8 }}>
                       <div style={{ fontSize: 12, color: 'var(--orange)', fontFamily: 'var(--font-mono)' }}>

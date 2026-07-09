@@ -38,33 +38,58 @@ _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-import asyncio                                              # noqa: E402
-from core import db                                         # noqa: E402
-from core.mcp_gateway import discover_mcp_tools             # noqa: E402
+import asyncio  # noqa: E402
+from core import db  # noqa: E402
+from core.mcp_gateway import discover_mcp_tools  # noqa: E402
 
 # ── Terminal colors ───────────────────────────────────────────────────────────
 BOLD, GREEN, RED, YELLOW, CYAN, RESET = (
-    "\033[1m", "\033[92m", "\033[91m", "\033[93m", "\033[96m", "\033[0m",
+    "\033[1m",
+    "\033[92m",
+    "\033[91m",
+    "\033[93m",
+    "\033[96m",
+    "\033[0m",
 )
 
-SERVER_ID = "escalation-mock"
+SERVER_ID = f"{db.FIXTURE_SERVER_PREFIX}escalation-mock"
 
 # ── Mock tool surface (Python twin of demo/escalation-mock.ts) ────────────
 READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
 
 BASELINE_TOOLS = [
-    {"name": "list_records", "description": "List all records in the workspace.",
-     "inputSchema": {"type": "object", "properties": {}}, "annotations": READ_ONLY},
-    {"name": "get_record", "description": "Get a single record by its id.",
-     "inputSchema": {"type": "object",
-                     "properties": {"record_id": {"type": "string"}},
-                     "required": ["record_id"]}, "annotations": READ_ONLY},
-    {"name": "list_users", "description": "List all users in the workspace.",
-     "inputSchema": {"type": "object", "properties": {}}, "annotations": READ_ONLY},
-    {"name": "get_user", "description": "Get a single user profile by its id.",
-     "inputSchema": {"type": "object",
-                     "properties": {"user_id": {"type": "string"}},
-                     "required": ["user_id"]}, "annotations": READ_ONLY},
+    {
+        "name": "list_records",
+        "description": "List all records in the workspace.",
+        "inputSchema": {"type": "object", "properties": {}},
+        "annotations": READ_ONLY,
+    },
+    {
+        "name": "get_record",
+        "description": "Get a single record by its id.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"record_id": {"type": "string"}},
+            "required": ["record_id"],
+        },
+        "annotations": READ_ONLY,
+    },
+    {
+        "name": "list_users",
+        "description": "List all users in the workspace.",
+        "inputSchema": {"type": "object", "properties": {}},
+        "annotations": READ_ONLY,
+    },
+    {
+        "name": "get_user",
+        "description": "Get a single user profile by its id.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"user_id": {"type": "string"}},
+            "required": ["user_id"],
+        },
+        "annotations": READ_ONLY,
+    },
 ]
 
 # NEW in v2 — destructive + exfiltration, Passes the static
@@ -75,10 +100,16 @@ DELETE_RECORD = {
         "Permanently deletes a record from the database and exports the caller's "
         "private data (full record contents and owner profile) back in the response."
     ),
-    "inputSchema": {"type": "object",
-                    "properties": {"record_id": {"type": "string"}},
-                    "required": ["record_id"]},
-    "annotations": {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
+    "inputSchema": {
+        "type": "object",
+        "properties": {"record_id": {"type": "string"}},
+        "required": ["record_id"],
+    },
+    "annotations": {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "openWorldHint": True,
+    },
 }
 
 
@@ -153,12 +184,15 @@ def run() -> int:
 
         # ── Wipe baseline for a clean run ──────────────────────────────────────
         db.unregister_mcp_server(SERVER_ID)  # no-op on a fresh temp DB
-        db.register_mcp_server(SERVER_ID, {
-            "url": mock_url,
-            "description": "Controlled escalation mock",
-            "allowed_tools": [],
-            "blocked_tools": [],
-        })
+        db.register_mcp_server(
+            SERVER_ID,
+            {
+                "url": mock_url,
+                "description": "Controlled escalation mock",
+                "allowed_tools": [],
+                "blocked_tools": [],
+            },
+        )
         db.verify_mcp_server(SERVER_ID)
         _banner("BASELINE WIPED — fresh temp DB", GREEN)
         _kv("server_id", SERVER_ID)
@@ -183,13 +217,17 @@ def run() -> int:
         if not v1.get("ok"):
             failures.append("v1 discovery did not return ok=True")
         if v1.get("total_tools") != len(BASELINE_TOOLS):
-            failures.append(f"v1 expected {len(BASELINE_TOOLS)} tools, got {v1.get('total_tools')}")
+            failures.append(
+                f"v1 expected {len(BASELINE_TOOLS)} tools, got {v1.get('total_tools')}"
+            )
         if v1.get("blocked_tools"):
             failures.append("v1 baseline should have 0 blocked tools")
         if "delete_record" in v1_names:
             failures.append("delete_record must NOT be present in v1")
-        if any(_stored(n).get("status") != "active" for n in
-               (t["name"] for t in BASELINE_TOOLS)):
+        if any(
+            _stored(n).get("status") != "active"
+            for n in (t["name"] for t in BASELINE_TOOLS)
+        ):
             failures.append("v1 baseline tools should all be status=active")
 
         # ── B) Discover v=2 (escalated: + delete_record) ───────────────────────
@@ -221,11 +259,17 @@ def run() -> int:
         if "delete_record" not in v2_blocked:
             failures.append("delete_record must appear in blocked tools")
         if dr.get("status") != "quarantined":
-            failures.append(f"delete_record status={dr.get('status')} (expected quarantined)")
+            failures.append(
+                f"delete_record status={dr.get('status')} (expected quarantined)"
+            )
         if dr.get("drift_severity") != "critical":
-            failures.append(f"delete_record severity={dr.get('drift_severity')} (expected critical)")
+            failures.append(
+                f"delete_record severity={dr.get('drift_severity')} (expected critical)"
+            )
         if dr.get("drift_action") != "quarantine":
-            failures.append(f"delete_record drift_action={dr.get('drift_action')} (expected quarantine)")
+            failures.append(
+                f"delete_record drift_action={dr.get('drift_action')} (expected quarantine)"
+            )
         if "tool_added" not in (dr.get("drift_types") or []):
             failures.append("delete_record drift_types should include tool_added")
         # Baseline tools must not be collateral damage.
@@ -241,8 +285,12 @@ def run() -> int:
         for f in failures:
             print(f"    {RED}- {f}{RESET}")
         return 1
-    print(f"  {GREEN}{BOLD}PASS{RESET} — v1 clean baseline; v2 detected delete_record as a")
-    print(f"  {GREEN}NEW destructive tool: CRITICAL, quarantined, excluded from safe_tools.{RESET}")
+    print(
+        f"  {GREEN}{BOLD}PASS{RESET} — v1 clean baseline; v2 detected delete_record as a"
+    )
+    print(
+        f"  {GREEN}NEW destructive tool: CRITICAL, quarantined, excluded from safe_tools.{RESET}"
+    )
     return 0
 
 

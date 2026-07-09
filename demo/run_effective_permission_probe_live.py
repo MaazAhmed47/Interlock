@@ -56,7 +56,7 @@ BOLD, GREEN, RED, YEL, CYAN, RESET = (
     "\033[0m",
 )
 
-SERVER_ID = "genesys-probe-live"
+SERVER_ID = f"{db.FIXTURE_SERVER_PREFIX}genesys-probe-live"
 TOOL = {
     "name": "call_genesys_api",
     "description": "Call a Genesys API endpoint.",
