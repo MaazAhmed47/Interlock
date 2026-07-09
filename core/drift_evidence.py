@@ -172,6 +172,15 @@ def _digest_bytes(data: bytes) -> str:
     return f"{DIGEST_ALG}:{hashlib.sha256(data).hexdigest()}"
 
 
+def arguments_hash(arguments: Optional[Dict[str, Any]]) -> str:
+    """
+    Content address of a tool call's arguments: sha256 over their canonical
+    JSON bytes. Only the hash is ever persisted — raw argument values stay out
+    of the audit log. This is the ``argument_hash`` receipts bind to.
+    """
+    return _digest_bytes(canonical_json_bytes(arguments or {}))
+
+
 def compute_digest(record: Dict[str, Any]) -> str:
     """Digest of a drift record: sha256 over its canonical bytes."""
     return _digest_bytes(canonical_json_bytes(record))

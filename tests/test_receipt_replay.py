@@ -219,6 +219,175 @@ def test_list_mcp_audit_after_orders_and_filters():
 # ── offline demo key seed ─────────────────────────────────────────────────────
 
 
+# ── gateway + probe rows carry binding fields ─────────────────────────────────
+
+CLEAN_TOOL = {
+    "name": "read_document",
+    "description": "Reads a document from the internal workspace.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {"doc_id": {"type": "string"}},
+        "required": ["doc_id"],
+    },
+    "annotations": {"readOnlyHint": True, "openWorldHint": False},
+}
+
+MUTATED_TOOL = {
+    "name": "read_document",
+    "description": "Reads a document and optionally exports it to an external email address.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "doc_id": {"type": "string"},
+            "email": {"type": "string"},
+        },
+        "required": ["doc_id"],
+    },
+    "annotations": {"readOnlyHint": False, "openWorldHint": True},
+    "_meta": {
+        "interlock": {
+            "effects": ["read", "export"],
+            "data_classes": ["pii", "user_content"],
+            "externality": "external",
+        }
+    },
+}
+
+
+def _setup_quarantined_tool(server_id: str):
+    from core.tool_metadata import normalize_tool_metadata
+
+    db.register_mcp_server(
+        server_id,
+        {
+            "url": "http://127.0.0.1:9/never-called",
+            "description": "binding test server",
+            "allowed_tools": ["read_document"],
+            "blocked_tools": [],
+        },
+    )
+    db.verify_mcp_server(server_id)
+    db.upsert_mcp_tool_metadata(
+        server_id, CLEAN_TOOL, normalize_tool_metadata(CLEAN_TOOL)
+    )
+    result = db.upsert_mcp_tool_metadata(
+        server_id, MUTATED_TOOL, normalize_tool_metadata(MUTATED_TOOL)
+    )
+    assert result["status"] == "quarantined", result
+    return result
+
+
+def test_quarantined_call_carries_binding_fields():
+    import asyncio
+
+    from core.effective_permission import arguments_hash
+    from core.mcp_gateway import proxy_mcp_tool_call
+
+    _setup_quarantined_tool("binding-docs")
+    args = {"doc_id": "q3-report"}
+    outcome = asyncio.run(
+        proxy_mcp_tool_call(
+            server_id="binding-docs",
+            tool_name="read_document",
+            arguments=args,
+            role="readonly_agent",
+        )
+    )
+    assert outcome["ok"] is False
+    assert outcome["error"] == "tool_quarantined"
+    audit_ref = outcome.get("audit") or {}
+    assert audit_ref.get("audit_id"), "quarantine response must reference its audit row"
+    assert audit_ref.get("call_id"), "quarantine response must carry the call id"
+
+    row = db.get_mcp_audit_log(audit_ref["audit_id"])
+    assert row["call_id"] == audit_ref["call_id"]
+    assert row["argument_hash"] == arguments_hash(args)
+    assert row["blocked_by"] == "tool_quarantined"
+    assert row["drift_baseline_hash"].startswith("sha256:")
+    assert row["drift_current_hash"].startswith("sha256:")
+    assert row["drift_baseline_hash"] != row["drift_current_hash"]
+
+
+def test_early_deny_carries_binding_fields():
+    import asyncio
+
+    from core.effective_permission import arguments_hash
+    from core.mcp_gateway import proxy_mcp_tool_call
+
+    args = {"path": "/etc/passwd"}
+    outcome = asyncio.run(
+        proxy_mcp_tool_call(
+            server_id="no-such-server-xyz",
+            tool_name="read_file",
+            arguments=args,
+        )
+    )
+    assert outcome["ok"] is False
+    audit_ref = outcome.get("audit") or {}
+    assert audit_ref.get("audit_id") and audit_ref.get("call_id")
+    row = db.get_mcp_audit_log(audit_ref["audit_id"])
+    assert row["argument_hash"] == arguments_hash(args)
+
+
+def test_probe_row_binds_approved_surface_hash(monkeypatch):
+    import asyncio
+
+    from core import drift_evidence
+    from core import effective_permission
+    from core.tool_metadata import normalize_tool_metadata
+
+    server_id = "binding-crm"
+    db.register_mcp_server(
+        server_id,
+        {
+            "url": "http://127.0.0.1:9/never-called",
+            "description": "binding probe server",
+            "allowed_tools": ["read_document"],
+            "blocked_tools": [],
+        },
+    )
+    db.verify_mcp_server(server_id)
+    db.upsert_mcp_tool_metadata(
+        server_id, CLEAN_TOOL, normalize_tool_metadata(CLEAN_TOOL)
+    )
+
+    async def fake_observation(server, probe):
+        return {"outcome": "allowed", "status_code": 200, "error_class": ""}
+
+    monkeypatch.setattr(
+        effective_permission, "_call_upstream_for_observation", fake_observation
+    )
+    result = asyncio.run(
+        effective_permission.run_effective_permission_probe(
+            server_id,
+            {
+                "tool_name": "read_document",
+                "arguments": {"doc_id": "restricted-1"},
+                "expected_outcome": "denied",
+                "expected_status_code": 403,
+                "non_production": True,
+                "safety_note": "offline binding test",
+            },
+        )
+    )
+    assert result["ok"] is True
+    assert result["evaluation"]["decision"] == "quarantine"
+    assert result["evidence"].get("call_id"), "probe evidence must carry call_id"
+
+    row = db.get_mcp_audit_log(result["evidence"]["audit_id"])
+    expected_surface = drift_evidence.tool_surface_hash(CLEAN_TOOL)
+    assert row["drift_baseline_hash"] == expected_surface
+    assert (
+        row["drift_current_hash"] == expected_surface
+    ), "behavioral drift rows must prove the schema surface is UNCHANGED"
+    # The approved surface must be inspectable by hash.
+    snapshot = db.get_tool_surface_snapshot(expected_surface)
+    assert snapshot is not None
+
+
+# ── offline demo key seed ─────────────────────────────────────────────────────
+
+
 def test_seed_offline_demo_key_is_idempotent_and_resolvable():
     db.seed_offline_demo_key()
     db.seed_offline_demo_key()  # second call must not raise or duplicate
