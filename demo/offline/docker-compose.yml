@@ -4,19 +4,22 @@
 #   cd demo/offline && docker compose up -d --build
 #
 # Brings up the full self-contained demo: gateway, bundled mock MCP server,
-# dashboard, and a one-shot seeder. No external network, no API keys, no
-# hosted services. Core demo paths:
+# dashboard, and a one-shot seeder. No hosted service or network dependency at
+# runtime; the first build downloads Docker images and dependencies. No external
+# API keys are required. Core demo paths:
 #
-#   python run_demo.py scenario-a     # capability drift (default path)
-#   python run_demo.py scenario-b     # behavioral drift (advanced path)
-#   python run_demo.py smoke          # prove demo readiness end-to-end
-#   python run_demo.py reset          # repopulate baseline
+#   docker compose run --rm demo-runner scenario-a  # capability drift
+#   docker compose run --rm demo-runner scenario-b  # behavioral drift
+#   docker compose run --rm demo-runner smoke       # readiness proof
+#   docker compose run --rm demo-runner reset       # repopulate baseline
 #
-# No host Python? Use the bundled runner instead:
-#   docker compose run --rm demo-runner scenario-a
+# Optional host-Python variant:
+#   python3 run_demo.py scenario-a
 #
 # Dashboard: http://localhost:8080/dashboard
 #   Settings -> API URL http://localhost:8001, API key lf-demo-offline-key
+# Fixed localhost ports: 8001, 8080, and 9100. Stop or reconfigure anything
+# already using them.
 # ============================================================================
 services:
   gateway:
@@ -26,7 +29,7 @@ services:
     container_name: interlock-demo-gateway
     restart: unless-stopped
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     environment:
       # Local demo posture: non-production, no external judge required.
       INTERLOCK_ENV: local
@@ -34,6 +37,8 @@ services:
       INTERLOCK_OFFLINE_DEMO: "true"
       # The mock lives on the compose network under a single-label hostname.
       INTERLOCK_ALLOW_PRIVATE_OUTBOUND: "true"
+      # Add the bundled mock explicitly; the registration guard stays enabled.
+      MCP_REGISTRY_ALLOWED_HOSTS: mcp-mock
       FIREWALL_DB_PATH: /app/data/firewall.db
       SHADOW_SCAN_ENABLED: "false"
       LOG_LEVEL: info
@@ -60,7 +65,7 @@ services:
     container_name: interlock-demo-mock
     restart: unless-stopped
     ports:
-      - "9100:9100"
+      - "127.0.0.1:9100:9100"
     networks:
       - demo-net
 
@@ -74,7 +79,7 @@ services:
     container_name: interlock-demo-dashboard
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     networks:
       - demo-net
 
@@ -113,6 +118,8 @@ services:
       INTERLOCK_DEMO_DASHBOARD: http://dashboard:80
     entrypoint: ["python", "/demo/run_demo.py"]
     depends_on:
+      seeder:
+        condition: service_completed_successfully
       gateway:
         condition: service_healthy
       mcp-mock:
