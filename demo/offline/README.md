@@ -1,9 +1,10 @@
 # Interlock — offline buyer demo
 
-A self-contained, fully offline demo of Interlock's post-approval MCP drift
+A self-contained local demo of Interlock's post-approval MCP drift
 detection. One `docker compose up` brings up the gateway, a bundled mock MCP
-server, the dashboard, and seeded baseline data. No hosted services, no API
-keys, no external network for any core path.
+server, the dashboard, and seeded baseline data. No hosted service or network
+dependency at runtime; the first build downloads Docker images and dependencies.
+No external API keys are required.
 
 What it proves (and nothing more): the two **live-proven** drift classes.
 
@@ -21,19 +22,22 @@ What it proves (and nothing more): the two **live-proven** drift classes.
 ```bash
 cd demo/offline
 docker compose up -d --build     # gateway + mock + dashboard + auto-seed
-python run_demo.py smoke         # prove the demo is ready (exit 0 = ready)
-python run_demo.py scenario-a    # the narrated default demo path
+docker compose run --rm demo-runner smoke       # exit 0 = ready
+docker compose run --rm demo-runner scenario-a  # narrated default path
 ```
 
-No host Python? Every command also runs inside the compose network:
+Optional host-Python variant (the runner is standard-library only):
 
 ```bash
-docker compose run --rm demo-runner smoke
-docker compose run --rm demo-runner scenario-a
+python3 run_demo.py smoke
+python3 run_demo.py scenario-a
 ```
 
 Dashboard: <http://localhost:8080/dashboard> → Settings → API URL
 `http://localhost:8001`, API key `lf-demo-offline-key`.
+
+The demo binds fixed localhost ports `8001`, `8080`, and `9100`; stop or
+reconfigure anything already using them.
 
 In **Audit Log → Runtime Decisions**, every event has a **Receipt** button
 (the tamper-evident record) and a **Verify** button (the four-claim evidence
@@ -41,12 +45,12 @@ view with live verification and a replay check).
 
 | Command | What it does |
 | --- | --- |
-| `python run_demo.py seed` | Register + verify + approve the demo baseline (runs automatically on `up`) |
-| `python run_demo.py scenario-a` | Capability drift, end to end (default path) |
-| `python run_demo.py scenario-b` | Behavioral drift 403→200 (advanced path) |
-| `python run_demo.py smoke` | Full readiness proof on throwaway servers |
-| `python run_demo.py reset` | Remove demo/smoke servers, reset mock phases, re-seed |
-| `python run_demo.py status` | Servers, review queue, recent audit rows, mock phases |
+| `docker compose run --rm demo-runner seed` | Register + verify + approve the demo baseline (runs automatically on `up`) |
+| `docker compose run --rm demo-runner scenario-a` | Capability drift, end to end (default path) |
+| `docker compose run --rm demo-runner scenario-b` | Behavioral drift 403→200 (advanced path) |
+| `docker compose run --rm demo-runner smoke` | Full readiness proof on throwaway servers, including an unallowlisted-host rejection |
+| `docker compose run --rm demo-runner reset` | Remove demo/smoke servers, reset mock phases, re-seed |
+| `docker compose run --rm demo-runner status` | Servers, review queue, recent audit rows, mock phases |
 
 ## The four-claim receipt
 
@@ -94,14 +98,20 @@ mutation matrix against the live stack on every run.
 
 ## Reset & freshness
 
-- `python run_demo.py reset` — repopulates the baseline. The audit chain is
+- `docker compose run --rm demo-runner reset` — repopulates the baseline. The audit chain is
   append-only by design; reset does not rewrite history.
-- `docker compose down -v && docker compose up -d --build` — factory-fresh
-  database (new volume), then the seeder re-creates the baseline.
-- `python run_demo.py smoke` before a presentation: exit code 0 means
+- For a factory-fresh database (new volume), then automatic re-seeding:
+
+  ```bash
+  docker compose down -v
+  docker compose up -d --build
+  ```
+
+- `docker compose run --rm demo-runner smoke` before a presentation: exit code 0 means
   services up, seed present, both scenarios pass end to end, receipts
-  verify, the replay matrix rejects all five mutations, and the control tool
-  (`list_documents`, never changed) is still allowed.
+  verify, the registration allowlist rejects an arbitrary external host with
+  HTTP 400, the replay matrix rejects all five mutations, and the control
+  tool (`list_documents`, never changed) is still allowed.
 
 ## Honest limits
 

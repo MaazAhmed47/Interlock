@@ -116,21 +116,45 @@ def test_mcp_register_rejects_unsafe_url_in_production(monkeypatch):
     assert "not allowed" in str(exc.value.detail)
 
 
-def test_mcp_register_rejects_unallowlisted_external_url():
-    with pytest.raises(proxy.HTTPException) as exc:
-        run(
+def test_offline_allowlist_accepts_bundled_mock_and_rejects_other_hosts(monkeypatch):
+    allowed_server_id = "_test_offline_allowlisted_mock"
+    rejected_server_id = "_test_offline_unallowlisted_host"
+    db.unregister_mcp_server(allowed_server_id)
+    db.unregister_mcp_server(rejected_server_id)
+    monkeypatch.setenv("INTERLOCK_ENV", "local")
+    monkeypatch.setenv("INTERLOCK_ALLOW_PRIVATE_OUTBOUND", "true")
+    monkeypatch.setenv("MCP_REGISTRY_ALLOWED_HOSTS", "mcp-mock")
+
+    try:
+        accepted = run(
             proxy.mcp_register(
                 proxy.MCPRegisterRequest(
-                    server_id="asmi-demo",
-                    url="https://broen.tech/api/asmi/mcp",
+                    server_id=allowed_server_id,
+                    url="http://mcp-mock:9100/docs",
                 ),
                 x_api_key=TEST_KEY,
             )
         )
+        assert accepted.get("ok") is True
+        assert db.lookup_mcp_server(allowed_server_id) is not None
 
-    assert exc.value.status_code == 400
-    assert "not allowed" in str(exc.value.detail)
-    assert db.lookup_mcp_server("asmi-demo") is None
+        with pytest.raises(proxy.HTTPException) as exc:
+            run(
+                proxy.mcp_register(
+                    proxy.MCPRegisterRequest(
+                        server_id=rejected_server_id,
+                        url="https://not-allowlisted.invalid/mcp",
+                    ),
+                    x_api_key=TEST_KEY,
+                )
+            )
+
+        assert exc.value.status_code == 400
+        assert "Host 'not-allowlisted.invalid' is not allowed" in str(exc.value.detail)
+        assert db.lookup_mcp_server(rejected_server_id) is None
+    finally:
+        db.unregister_mcp_server(allowed_server_id)
+        db.unregister_mcp_server(rejected_server_id)
 
 
 def test_siem_test_does_not_call_private_webhook_in_production(monkeypatch):

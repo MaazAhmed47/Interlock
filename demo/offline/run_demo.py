@@ -23,9 +23,9 @@ Subcommands:
   status      Show registered servers, review queue, and recent audit rows.
 
 Examples (from demo/offline/):
-  python run_demo.py scenario-a
-  python run_demo.py smoke
   docker compose run --rm demo-runner scenario-a     # no host Python needed
+  docker compose run --rm demo-runner smoke
+  python3 run_demo.py scenario-a                      # optional host variant
 """
 
 import argparse
@@ -262,7 +262,7 @@ class Demo:
         print(f"  Dashboard : {self.dashboard}/dashboard")
         print(f"  API URL   : {self.gateway}")
         print(f"  API key   : {self.key}")
-        print("  Next      : python run_demo.py scenario-a")
+        print("  Next      : docker compose run --rm demo-runner scenario-a")
 
     def wait_for_services(self, attempts=30):
         step("Wait for gateway + mock health")
@@ -557,7 +557,46 @@ class Demo:
 
         check("seed data present (demo-docs, demo-crm verified)", seed_present)
 
-        # 3. scenario A end-to-end on a throwaway server
+        # 3. registration allowlist remains fail-closed for other hosts
+        rejected_id = f"smoke-unallowlisted-{run_id}"
+
+        def registration_guard_intact():
+            try:
+                status, payload = self.gw(
+                    "POST",
+                    "/mcp/servers",
+                    {
+                        "server_id": rejected_id,
+                        "url": "https://not-allowlisted.invalid/mcp",
+                        "description": "Offline smoke rejection probe",
+                        "allowed_tools": [],
+                        "blocked_tools": [],
+                    },
+                )
+                detail = str((payload or {}).get("detail") or "")
+                assert status == 400, f"expected HTTP 400, got {status}: {payload}"
+                assert (
+                    "External MCP server registration is restricted to the explicit "
+                    "allowlist" in detail
+                ), f"unexpected rejection detail: {payload}"
+                assert "Host 'not-allowlisted.invalid' is not allowed" in detail
+
+                list_status, servers_payload = self.gw("GET", "/mcp/servers")
+                assert list_status == 200, f"servers list failed: {servers_payload}"
+                server_ids = {
+                    server.get("server_id")
+                    for server in (servers_payload or {}).get("servers") or []
+                }
+                assert rejected_id not in server_ids, "rejected server was persisted"
+            finally:
+                self.gw("DELETE", f"/mcp/servers/{rejected_id}")
+
+        check(
+            "registration allowlist rejects arbitrary external host with HTTP 400",
+            registration_guard_intact,
+        )
+
+        # 4. scenario A end-to-end on a throwaway server
         docs_id = f"smoke-docs-{run_id}"
         docs_path = f"/docs/smoke-{run_id}"
 
@@ -587,7 +626,7 @@ class Demo:
 
         check("scenario A end-to-end + replay mutation matrix", scenario_a_smoke)
 
-        # 4. control tool stays clean
+        # 5. control tool stays clean
         def control_clean():
             status, payload = self.gw("GET", f"/mcp/tools?server_id={docs_id}")
             control = next(
@@ -606,7 +645,7 @@ class Demo:
 
         check("control tool unaffected by drift", control_clean)
 
-        # 5. scenario B end-to-end on a throwaway server
+        # 6. scenario B end-to-end on a throwaway server
         crm_id = f"smoke-crm-{run_id}"
         crm_path = f"/crm/smoke-{run_id}"
         check(
@@ -644,7 +683,8 @@ class Demo:
         print("    mock phases reset to 1")
         print(
             "    note: audit history is append-only by design (hash chain);"
-            "\n    for a factory-fresh database run: docker compose down -v && docker compose up -d"
+            "\n    for a factory-fresh database run: docker compose down -v"
+            "\n    then: docker compose up -d --build"
         )
         self.seed()
 

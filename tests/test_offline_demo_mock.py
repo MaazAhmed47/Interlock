@@ -18,8 +18,11 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 SERVER_PY = ROOT / "demo" / "offline" / "mock_server" / "server.py"
+COMPOSE_YML = ROOT / "demo" / "offline" / "docker-compose.yml"
 
 spec = importlib.util.spec_from_file_location("offline_mock_server", SERVER_PY)
 mock = importlib.util.module_from_spec(spec)
@@ -29,6 +32,34 @@ spec.loader.exec_module(mock)
 
 def _tool_names(tools):
     return sorted(t["name"] for t in tools)
+
+
+def test_compose_gateway_explicitly_allowlists_the_bundled_mock_host():
+    compose = yaml.safe_load(COMPOSE_YML.read_text(encoding="utf-8"))
+    gateway_environment = compose["services"]["gateway"]["environment"]
+
+    assert gateway_environment["MCP_REGISTRY_ALLOWED_HOSTS"] == "mcp-mock"
+
+
+def test_compose_publishes_demo_ports_on_loopback_only():
+    compose = yaml.safe_load(COMPOSE_YML.read_text(encoding="utf-8"))
+    expected_ports = {
+        "gateway": ["127.0.0.1:8001:8001"],
+        "dashboard": ["127.0.0.1:8080:80"],
+        "mcp-mock": ["127.0.0.1:9100:9100"],
+    }
+
+    assert {
+        service: compose["services"][service]["ports"] for service in expected_ports
+    } == expected_ports
+
+
+def test_compose_demo_runner_waits_for_successful_seeding():
+    compose = yaml.safe_load(COMPOSE_YML.read_text(encoding="utf-8"))
+
+    assert compose["services"]["demo-runner"]["depends_on"]["seeder"] == {
+        "condition": "service_completed_successfully"
+    }
 
 
 # ── /docs capability drift ────────────────────────────────────────────────────
