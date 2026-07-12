@@ -4,8 +4,8 @@ import os
 import time
 import contextvars
 import httpx
+import uuid
 from typing import Optional, Dict, Any
-from datetime import datetime, timezone
 from models.schemas import ScanResult, ThreatLevel
 from core.metadata_policy import evaluate_metadata_policy
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
@@ -38,6 +38,14 @@ from core import drift_evidence
 _op_start: contextvars.ContextVar[Optional[float]] = contextvars.ContextVar(
     "mcp_op_start", default=None
 )
+
+
+class MCPUpstreamResponseError(Exception):
+    def __init__(self, error: str, message: str, upstream_error: Optional[dict] = None):
+        super().__init__(message)
+        self.error = error
+        self.message = message
+        self.upstream_error = upstream_error
 
 
 def _begin_op() -> None:
@@ -416,7 +424,12 @@ async def discover_mcp_tools(
         headers = _resolve_upstream_auth_headers(registered)
 
         async with httpx.AsyncClient(timeout=timeout) as client:
-            payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": uuid.uuid4().hex,
+                "method": "tools/list",
+                "params": {},
+            }
             resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
             resp.raise_for_status()
             data = resp.json()
@@ -1034,14 +1047,61 @@ async def proxy_mcp_tool_call(
         server_url = ensure_safe_outbound_url(server["url"], context="MCP server")
         headers = _resolve_upstream_auth_headers(server)
         async with httpx.AsyncClient(timeout=30.0) as client:
+            request_id = uuid.uuid4().hex
             payload = {
                 "jsonrpc": "2.0",
-                "id": int(datetime.now(timezone.utc).timestamp()),
+                "id": request_id,
                 "method": "tools/call",
                 "params": {"name": tool_name, "arguments": arguments},
             }
             resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
-            data = resp.json()
+            resp.raise_for_status()
+            if hasattr(resp, "content") and resp.content == b"":
+                raise MCPUpstreamResponseError(
+                    "upstream_empty_response", "MCP server returned an empty response."
+                )
+            try:
+                data = resp.json()
+            except (json.JSONDecodeError, ValueError) as exc:
+                raise MCPUpstreamResponseError(
+                    "upstream_invalid_json", "MCP server returned malformed JSON."
+                ) from exc
+            if not isinstance(data, dict):
+                raise MCPUpstreamResponseError(
+                    "upstream_invalid_envelope",
+                    "MCP server returned a non-object JSON-RPC envelope.",
+                )
+            if "error" in data:
+                upstream_error = data.get("error")
+                captured = upstream_error if isinstance(upstream_error, dict) else {}
+                raise MCPUpstreamResponseError(
+                    "upstream_jsonrpc_error",
+                    "MCP server returned a JSON-RPC error.",
+                    {
+                        "code": captured.get("code"),
+                        "message": str(captured.get("message") or "")[:200],
+                    },
+                )
+            if "result" not in data:
+                raise MCPUpstreamResponseError(
+                    "upstream_invalid_envelope",
+                    "MCP JSON-RPC response is missing a result.",
+                )
+            if not isinstance(data.get("result"), dict):
+                raise MCPUpstreamResponseError(
+                    "upstream_invalid_envelope",
+                    "MCP JSON-RPC result must be an object.",
+                )
+            if data.get("jsonrpc", "2.0") != "2.0":
+                raise MCPUpstreamResponseError(
+                    "upstream_invalid_envelope",
+                    "MCP server returned an invalid JSON-RPC version.",
+                )
+            if "id" in data and data.get("id") != request_id:
+                raise MCPUpstreamResponseError(
+                    "upstream_invalid_envelope",
+                    "MCP server returned a mismatched JSON-RPC request id.",
+                )
 
             # 6. Scan the response — MCP06 (injection) then MCP10 (PII + volume).
             # Scan only the tool result payload, never the JSON-RPC envelope.
@@ -1330,12 +1390,26 @@ async def proxy_mcp_tool_call(
     except UpstreamAuthConfigError as exc:
         _log_mcp_policy_audit(policy_decision, blocked_by="upstream_auth_unavailable")
         return {"ok": False, "error": "upstream_auth_unavailable", "message": str(exc)}
+    except MCPUpstreamResponseError as exc:
+        return _failed_upstream_call(
+            policy_decision, exc.error, exc.message, exc.upstream_error
+        )
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        return _failed_upstream_call(
+            policy_decision,
+            "upstream_http_error",
+            f"MCP server returned HTTP {status or 'error'}.",
+            {"status_code": status},
+        )
     except httpx.TimeoutException:
-        _log_mcp_policy_audit(policy_decision, blocked_by="mcp_timeout")
-        return {"ok": False, "error": "mcp_server_timeout"}
-    except Exception as e:
-        _log_mcp_policy_audit(policy_decision, blocked_by="mcp_server_error")
-        return {"ok": False, "error": "mcp_server_error", "message": str(e)[:200]}
+        return _failed_upstream_call(
+            policy_decision, "mcp_server_timeout", "MCP server timed out."
+        )
+    except Exception:
+        return _failed_upstream_call(
+            policy_decision, "mcp_server_error", "MCP server call failed."
+        )
 
 
 def _audit_ref(saved: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -1347,6 +1421,35 @@ def _audit_ref(saved: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "call_id": saved.get("call_id") or "",
         "argument_hash": saved.get("argument_hash") or "",
     }
+
+
+def _failed_upstream_call(
+    policy_decision: Dict[str, Any],
+    error: str,
+    message: str,
+    upstream_error: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    audit = dict(policy_decision.get("audit_context") or {})
+    audit.update(
+        {
+            "action": "deny",
+            "matched_rule": "upstream_call_failed",
+            "reason": message,
+            "blocked_by": "upstream_call_failed",
+            "observed_error_class": error,
+            "scan_time_ms": _elapsed_ms(),
+        }
+    )
+    saved = db.log_mcp_audit_event(audit)
+    result = {
+        "ok": False,
+        "error": error,
+        "message": message,
+        "audit": _audit_ref(saved),
+    }
+    if upstream_error:
+        result["upstream_error"] = upstream_error
+    return result
 
 
 def _log_mcp_policy_audit(
