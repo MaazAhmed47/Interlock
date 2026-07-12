@@ -44,8 +44,9 @@ jobs:
       # tests/test_db.py and tests/test_mcp_db.py are script-style (module-level
       # asserts); pytest executes them at collection import, so an assertion
       # failure in either still fails this step.
+      # -ra prints the reason for every skip/xfail in the job log.
       - name: Run backend tests (entire tests/ directory)
-        run: python -m pytest tests/ -q
+        run: python -m pytest tests/ -q -ra
 
   dependency-audit:
     name: Dependency audit
