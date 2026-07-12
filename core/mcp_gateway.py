@@ -1087,10 +1087,10 @@ async def proxy_mcp_tool_call(
                     "upstream_invalid_envelope",
                     "MCP JSON-RPC response is missing a result.",
                 )
-            if not isinstance(data.get("result"), dict):
+            if not isinstance(data.get("result"), (dict, list)):
                 raise MCPUpstreamResponseError(
                     "upstream_invalid_envelope",
-                    "MCP JSON-RPC result must be an object.",
+                    "MCP JSON-RPC result must be an object or array.",
                 )
             if data.get("jsonrpc", "2.0") != "2.0":
                 raise MCPUpstreamResponseError(

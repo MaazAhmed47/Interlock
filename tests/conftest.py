@@ -1,8 +1,16 @@
 """Shared pytest safety checks."""
 
+import os
 import sys
 
 import pytest
+
+# Tests that exercise registration use reserved fake hosts and still pass
+# through the real allowlist guard. Keep this test-only; production defaults
+# remain fail-closed.
+os.environ.setdefault(
+    "MCP_REGISTRY_ALLOWED_HOSTS", "x,safe.example,genesys.example,example.test"
+)
 
 
 @pytest.fixture(autouse=True)
