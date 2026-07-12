@@ -110,26 +110,36 @@ response = client.chat.completions.create(
 
 To forward to the real provider, set `OPENAI_API_KEY` in `.env` before starting Interlock. If no upstream key is configured, Interlock still scans the prompt and returns a placeholder response that tells you which provider key is missing.
 
-## 5. Create A Fresh Evaluation Key
+## 5. Create Fresh Control-Plane And Runtime Keys
 
-Set `ADMIN_TOKEN` in `.env`, restart, then create a key:
+Set `ADMIN_TOKEN` in `.env`, restart, then create separate keys:
 
 ```bash
 curl -X POST http://localhost:8001/admin/keys \
   -H "x-admin-token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"plan":"developer","label":"cto-eval","fail_mode":"fail_open_safe"}'
+  -d '{"plan":"developer","label":"cto-eval-control","scopes":["admin"]}'
+
+curl -X POST http://localhost:8001/admin/keys \
+  -H "x-admin-token: $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"plan":"developer","label":"cto-eval-runtime","scopes":["mcp.call","mcp.read"],"role":"readonly_agent","fail_mode":"fail_open_safe"}'
 ```
 
-The response returns `raw_key` once. Store it in your secret manager and use it as `INTERLOCK_KEY`.
+Each response returns `raw_key` once. Store both in your secret manager. Set
+`INTERLOCK_ADMIN_KEY` to the control-plane key and `INTERLOCK_KEY` to the
+runtime key. Runtime keys receive HTTP 403 on register, verify, rebaseline,
+approve, quarantine, delete, and global MCP-audit routes. `/mcp/call` resolves
+`readonly_agent` from the runtime-key record; a request-body role is ignored.
 
 ## 6. Register An MCP Server Policy
 
 ```bash
-export INTERLOCK_KEY=<YOUR_INTERLOCK_API_KEY>
+export INTERLOCK_ADMIN_KEY=<YOUR_ADMIN_SCOPED_INTERLOCK_API_KEY>
+export INTERLOCK_KEY=<YOUR_RUNTIME_INTERLOCK_API_KEY>
 
 curl -X POST http://localhost:8001/mcp/servers \
-  -H "x-api-key: $INTERLOCK_KEY" \
+  -H "x-api-key: $INTERLOCK_ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{"server_id":"filesystem","url":"http://localhost:3000/mcp","description":"Local filesystem MCP server","allowed_tools":["read_file"],"blocked_tools":["delete_file"]}'
 ```

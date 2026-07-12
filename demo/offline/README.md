@@ -13,6 +13,8 @@ demo tools. Ordinary existing and newly issued API keys default to runtime-only
 operator key for MCP registry control-plane actions.
 The same key is bound server-side to `readonly_agent`; the demo no longer sends
 caller-selected roles in `/mcp/call` request bodies.
+This happens automatically during gateway startup, before the one-shot seeder
+runs. A first-time user does not mint a key or grant scopes manually.
 
 What it proves (and nothing more): the two **live-proven** drift classes.
 
