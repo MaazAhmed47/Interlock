@@ -310,6 +310,8 @@ class CreateKeyRequest(BaseModel):
     rate_per_min: Optional[int] = None
     custom_policy: Optional[Dict[str, Any]] = None
     siem_configs: Optional[List[Dict[str, Any]]] = None
+    scopes: Optional[List[str]] = Field(None, description="mcp.call | mcp.read | admin")
+    role: Optional[str] = Field(None, description="Server-bound MCP agent role")
 
 
 class UpdateKeyRequest(BaseModel):
@@ -323,6 +325,8 @@ class UpdateKeyRequest(BaseModel):
     siem_configs: Optional[List[Dict[str, Any]]] = None
     max_response_bytes: Optional[int] = None
     max_array_items: Optional[int] = None
+    scopes: Optional[List[str]] = None
+    role: Optional[str] = None
 
 
 class RetentionPolicyRequest(BaseModel):

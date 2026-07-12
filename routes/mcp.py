@@ -1,7 +1,7 @@
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
 import proxy
 from core import db
@@ -31,6 +31,9 @@ from models.schemas import (
 )
 
 router = APIRouter()
+control_plane_router = APIRouter(
+    dependencies=[Depends(proxy.require_api_scope("admin"))]
+)
 
 MAX_MCP_SERVER_LIMIT = 100
 MAX_MCP_TOOL_LIMIT = 500
@@ -117,7 +120,7 @@ async def mcp_list_servers(
     }
 
 
-@router.post("/mcp/servers")
+@control_plane_router.post("/mcp/servers")
 async def mcp_register(
     request: MCPRegisterRequest, x_api_key: Optional[str] = Header(None)
 ):
@@ -139,7 +142,7 @@ async def mcp_register(
     return result
 
 
-@router.post("/mcp/servers/{server_id}/verify")
+@control_plane_router.post("/mcp/servers/{server_id}/verify")
 async def mcp_verify_server(server_id: str, x_api_key: Optional[str] = Header(None)):
     """Mark a registered MCP server verified after manual operator review."""
     proxy.verify_key(x_api_key)
@@ -189,7 +192,7 @@ async def mcp_discover(
     return await discover_mcp_tools(request.server_url, server_id=request.server_id)
 
 
-@router.post("/mcp/servers/{server_id}/rebaseline")
+@control_plane_router.post("/mcp/servers/{server_id}/rebaseline")
 async def mcp_rebaseline_server(
     server_id: str,
     request: MCPRebaselineRequest,
@@ -255,7 +258,7 @@ async def mcp_drifted_tools(
     }
 
 
-@router.post("/mcp/tools/{server_id}/{tool_name}/approve")
+@control_plane_router.post("/mcp/tools/{server_id}/{tool_name}/approve")
 async def mcp_approve_tool_baseline(
     server_id: str,
     tool_name: str,
@@ -277,7 +280,7 @@ async def mcp_approve_tool_baseline(
     return {"ok": True, "tool": tool}
 
 
-@router.post("/mcp/tools/{server_id}/{tool_name}/quarantine")
+@control_plane_router.post("/mcp/tools/{server_id}/{tool_name}/quarantine")
 async def mcp_quarantine_tool(
     server_id: str,
     tool_name: str,
@@ -359,7 +362,7 @@ async def mcp_analyze_chain(
     return run_chain_analysis(payload)
 
 
-@router.get("/mcp/audit")
+@control_plane_router.get("/mcp/audit")
 async def mcp_audit(limit: int = 100, x_api_key: Optional[str] = Header(None)):
     """List recent MCP audit decisions."""
     proxy.verify_key(x_api_key)
@@ -404,7 +407,7 @@ async def mcp_call(
     )
 
 
-@router.delete("/mcp/servers/{server_id}")
+@control_plane_router.delete("/mcp/servers/{server_id}")
 async def mcp_unregister(server_id: str, x_api_key: Optional[str] = Header(None)):
     """Remove an MCP server from the registry."""
     proxy.verify_key(x_api_key)
