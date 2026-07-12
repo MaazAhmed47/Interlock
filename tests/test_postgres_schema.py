@@ -112,6 +112,10 @@ def test_postgres_init_runs_schema_instead_of_skipping(monkeypatch):
     assert any("information_schema.columns" in sql for sql in statements)
     assert not any("PRAGMA table_info" in sql for sql in statements)
     assert any("ALTER TABLE api_keys ADD COLUMN scopes" in sql for sql in statements)
+    assert any("ALTER TABLE api_keys ADD COLUMN role" in sql for sql in statements)
+    assert any(
+        "ALTER TABLE mcp_audit_log ADD COLUMN principal_id" in sql for sql in statements
+    )
 
 
 def test_database_url_is_stripped_when_loaded(monkeypatch):

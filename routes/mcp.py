@@ -402,7 +402,10 @@ async def mcp_call(
         server_id=request.server_id,
         tool_name=request.tool_name,
         arguments=request.arguments,
-        role=request.role,
+        # request.role is retained for wire compatibility but deliberately
+        # ignored. Authorization is bound to the authenticated key record.
+        role=key_info.get("role") or "readonly_agent",
+        principal_id=key_info.get("key_prefix") or str(key_info.get("id") or ""),
         api_key=raw_key,
     )
 

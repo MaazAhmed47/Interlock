@@ -637,6 +637,7 @@ async def proxy_mcp_tool_call(
     tool_name: str,
     arguments: dict,
     role: Optional[str] = None,
+    principal_id: str = "",
     api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -651,6 +652,7 @@ async def proxy_mcp_tool_call(
             server_id=server_id,
             tool_name=tool_name,
             role=role,
+            principal_id=principal_id,
             action="deny",
             matched_rule="untrusted_mcp_server",
             reason=f"MCP server '{server_id}' is not in the trusted registry.",
@@ -669,6 +671,7 @@ async def proxy_mcp_tool_call(
             server_id=server_id,
             tool_name=tool_name,
             role=role,
+            principal_id=principal_id,
             action="deny",
             matched_rule="unverified_mcp_server",
             reason=f"MCP server '{server_id}' is registered but not verified.",
@@ -694,6 +697,7 @@ async def proxy_mcp_tool_call(
             server_id=server_id,
             tool_name=tool_name,
             role=role,
+            principal_id=principal_id,
             action="deny",
             matched_rule="tool_blocked",
             reason=f"Tool '{tool_name}' is in the blocked list for server '{server_id}'.",
@@ -712,6 +716,7 @@ async def proxy_mcp_tool_call(
             server_id=server_id,
             tool_name=tool_name,
             role=role,
+            principal_id=principal_id,
             action="deny",
             matched_rule="tool_not_allowed",
             reason=f"Tool '{tool_name}' is not in the allowed list for server '{server_id}'.",
@@ -769,6 +774,7 @@ async def proxy_mcp_tool_call(
     policy_decision.setdefault("audit_context", {})["argument_hash"] = (
         drift_evidence.arguments_hash(arguments or {})
     )
+    policy_decision["audit_context"]["principal_id"] = principal_id
     _attach_drift_context(policy_decision, drift_context)
 
     if drift_context and (
@@ -883,6 +889,7 @@ async def proxy_mcp_tool_call(
                     reason=bound_violation,
                     arguments=arguments or {},
                     blocked_by="param_bounds",
+                    principal_id=principal_id,
                 )
                 return {
                     "ok": False,
@@ -914,6 +921,7 @@ async def proxy_mcp_tool_call(
                     reason=prov.reason,
                     arguments=arguments,
                     blocked_by="mcp04_policy",
+                    principal_id=principal_id,
                 )
                 return {
                     "ok": False,
@@ -1627,12 +1635,14 @@ def _log_mcp_gateway_audit(
     reason: str,
     arguments: dict,
     blocked_by: str,
+    principal_id: str = "",
 ) -> Dict[str, Any]:
     return db.log_mcp_audit_event(
         {
             "server_id": server_id,
             "tool_name": tool_name,
             "role": role or "unspecified",
+            "principal_id": principal_id,
             "action": action,
             "matched_rule": matched_rule,
             "reason": reason,

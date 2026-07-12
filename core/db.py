@@ -397,6 +397,7 @@ CREATE TABLE IF NOT EXISTS mcp_audit_log (
     ts                  TEXT    NOT NULL,
     server_id           TEXT    NOT NULL,
     tool_name           TEXT    NOT NULL,
+    principal_id        TEXT    NOT NULL DEFAULT '',
     role                TEXT    NOT NULL DEFAULT '',
     action              TEXT    NOT NULL,
     matched_rule        TEXT    NOT NULL DEFAULT '',
@@ -660,6 +661,9 @@ def init_db() -> None:
         _ensure_column(conn, "mcp_audit_log", "probe_id", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(
             conn, "mcp_audit_log", "argument_hash", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(
+            conn, "mcp_audit_log", "principal_id", "TEXT NOT NULL DEFAULT ''"
         )
         _ensure_column(
             conn, "mcp_audit_log", "expected_outcome", "TEXT NOT NULL DEFAULT ''"
@@ -3461,7 +3465,7 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
             conn,
             """
             INSERT INTO mcp_audit_log
-              (ts, server_id, tool_name, role, action, matched_rule, reason,
+              (ts, server_id, tool_name, principal_id, role, action, matched_rule, reason,
                effects, side_effect, data_classes, externality, verification_level,
                confidence, warnings, argument_keys, blocked_by, probe_id,
                argument_hash, expected_outcome, expected_status_code,
@@ -3469,12 +3473,13 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
                drift_status, drift_severity, drift_action, drift_types, drift_reasons,
                drift_baseline_hash, drift_current_hash,
                scan_time_ms, call_id, hash_v, prev_hash, integrity_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ts,
                 event.get("server_id", ""),
                 event.get("tool_name", ""),
+                event.get("principal_id", "") or "",
                 event.get("role", "") or "",
                 event.get("action", ""),
                 event.get("matched_rule", ""),

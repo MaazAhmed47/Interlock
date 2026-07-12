@@ -11,6 +11,8 @@ The fixed local demo key is seeded explicitly with `admin`, `mcp.call`, and
 demo tools. Ordinary existing and newly issued API keys default to runtime-only
 (`mcp.call`, `mcp.read`); deployments must explicitly grant `admin` to an
 operator key for MCP registry control-plane actions.
+The same key is bound server-side to `readonly_agent`; the demo no longer sends
+caller-selected roles in `/mcp/call` request bodies.
 
 What it proves (and nothing more): the two **live-proven** drift classes.
 

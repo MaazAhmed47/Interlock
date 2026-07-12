@@ -761,6 +761,11 @@ The non-live local/mock packs do not contact AWS/GCP/Azure, Terraform Cloud, Kub
 
 `POST /mcp/call` runs a different path from the prompt scan endpoint:
 
+MCP authorization is bound to the API-key record. Each key has explicit
+`scopes` and a server-side `role`; a `role` still sent in the request body is
+ignored for backward compatibility and has no effect on enforcement. Audit
+rows and Security Receipts identify the resolved key prefix and effective role.
+
 1. Verify API key and rate limit.
 2. Load registered MCP server and trust state.
 3. Enforce allowed/blocked tool rules.
