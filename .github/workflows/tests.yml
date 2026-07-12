@@ -40,31 +40,53 @@ jobs:
       - name: Compile backend
         run: python -m compileall proxy.py core routes models tests
 
-      - name: Run core backend tests
+      # Whole-directory run so new test files can never silently go unrun.
+      # tests/test_db.py and tests/test_mcp_db.py are script-style (module-level
+      # asserts); pytest executes them at collection import, so an assertion
+      # failure in either still fails this step.
+      - name: Run backend tests (entire tests/ directory)
+        run: python -m pytest tests/ -q
+
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies and pip-audit
         run: |
-          python tests/test_db.py
-          python tests/test_mcp_db.py
-          python -m pytest -q \
-            tests/test_admin_audit.py \
-            tests/test_admin_oidc.py \
-            tests/test_admin_rbac.py \
-            tests/test_judge_failmodes.py \
-            tests/test_llm_judge_no_key.py \
-            tests/test_mcp_drift.py \
-            tests/test_mcp_gateway.py \
-            tests/test_mcp_registry_audit.py \
-            tests/test_mcp_review_api.py \
-            tests/test_metadata_policy.py \
-            tests/test_new_routes.py \
-            tests/test_policy_db.py \
-            tests/test_postgres_schema.py \
-            tests/test_provenance.py \
-            tests/test_rate_limit.py \
-            tests/test_response_scanner.py \
-            tests/test_retention.py \
-            tests/test_shadow_scanner.py \
-            tests/test_tool_metadata.py \
-            tests/test_webhook_fix.py
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pip-audit
+
+      # Report-only for now: the pinned idna/PyJWT/pytest versions have known
+      # advisories (see PR that introduced this step). Remove
+      # continue-on-error once those pins are bumped, so new advisories block.
+      - name: Audit dependencies (pip-audit, report-only)
+        continue-on-error: true
+        run: pip-audit --progress-spinner off
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Scans the commits introduced by the push/PR. Known historical findings
+      # (all triaged as demo/test placeholder values) do not re-trigger.
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
 
   frontend:
     name: Dashboard build
