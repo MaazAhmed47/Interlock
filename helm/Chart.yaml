@@ -2,8 +2,8 @@ apiVersion: v2
 name: interlock
 description: Runtime security gateway for AI agents — stop prompt injections, jailbreaks, PII leaks, and tool-call abuse before they reach your LLM
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0-alpha.1
+appVersion: "0.2.0-alpha.1"
 icon: https://raw.githubusercontent.com/MaazAhmed47/Interlock/main/docs/assets/interlock-icon.svg
 keywords:
   - ai

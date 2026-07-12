@@ -166,7 +166,7 @@ def build_splunk_event(result: ScanResult, api_key_prefix: str) -> dict:
 def build_elastic_event(result: ScanResult, api_key_prefix: str) -> dict:
     return {
         "@timestamp": datetime.now(timezone.utc).isoformat(),
-        "service": {"name": "interlock", "version": "0.1.0"},
+        "service": {"name": "interlock", "version": "0.2.0-alpha.1"},
         "event": {
             "category": "intrusion_detection",
             "type": "denied" if result.is_threat else "allowed",
