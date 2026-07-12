@@ -3,6 +3,7 @@ import asyncio
 import logging
 from models.schemas import ScanResult
 from typing import Optional
+from core.outbound_events import alert_reason, prompt_evidence
 
 logger = logging.getLogger("interlock.webhook")
 
@@ -26,49 +27,45 @@ def _resolve_webhook_url(api_key: str) -> Optional[str]:
 
 def _build_payload(result: ScanResult) -> dict:
     """Slack-compatible payload (also works for generic webhooks)."""
+    evidence = prompt_evidence(result)
+    fields = [
+        {
+            "title": "Threat Level",
+            "value": result.threat_level.value,
+            "short": True,
+        },
+        {"title": "Type", "value": result.threat_type or "Unknown", "short": True},
+        {"title": "Confidence", "value": str(result.confidence), "short": True},
+        {"title": "Layer", "value": result.layer_caught or "Unknown", "short": True},
+        {
+            "title": "Risk Score",
+            "value": str(result.risk_score or "N/A"),
+            "short": True,
+        },
+        {
+            "title": "Scan Time",
+            "value": f"{result.scan_time_ms or 0} ms",
+            "short": True,
+        },
+        {"title": "Reason", "value": alert_reason(result), "short": False},
+        {"title": "Prompt SHA-256", "value": evidence["prompt_sha256"], "short": False},
+        {
+            "title": "Prompt bytes",
+            "value": str(evidence["prompt_length_bytes"]),
+            "short": True,
+        },
+    ]
+    if evidence.get("prompt_preview") is not None:
+        fields.append(
+            {"title": "Prompt", "value": evidence["prompt_preview"], "short": False}
+        )
+
     return {
         "text": "🚨 *Interlock Alert*",
         "attachments": [
             {
                 "color": "#ff4757",
-                "fields": [
-                    {
-                        "title": "Threat Level",
-                        "value": result.threat_level.value,
-                        "short": True,
-                    },
-                    {
-                        "title": "Type",
-                        "value": result.threat_type or "Unknown",
-                        "short": True,
-                    },
-                    {
-                        "title": "Confidence",
-                        "value": str(result.confidence),
-                        "short": True,
-                    },
-                    {
-                        "title": "Layer",
-                        "value": result.layer_caught or "Unknown",
-                        "short": True,
-                    },
-                    {
-                        "title": "Risk Score",
-                        "value": str(result.risk_score or "N/A"),
-                        "short": True,
-                    },
-                    {
-                        "title": "Scan Time",
-                        "value": f"{result.scan_time_ms or 0} ms",
-                        "short": True,
-                    },
-                    {"title": "Reason", "value": result.reason, "short": False},
-                    {
-                        "title": "Prompt",
-                        "value": (result.original_prompt or "")[:200],
-                        "short": False,
-                    },
-                ],
+                "fields": fields,
             }
         ],
     }
