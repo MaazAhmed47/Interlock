@@ -24,7 +24,10 @@ _tmp_db = tempfile.mktemp(suffix="_effect_readback_runtime_test.db")
 
 
 @pytest.fixture(autouse=True)
-def isolated_db():
+def isolated_db(monkeypatch):
+    # The registry allowlist rejects unknown external hosts; permit the
+    # fixture host explicitly, the same way test_hosted_safety.py does.
+    monkeypatch.setenv("MCP_REGISTRY_ALLOWED_HOSTS", "safe.example")
     db.DB_PATH = _tmp_db
     for suffix in ("", "-wal", "-shm"):
         try:
