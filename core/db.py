@@ -875,6 +875,50 @@ def _is_postgres_conn(conn) -> bool:
     return isinstance(conn, _PostgresConn)
 
 
+def _audit_chain_lock_key(table: str) -> int:
+    """
+    Stable signed-64-bit advisory-lock key for one audit hash chain.
+
+    Derived from the chain (table) name only, so every replica computes the
+    same key, and distinct per table so the two chains never serialize each
+    other.
+    """
+    digest = hashlib.sha256(f"interlock:audit-chain:{table}".encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+@contextmanager
+def _serialized_chain_append(conn, table: str):
+    """
+    Serialize a read-tip-then-insert append to one audit hash chain.
+
+    Both audit chains are globally scoped — one chain per table, tip = the row
+    with the highest id — so appends must be serialized per table. The
+    process-local _db_lock cannot do that across replicas sharing one
+    Postgres: two replicas can read the same tip and both insert a row
+    committing to it, forking the chain. On Postgres, take a
+    transaction-scoped advisory lock keyed on the chain inside one explicit
+    transaction, so exactly one append can extend each tip; the lock releases
+    automatically at COMMIT/ROLLBACK. On SQLite the guard is a no-op: _db_lock
+    (held by callers) plus the single-writer database already serialize
+    appends.
+    """
+    if not _is_postgres_conn(conn):
+        yield
+        return
+    conn.execute("BEGIN")
+    try:
+        conn.execute("SELECT pg_advisory_xact_lock(?)", (_audit_chain_lock_key(table),))
+        yield
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            logger.exception("Failed to roll back %s chain append", table)
+        raise
+    conn.execute("COMMIT")
+
+
 def _validate_identifier(value: str) -> None:
     if not _IDENTIFIER_RE.match(value or ""):
         raise ValueError(f"Unsafe SQL identifier: {value!r}")
@@ -1358,7 +1402,11 @@ def log_admin_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
     """Persist an auditable admin control-plane action."""
     now = event.get("ts") or datetime.now(timezone.utc).isoformat()
     details = _json_dumps_object(event.get("details") or {})
-    with _db_lock, get_conn() as conn:
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _serialized_chain_append(conn, "admin_audit_log"),
+    ):
         row = conn.execute(
             "SELECT integrity_hash FROM admin_audit_log ORDER BY id DESC LIMIT 1"
         ).fetchone()
@@ -3443,7 +3491,11 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
     event = event or {}
     ts = event.get("ts") or datetime.now(timezone.utc).isoformat()
     call_id = str(event.get("call_id") or "") or uuid.uuid4().hex
-    with _db_lock, get_conn() as conn:
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _serialized_chain_append(conn, "mcp_audit_log"),
+    ):
         row = conn.execute(
             "SELECT integrity_hash FROM mcp_audit_log ORDER BY id DESC LIMIT 1"
         ).fetchone()
