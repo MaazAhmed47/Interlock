@@ -7,7 +7,7 @@ image:
   # Local image name only; this chart does not claim a published public image.
   # Override with your own registry after building and pushing Interlock.
   repository: interlock
-  tag: "0.1.0"
+  tag: "0.2.0-alpha.1"
   pullPolicy: IfNotPresent
   pullSecrets: []
 

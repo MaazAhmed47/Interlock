@@ -46,6 +46,8 @@ deliberate: see `ROADMAP.md` for what is proven versus still missing.
 - README and positioning centered on MCP drift detection; overclaims
   removed; stale test counts corrected.
 - Starlette upgraded to 1.3.1.
+- Release metadata aligned on `0.2.0-alpha.1` across Python, dashboard,
+  FastAPI, SIEM event, and Helm chart metadata.
 
 ### Fixed
 
@@ -79,6 +81,19 @@ deliberate: see `ROADMAP.md` for what is proven versus still missing.
 - Description-injection exfiltration drift blocked: tool descriptions that
   instruct agents to send data to external destinations are flagged as
   drift.
+- MCP control-plane and data-plane authorization split: server registration,
+  verification, rebaseline, approval, quarantine, unregister, and the global
+  MCP audit require an API key with `admin` scope; runtime-only keys receive
+  HTTP 403 on those routes.
+- MCP tool-call roles are resolved from the authenticated API key; a
+  caller-supplied request-body role is ignored. The authenticated principal
+  and resolved role are recorded in MCP audit rows and Security Receipts.
+- Upstream tool-call responses validate HTTP status, JSON-RPC errors, and
+  result-envelope shape so upstream failures cannot surface as successful
+  calls.
+- SIEM and webhook content is redacted by default; content previews require
+  the explicit `SIEM_INCLUDE_CONTENT=true` opt-in.
+- PyJWT upgraded to 2.13.0 and idna to 3.15 for the reported pip-audit CVEs.
 
 ## [0.1.0] - 2026-05-30
 
