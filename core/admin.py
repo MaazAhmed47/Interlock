@@ -765,25 +765,24 @@ def review_shadow_server(
         ).rowcount
         if not ok:
             raise HTTPException(status_code=404, detail="Shadow server not found")
-        try:
-            conn.execute(
-                "INSERT INTO mcp_audit_log "
-                "(ts, server_id, tool_name, role, action, matched_rule, reason, confidence, blocked_by) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
-                (
-                    now,
-                    server_id,
-                    "",
-                    context.role,
-                    "shadow_reviewed",
-                    "operator_action",
-                    req.notes or req.status,
-                    1.0,
-                    context.label,
-                ),
-            )
-        except Exception:
-            logger.exception("Failed to write shadow_reviewed audit log")
+    try:
+        # Route through the single chained writer: a direct INSERT would land
+        # without prev_hash/integrity_hash and poison the audit hash chain.
+        db.log_mcp_audit_event(
+            {
+                "ts": now,
+                "server_id": str(server_id),
+                "tool_name": "",
+                "role": context.role,
+                "action": "shadow_reviewed",
+                "matched_rule": "operator_action",
+                "reason": req.notes or req.status,
+                "confidence": 1.0,
+                "blocked_by": context.label,
+            }
+        )
+    except Exception:
+        logger.exception("Failed to write shadow_reviewed audit log")
     _audit_admin_action(
         context,
         "shadow_server.reviewed",
