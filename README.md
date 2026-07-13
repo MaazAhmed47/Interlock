@@ -4,6 +4,7 @@
 
 [![CI](https://github.com/MaazAhmed47/Interlock/actions/workflows/tests.yml/badge.svg)](https://github.com/MaazAhmed47/Interlock/actions)
 [![Quality](https://img.shields.io/badge/quality-ruff%20%7C%20black%20%7C%20mypy%20%7C%20tests-green)](https://github.com/MaazAhmed47/Interlock/actions)
+[![Version](https://img.shields.io/badge/version-0.1.0-blue)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 Interlock is a self-hosted MCP runtime trust layer for AI agents.
@@ -133,7 +134,8 @@ For any hosted MCP endpoint that requires bearer or API-key auth, store the toke
 HOSTED_MCP_TOKEN=<YOUR_NON_PRODUCTION_MCP_TOKEN>
 ```
 
-Register the server with the environment variable name only:
+Register the server with an admin-scoped Interlock API key, passing the
+upstream credential's environment-variable name only:
 
 ```json
 {
@@ -217,7 +219,11 @@ Interlock's wedge is MCP tool drift detection, but the gateway also includes sup
 * **API key enforcement** — protect runtime APIs and the `/ws` real-time scan feed.
 * **Tamper-evident audit logs** — record allow, deny, monitor, and quarantine decisions with hash-chain verification.
 * **Security Receipts** — preserve evidence for drift, policy, and quarantine decisions.
-* **Webhook/SIEM-ready scan alerts** — Scan alerts can be routed to Datadog, Splunk, Elastic, Slack, PagerDuty, or webhook. Broader audit-event routing is roadmap.
+* **Webhook/SIEM-ready scan alerts** — Scan alerts can be routed to Datadog,
+  Splunk, Elastic, Slack, PagerDuty, or webhook. Raw prompt/reason previews are
+  off by default; destinations receive hashes and lengths unless the deployment
+  explicitly sets `SIEM_INCLUDE_CONTENT=true`. Broader audit-event routing is
+  roadmap.
 
 ---
 
@@ -361,7 +367,9 @@ client = OpenAI(
 
 Provider keys such as `OPENAI_API_KEY` stay on the Interlock gateway host. The application only needs an Interlock key and a `base_url` change.
 
-For MCP tool execution, use the full path below because Interlock also needs a `server_id`, agent `role`, allowed/blocked tools, and audit policy.
+For MCP tool execution, use the full path below because Interlock also needs a
+`server_id`, a server-bound role on the runtime API key, allowed/blocked tools,
+and audit policy. A `role` sent in an `/mcp/call` body is ignored.
 
 ---
 
@@ -428,12 +436,23 @@ curl -X POST http://localhost:8001/admin/tokens \
   -H "Content-Type: application/json" \
   -d '{"label":"local-operator","role":"operator"}'
 
-# Set ADMIN_SCOPED_TOKEN to the raw_token returned above.
+# Set ADMIN_SCOPED_TOKEN to the raw_token returned above, then mint separate
+# control-plane and runtime keys.
 curl -X POST http://localhost:8001/admin/keys \
   -H "x-admin-token: $ADMIN_SCOPED_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"plan":"developer","label":"local-eval","fail_mode":"fail_open_safe"}'
+  -d '{"plan":"developer","label":"local-control-plane","scopes":["admin"]}'
+
+curl -X POST http://localhost:8001/admin/keys \
+  -H "x-admin-token: $ADMIN_SCOPED_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"plan":"developer","label":"local-runtime","scopes":["mcp.call","mcp.read"],"role":"readonly_agent","fail_mode":"fail_open_safe"}'
 ```
+
+Set `INTERLOCK_ADMIN_KEY` to the first `raw_key` and `INTERLOCK_KEY` to the
+second. Runtime keys intentionally receive HTTP 403 on MCP control-plane
+routes: register, verify, rebaseline, approve, quarantine, unregister, and
+global audit listing.
 
 ### 5. Try the MCP gateway path
 
@@ -441,7 +460,7 @@ Register a server policy and inspect the inventory:
 
 ```bash
 curl -X POST http://localhost:8001/mcp/servers \
-  -H "x-api-key: $INTERLOCK_KEY" \
+  -H "x-api-key: $INTERLOCK_ADMIN_KEY" \
   -H "Content-Type: application/json" \
   -d '{"server_id":"filesystem","url":"http://localhost:3000/mcp","allowed_tools":["read_file"],"blocked_tools":["delete_file"]}'
 
@@ -466,7 +485,9 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173/dashboard`, set the API base URL to `http://localhost:8001`, save your Interlock key, and verify scan, MCP inventory, and audit views.
+Open `http://localhost:5173/dashboard` and set the API base URL to
+`http://localhost:8001`. Use a runtime key for agent traffic; registry changes
+and the global MCP audit view require an admin-scoped API key.
 
 Optional admin SSO: configure OIDC in Settings, use a public SPA client with PKCE, then sign in at `/dashboard/login` to view the Admin Audit tab. The backend must be configured with matching `OIDC_ISSUER`, `OIDC_AUDIENCE`, `OIDC_JWKS_URL`, and group-to-role mapping.
 
@@ -761,6 +782,11 @@ The non-live local/mock packs do not contact AWS/GCP/Azure, Terraform Cloud, Kub
 
 `POST /mcp/call` runs a different path from the prompt scan endpoint:
 
+MCP authorization is bound to the API-key record. Each key has explicit
+`scopes` and a server-side `role`; a `role` still sent in the request body is
+ignored for backward compatibility and has no effect on enforcement. Audit
+rows and Security Receipts identify the resolved key prefix and effective role.
+
 1. Verify API key and rate limit.
 2. Load registered MCP server and trust state.
 3. Enforce allowed/blocked tool rules.
@@ -962,14 +988,17 @@ Expected: risky metadata/effect warnings and a validation decision.
 | `POST /scan/output` | Output data-leak scan path. |
 | `POST /inspect/tool-call` | Tool argument inspection plus optional role RBAC. |
 | `POST /mcp/validate-tool` | Validate an MCP tool definition. |
-| `POST /mcp/servers` | Register an MCP server. |
+| `POST /mcp/servers` | Register an MCP server (`admin` API-key scope). |
 | `GET /mcp/servers` | List registered MCP servers. |
 | `POST /mcp/discover` | Discover and validate tools from an MCP server. |
 | `GET /mcp/tools` | List persisted MCP tool metadata. |
 | `GET /mcp/tools/drifted` | List changed or quarantined MCP tools. |
-| `POST /mcp/tools/{server_id}/{tool_name}/approve` | Approve current tool definition as baseline. |
-| `POST /mcp/tools/{server_id}/{tool_name}/quarantine` | Keep or mark a tool quarantined. |
-| `GET /mcp/audit` | List recent MCP audit events. |
+| `POST /mcp/servers/{server_id}/verify` | Verify a registered server (`admin` API-key scope). |
+| `POST /mcp/servers/{server_id}/rebaseline` | Clear and rediscover a baseline (`admin` API-key scope). |
+| `DELETE /mcp/servers/{server_id}` | Unregister a server (`admin` API-key scope). |
+| `POST /mcp/tools/{server_id}/{tool_name}/approve` | Approve current tool definition (`admin` API-key scope). |
+| `POST /mcp/tools/{server_id}/{tool_name}/quarantine` | Quarantine a tool (`admin` API-key scope). |
+| `GET /mcp/audit` | List global MCP audit events (`admin` API-key scope). |
 | `GET /admin/audit/verify` | Verify audit-log hash-chain integrity (admin token). |
 | `POST /mcp/call` | Proxy an MCP tool call through Interlock. |
 | `GET /admin/mcp/provenance-policy` | Read provenance policy. |

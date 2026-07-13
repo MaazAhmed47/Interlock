@@ -6,7 +6,7 @@ from typing import Optional
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, WebSocketDisconnect  # noqa: F401
+from fastapi import FastAPI, Header, HTTPException, WebSocketDisconnect  # noqa: F401
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -191,6 +191,22 @@ def verify_key(api_key: Optional[str]):
     return record, raw
 
 
+def require_api_scope(required_scope: str):
+    """Build one FastAPI dependency for API-key capability enforcement."""
+
+    def dependency(x_api_key: Optional[str] = Header(None)):
+        record, raw = verify_key(x_api_key)
+        scopes = set(record.get("scopes") or [])
+        if required_scope not in scopes:
+            raise HTTPException(
+                status_code=403,
+                detail=f"API key lacks required scope: {required_scope}",
+            )
+        return record, raw
+
+    return dependency
+
+
 # WARNING: In-memory rate limiting. Does not work across multiple
 # workers or pods. Run with --workers 1 (default in Dockerfile)
 # or deploy Redis and swap this for a Redis-backed counter.
@@ -348,6 +364,7 @@ app.include_router(system_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(chat_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(scan_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(mcp_routes.router)  # type: ignore[attr-defined,has-type]
+app.include_router(mcp_routes.control_plane_router)  # type: ignore[attr-defined,has-type]
 app.include_router(audit_routes.router)  # type: ignore[attr-defined,has-type]
 app.openapi = custom_openapi  # type: ignore[method-assign]
 

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, List
 from models.schemas import ScanResult
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
+from core.outbound_events import alert_reason, prompt_evidence
 
 # ── SIEM Provider Configurations ──────────────────────────────────────────────
 SIEM_PROVIDERS: dict[str, dict[str, Any]] = {
@@ -121,7 +122,7 @@ def build_datadog_event(
         "hostname": "interlock",
         "service": "interlock",
         "status": sev["datadog"],
-        "message": f"[{result.threat_level.value}] {result.threat_type or 'SCAN'}: {result.reason[:200]}",
+        "message": f"[{result.threat_level.value}] {result.threat_type or 'SCAN'}: {alert_reason(result, 200)}",
         "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
         "attributes": {
             "is_threat": result.is_threat,
@@ -132,7 +133,7 @@ def build_datadog_event(
             "layer_caught": result.layer_caught,
             "scan_time_ms": result.scan_time_ms,
             "api_key_prefix": api_key_prefix,
-            "prompt_preview": (result.original_prompt or "")[:200],
+            **prompt_evidence(result),
         },
     }
 
@@ -151,13 +152,13 @@ def build_splunk_event(result: ScanResult, api_key_prefix: str) -> dict:
             "is_threat": result.is_threat,
             "threat_level": result.threat_level.value,
             "threat_type": result.threat_type,
-            "reason": result.reason,
+            "reason": alert_reason(result),
             "confidence": result.confidence,
             "risk_score": getattr(result, "risk_score", None),
             "layer_caught": result.layer_caught,
             "scan_time_ms": result.scan_time_ms,
             "api_key_prefix": api_key_prefix,
-            "prompt_preview": (result.original_prompt or "")[:200],
+            **prompt_evidence(result),
         },
     }
 
@@ -165,7 +166,7 @@ def build_splunk_event(result: ScanResult, api_key_prefix: str) -> dict:
 def build_elastic_event(result: ScanResult, api_key_prefix: str) -> dict:
     return {
         "@timestamp": datetime.now(timezone.utc).isoformat(),
-        "service": {"name": "interlock", "version": "1.0.0"},
+        "service": {"name": "interlock", "version": "0.1.0"},
         "event": {
             "category": "intrusion_detection",
             "type": "denied" if result.is_threat else "allowed",
@@ -183,13 +184,13 @@ def build_elastic_event(result: ScanResult, api_key_prefix: str) -> dict:
             "is_threat": result.is_threat,
             "threat_level": result.threat_level.value,
             "threat_type": result.threat_type,
-            "reason": result.reason,
+            "reason": alert_reason(result),
             "confidence": result.confidence,
             "risk_score": getattr(result, "risk_score", None),
             "layer_caught": result.layer_caught,
             "scan_time_ms": result.scan_time_ms,
             "api_key_prefix": api_key_prefix,
-            "prompt_preview": (result.original_prompt or "")[:200],
+            **prompt_evidence(result),
         },
     }
 
@@ -211,47 +212,58 @@ def build_slack_event(result: ScanResult, api_key_prefix: str) -> dict:
         "SAFE": ":white_check_mark:",
     }.get(result.threat_level.value, ":question:")
 
+    evidence = prompt_evidence(result)
+    fields = [
+        {
+            "title": "Threat Type",
+            "value": result.threat_type or "Unknown",
+            "short": True,
+        },
+        {
+            "title": "Risk Score",
+            "value": f"{getattr(result, 'risk_score', 0)}/100",
+            "short": True,
+        },
+        {
+            "title": "Confidence",
+            "value": f"{int((result.confidence or 0)*100)}%",
+            "short": True,
+        },
+        {
+            "title": "Layer Caught",
+            "value": result.layer_caught or "Unknown",
+            "short": True,
+        },
+        {"title": "Reason", "value": alert_reason(result), "short": False},
+        {"title": "Prompt SHA-256", "value": evidence["prompt_sha256"], "short": False},
+        {
+            "title": "Prompt bytes",
+            "value": str(evidence["prompt_length_bytes"]),
+            "short": True,
+        },
+        {"title": "API Key", "value": api_key_prefix, "short": True},
+        {
+            "title": "Time",
+            "value": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "short": True,
+        },
+    ]
+    if evidence.get("prompt_preview") is not None:
+        fields.insert(
+            5,
+            {
+                "title": "Prompt",
+                "value": f"```{evidence['prompt_preview']}```",
+                "short": False,
+            },
+        )
+
     return {
         "text": f"{emoji} *Interlock Alert — {result.threat_level.value}*",
         "attachments": [
             {
                 "color": color,
-                "fields": [
-                    {
-                        "title": "Threat Type",
-                        "value": result.threat_type or "Unknown",
-                        "short": True,
-                    },
-                    {
-                        "title": "Risk Score",
-                        "value": f"{getattr(result, 'risk_score', 0)}/100",
-                        "short": True,
-                    },
-                    {
-                        "title": "Confidence",
-                        "value": f"{int((result.confidence or 0)*100)}%",
-                        "short": True,
-                    },
-                    {
-                        "title": "Layer Caught",
-                        "value": result.layer_caught or "Unknown",
-                        "short": True,
-                    },
-                    {"title": "Reason", "value": result.reason[:300], "short": False},
-                    {
-                        "title": "Prompt",
-                        "value": f"```{(result.original_prompt or '')[:200]}```",
-                        "short": False,
-                    },
-                    {"title": "API Key", "value": api_key_prefix, "short": True},
-                    {
-                        "title": "Time",
-                        "value": datetime.now(timezone.utc).strftime(
-                            "%Y-%m-%d %H:%M:%S UTC"
-                        ),
-                        "short": True,
-                    },
-                ],
+                "fields": fields,
                 "footer": "Interlock",
                 "ts": int(datetime.now(timezone.utc).timestamp()),
             }
@@ -272,9 +284,9 @@ def build_pagerduty_event(
     return {
         "routing_key": integration_key,
         "event_action": "trigger",
-        "dedup_key": f"llm-fw-{result.threat_type}-{api_key_prefix}",
+        "dedup_key": f"interlock-{result.threat_type}-{api_key_prefix}",
         "payload": {
-            "summary": f"[{result.threat_level.value}] {result.threat_type}: {result.reason[:120]}",
+            "summary": f"[{result.threat_level.value}] {result.threat_type}: {alert_reason(result, 120)}",
             "severity": sev_map.get(result.threat_level.value, "warning"),
             "source": "interlock",
             "component": "ai-security",
@@ -287,7 +299,7 @@ def build_pagerduty_event(
                 "risk_score": getattr(result, "risk_score", None),
                 "layer_caught": result.layer_caught,
                 "api_key_prefix": api_key_prefix,
-                "prompt_preview": (result.original_prompt or "")[:200],
+                **prompt_evidence(result),
             },
         },
     }
@@ -408,18 +420,7 @@ async def send_to_siem(
                 }
 
         elif provider == "webhook":
-            payload = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "is_threat": result.is_threat,
-                "threat_level": result.threat_level.value,
-                "threat_type": result.threat_type,
-                "reason": result.reason,
-                "confidence": result.confidence,
-                "risk_score": getattr(result, "risk_score", None),
-                "layer_caught": result.layer_caught,
-                "api_key_prefix": api_key_prefix,
-                "prompt_preview": (result.original_prompt or "")[:200],
-            }
+            payload = build_webhook_event(result, api_key_prefix)
             headers = config.get("headers", {})
             async with httpx.AsyncClient(timeout=5.0) as client:
                 url = ensure_safe_outbound_url(config["url"], context="Webhook SIEM")
@@ -446,6 +447,21 @@ async def send_to_siem(
         return {"provider": provider, "ok": False, "error": "connection_failed"}
     except Exception as e:
         return {"provider": provider, "ok": False, "error": str(e)[:200]}
+
+
+def build_webhook_event(result: ScanResult, api_key_prefix: str) -> dict:
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "is_threat": result.is_threat,
+        "threat_level": result.threat_level.value,
+        "threat_type": result.threat_type,
+        "reason": alert_reason(result),
+        "confidence": result.confidence,
+        "risk_score": getattr(result, "risk_score", None),
+        "layer_caught": result.layer_caught,
+        "api_key_prefix": api_key_prefix,
+        **prompt_evidence(result),
+    }
 
 
 # ── Main Dispatcher ───────────────────────────────────────────────────────────
@@ -491,10 +507,12 @@ def trigger_siem_dispatch(result: ScanResult, api_key: str, siem_configs: List[d
     if not siem_configs:
         return
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.create_task(dispatch_to_siems(result, api_key, siem_configs))
-        else:
-            loop.run_until_complete(dispatch_to_siems(result, api_key, siem_configs))
+        loop = asyncio.get_running_loop()
+        loop.create_task(dispatch_to_siems(result, api_key, siem_configs))
+    except RuntimeError:
+        try:
+            asyncio.run(dispatch_to_siems(result, api_key, siem_configs))
+        except Exception:
+            pass
     except Exception:
-        pass  # Never let SIEM failures break the firewall
+        pass  # Never let SIEM failures break the scan path

@@ -325,7 +325,6 @@ class Demo:
                 "server_id": server_id,
                 "tool_name": "read_document",
                 "arguments": {"doc_id": "q3-report", "email": "attacker@example.com"},
-                "role": "readonly_agent",
             },
         )
         if (outcome or {}).get("error") != "tool_quarantined":
@@ -388,7 +387,6 @@ class Demo:
                 "server_id": server_id,
                 "tool_name": "list_documents",
                 "arguments": {},
-                "role": "readonly_agent",
             },
         )
         if not (control or {}).get("ok"):
@@ -506,7 +504,6 @@ class Demo:
                 "server_id": server_id,
                 "tool_name": "update_record",
                 "arguments": {"record_id": "cust-042", "fields": {"tier": "vip"}},
-                "role": "support_agent",
             },
         )
         if (outcome or {}).get("error") != "tool_quarantined":

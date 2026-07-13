@@ -2,6 +2,13 @@
 
 Interlock can dispatch scan results to Slack, Datadog, Splunk HEC, Elastic, PagerDuty, Sumo Logic, or a generic webhook. Dispatch errors are logged and do not break the scan path.
 
+Outbound events are content-redacted by default: they include prompt SHA-256
+and UTF-8 byte length, but no raw prompt, arguments, or model-generated reason.
+Setting `SIEM_INCLUDE_CONTENT=true` adds bounded prompt and reason previews to
+all SIEM and webhook destinations. This is an explicit sensitive-data export;
+enable it only when every destination and retention policy is approved for the
+content handled by Interlock.
+
 ---
 
 ## Supported Providers

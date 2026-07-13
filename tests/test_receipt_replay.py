@@ -46,6 +46,20 @@ def seeded_db():
     db.DB_PATH = TEST_DB
     db.init_db()
     yield
+    for server_id in ("binding-docs", "binding-crm"):
+        db.unregister_mcp_server(server_id)
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.unlink(TEST_DB + suffix)
+        except OSError:
+            pass
+
+
+@pytest.fixture(autouse=True)
+def cleanup_binding_servers():
+    yield
+    for server_id in ("binding-docs", "binding-crm"):
+        db.unregister_mcp_server(server_id)
 
 
 def _log_event(**overrides):

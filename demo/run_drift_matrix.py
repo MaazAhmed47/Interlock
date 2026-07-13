@@ -64,15 +64,20 @@ class _Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("content-length") or 0)
         raw = self.rfile.read(n) if n else b""
         method = "tools/list"
+        request_id = None
         try:
-            method = json.loads(raw or b"{}").get("method") or method
+            request = json.loads(raw or b"{}")
+            method = request.get("method") or method
+            request_id = request.get("id")
         except Exception:
             pass
         if method == "tools/call":
             result = {"content": [{"type": "text", "text": "ok"}], "isError": False}
         else:
             result = {"tools": _Mock.tools}
-        body = json.dumps({"jsonrpc": "2.0", "id": 1, "result": result}).encode()
+        body = json.dumps(
+            {"jsonrpc": "2.0", "id": request_id, "result": result}
+        ).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))

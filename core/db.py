@@ -313,6 +313,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
     custom_policy   TEXT,                        -- JSON {blocked_keywords, max_prompt_length}
     siem_configs    TEXT,                        -- JSON list of SIEM provider configs
     upstream_key    TEXT,                        -- if customer wants us to forward their LLM key
+    scopes          TEXT    NOT NULL DEFAULT '["mcp.call","mcp.read"]',
+    role            TEXT    NOT NULL DEFAULT 'readonly_agent',
     is_active       INTEGER NOT NULL DEFAULT 1,
     created_at      TEXT    NOT NULL,
     revoked_at      TEXT
@@ -395,6 +397,7 @@ CREATE TABLE IF NOT EXISTS mcp_audit_log (
     ts                  TEXT    NOT NULL,
     server_id           TEXT    NOT NULL,
     tool_name           TEXT    NOT NULL,
+    principal_id        TEXT    NOT NULL DEFAULT '',
     role                TEXT    NOT NULL DEFAULT '',
     action              TEXT    NOT NULL,
     matched_rule        TEXT    NOT NULL DEFAULT '',
@@ -660,6 +663,9 @@ def init_db() -> None:
             conn, "mcp_audit_log", "argument_hash", "TEXT NOT NULL DEFAULT ''"
         )
         _ensure_column(
+            conn, "mcp_audit_log", "principal_id", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(
             conn, "mcp_audit_log", "expected_outcome", "TEXT NOT NULL DEFAULT ''"
         )
         _ensure_column(conn, "mcp_audit_log", "expected_status_code", "INTEGER")
@@ -675,6 +681,17 @@ def init_db() -> None:
         )
         _ensure_column(conn, "api_keys", "max_response_bytes", "INTEGER DEFAULT 50000")
         _ensure_column(conn, "api_keys", "max_array_items", "INTEGER DEFAULT 500")
+        # Existing keys migrate to runtime-only. Grandfathering them as admin
+        # would preserve the control-plane privilege this migration closes.
+        _ensure_column(
+            conn,
+            "api_keys",
+            "scopes",
+            'TEXT NOT NULL DEFAULT \'["mcp.call","mcp.read"]\'',
+        )
+        _ensure_column(
+            conn, "api_keys", "role", "TEXT NOT NULL DEFAULT 'readonly_agent'"
+        )
         _ensure_column(conn, "mcp_servers", "auth_type", "TEXT NOT NULL DEFAULT 'none'")
         _ensure_column(conn, "mcp_servers", "auth_header", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(
@@ -731,12 +748,14 @@ def _hash_key(raw: str) -> str:
 def _row_to_dict(row) -> Dict[str, Any]:
     d = dict(row)
     # Decode JSON columns
-    for col in ("custom_policy", "siem_configs"):
+    for col in ("custom_policy", "siem_configs", "scopes"):
         if d.get(col):
             try:
                 d[col] = json.loads(d[col])
             except (json.JSONDecodeError, TypeError):
-                d[col] = None
+                d[col] = [] if col == "scopes" else None
+    if not isinstance(d.get("scopes"), list):
+        d["scopes"] = []
     return d
 
 
@@ -1018,6 +1037,42 @@ ADMIN_ROLE_DEFAULTS = {
 
 
 # ── Key generation ───────────────────────────────────────────────────────────
+API_KEY_SCOPES = {"mcp.call", "mcp.read", "admin"}
+DEFAULT_API_KEY_SCOPES = ["mcp.call", "mcp.read"]
+API_KEY_ROLES = {
+    "support_agent",
+    "devops_agent",
+    "finance_agent",
+    "readonly_agent",
+    "data_analyst",
+    "admin_agent",
+}
+
+
+def _normalize_scopes(scopes: Optional[List[str]]) -> List[str]:
+    if scopes is None:
+        return list(DEFAULT_API_KEY_SCOPES)
+    normalized = []
+    for scope in scopes:
+        value = str(scope or "").strip()
+        if value not in API_KEY_SCOPES:
+            raise ValueError(
+                f"Unknown API key scope '{value}'. Valid: {sorted(API_KEY_SCOPES)}"
+            )
+        if value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
+def _normalize_api_key_role(role: Optional[str]) -> str:
+    value = str(role or "readonly_agent").strip()
+    if value not in API_KEY_ROLES:
+        raise ValueError(
+            f"Unknown API key role '{value}'. Valid: {sorted(API_KEY_ROLES)}"
+        )
+    return value
+
+
 def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, Any]:
     """
     Generate a new API key. Returns the raw key ONCE (caller must show it to user
@@ -1044,6 +1099,8 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
     max_array_items = overrides.get(
         "max_array_items", defaults.get("max_array_items", 500)
     )
+    scopes = _normalize_scopes(overrides.get("scopes"))
+    role = _normalize_api_key_role(overrides.get("role"))
 
     with _db_lock, get_conn() as conn:
         conn.execute(
@@ -1051,8 +1108,9 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
             INSERT INTO api_keys
               (key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
                fail_mode, webhook_url, custom_policy, siem_configs, upstream_key,
-               is_active, created_at, max_response_bytes, max_array_items)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               is_active, created_at, max_response_bytes, max_array_items,
+               scopes, role)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 key_hash,
@@ -1070,6 +1128,8 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
                 datetime.now(timezone.utc).isoformat(),
                 max_response_bytes,
                 max_array_items,
+                json.dumps(scopes),
+                role,
             ),
         )
 
@@ -1081,6 +1141,8 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
         "key_prefix": key_prefix,
         "plan": plan,
         "label": label,
+        "scopes": scopes,
+        "role": role,
         "warning": "Store this key now. It will never be shown again.",
     }
 
@@ -1145,13 +1207,20 @@ def update_key(key_prefix: str, **fields) -> bool:
         "upstream_key",
         "max_response_bytes",
         "max_array_items",
+        "scopes",
+        "role",
     }
     fields = {k: v for k, v in fields.items() if k in EDITABLE}
     if not fields:
         return False
 
+    if "scopes" in fields:
+        fields["scopes"] = _normalize_scopes(fields["scopes"])
+    if "role" in fields:
+        fields["role"] = _normalize_api_key_role(fields["role"])
+
     # JSON-encode the JSON columns
-    for col in ("custom_policy", "siem_configs"):
+    for col in ("custom_policy", "siem_configs", "scopes"):
         if (
             col in fields
             and fields[col] is not None
@@ -1478,13 +1547,22 @@ def seed_offline_demo_key() -> None:
             "SELECT id FROM api_keys WHERE key_hash = ?", (key_hash,)
         ).fetchone()
         if existing:
+            conn.execute(
+                "UPDATE api_keys SET scopes = ?, role = ? WHERE key_hash = ?",
+                (
+                    json.dumps(["admin", "mcp.call", "mcp.read"]),
+                    "readonly_agent",
+                    key_hash,
+                ),
+            )
             return
         conn.execute(
             """
             INSERT INTO api_keys
               (key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
-               fail_mode, is_active, created_at, max_response_bytes, max_array_items)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               fail_mode, is_active, created_at, max_response_bytes, max_array_items,
+               scopes, role)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 key_hash,
@@ -1498,6 +1576,8 @@ def seed_offline_demo_key() -> None:
                 datetime.now(timezone.utc).isoformat(),
                 defaults["max_response_bytes"],
                 defaults["max_array_items"],
+                json.dumps(["admin", "mcp.call", "mcp.read"]),
+                "readonly_agent",
             ),
         )
     logger.info("Offline demo API key seeded (INTERLOCK_OFFLINE_DEMO).")
@@ -3385,7 +3465,7 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
             conn,
             """
             INSERT INTO mcp_audit_log
-              (ts, server_id, tool_name, role, action, matched_rule, reason,
+              (ts, server_id, tool_name, principal_id, role, action, matched_rule, reason,
                effects, side_effect, data_classes, externality, verification_level,
                confidence, warnings, argument_keys, blocked_by, probe_id,
                argument_hash, expected_outcome, expected_status_code,
@@ -3393,12 +3473,13 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
                drift_status, drift_severity, drift_action, drift_types, drift_reasons,
                drift_baseline_hash, drift_current_hash,
                scan_time_ms, call_id, hash_v, prev_hash, integrity_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ts,
                 event.get("server_id", ""),
                 event.get("tool_name", ""),
+                event.get("principal_id", "") or "",
                 event.get("role", "") or "",
                 event.get("action", ""),
                 event.get("matched_rule", ""),

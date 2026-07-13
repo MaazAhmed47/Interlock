@@ -12,7 +12,6 @@ import sys
 import urllib.error
 import urllib.request
 
-
 SERVER_INFO = {"name": "interlock-opencode-adapter", "version": "0.1.0"}
 
 
@@ -24,11 +23,17 @@ def _api_key() -> str:
     return os.getenv("INTERLOCK_API_KEY", "")
 
 
-def _request(method: str, path: str, payload: dict | None = None) -> dict:
+def _admin_api_key() -> str:
+    return os.getenv("INTERLOCK_ADMIN_API_KEY", "") or _api_key()
+
+
+def _request(
+    method: str, path: str, payload: dict | None = None, *, admin: bool = False
+) -> dict:
     body = None
     headers = {"Accept": "application/json"}
 
-    key = _api_key()
+    key = _admin_api_key() if admin else _api_key()
     if key:
         headers["x-api-key"] = key
 
@@ -86,10 +91,6 @@ def _tools() -> list[dict]:
                     "server_id": {"type": "string"},
                     "tool_name": {"type": "string"},
                     "arguments": {"type": "object", "default": {}},
-                    "role": {
-                        "type": "string",
-                        "description": "Optional Interlock role, such as readonly_agent or devops_agent.",
-                    },
                 },
                 "required": ["server_id", "tool_name"],
                 "additionalProperties": False,
@@ -125,11 +126,16 @@ def _tools() -> list[dict]:
         },
         {
             "name": "interlock_mcp_audit",
-            "description": "Read recent Interlock MCP audit decisions.",
+            "description": "Read recent Interlock MCP audit decisions with the admin-scoped API key.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 25},
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "default": 25,
+                    },
                 },
                 "additionalProperties": False,
             },
@@ -154,7 +160,6 @@ def _call_tool(name: str, args: dict) -> dict:
             "server_id": args["server_id"],
             "tool_name": args["tool_name"],
             "arguments": args.get("arguments") or {},
-            "role": args.get("role"),
         }
         result = _request("POST", "/mcp/call", payload)
         return _text_result(result, is_error=result.get("ok") is False)
@@ -165,12 +170,14 @@ def _call_tool(name: str, args: dict) -> dict:
         return _text_result(result, is_error=result.get("ok") is False)
 
     if name == "interlock_validate_tool":
-        result = _request("POST", "/mcp/validate-tool", {"tool_definition": args["tool_definition"]})
+        result = _request(
+            "POST", "/mcp/validate-tool", {"tool_definition": args["tool_definition"]}
+        )
         return _text_result(result, is_error=result.get("is_threat") is True)
 
     if name == "interlock_mcp_audit":
         limit = int(args.get("limit") or 25)
-        result = _request("GET", f"/mcp/audit?limit={limit}")
+        result = _request("GET", f"/mcp/audit?limit={limit}", admin=True)
         return _text_result(result, is_error=result.get("ok") is False)
 
     if name == "interlock_mcp_servers":
@@ -232,11 +239,13 @@ def main() -> None:
             message = json.loads(line)
         except json.JSONDecodeError as exc:
             print(
-                json.dumps({
-                    "jsonrpc": "2.0",
-                    "id": None,
-                    "error": {"code": -32700, "message": str(exc)},
-                }),
+                json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": None,
+                        "error": {"code": -32700, "message": str(exc)},
+                    }
+                ),
                 flush=True,
             )
             continue

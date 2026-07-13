@@ -104,3 +104,8 @@ def offline_demo_enabled() -> bool:
     production deployments.
     """
     return _truthy(os.getenv("INTERLOCK_OFFLINE_DEMO"))
+
+
+def siem_include_content() -> bool:
+    """Opt in to exporting bounded prompt/reason previews to alert destinations."""
+    return _truthy(os.getenv("SIEM_INCLUDE_CONTENT"))

@@ -87,7 +87,9 @@ def _show_api_result(label: str, status: Optional[int], payload: Any) -> bool:
     return isinstance(status, int) and 200 <= status < 300
 
 
-def _cleanup_hidden_registry_servers(base_url: str, api_key: str, *, dry_run: bool = False) -> bool:
+def _cleanup_hidden_registry_servers(
+    base_url: str, api_key: str, *, dry_run: bool = False
+) -> bool:
     if dry_run:
         print("  [dry-run] cleanup hidden fixture / unapproved registry servers")
         return True
@@ -120,7 +122,10 @@ def repopulate_render(args: argparse.Namespace) -> int:
         print("Missing --mock-url. Use the public Val Town MCP mock URL for this step.")
         return 2
     if not args.dry_run and not args.api_key:
-        print("Missing API key. Set INTERLOCK_API_KEY or pass --api-key.")
+        print(
+            "Missing API key. Set INTERLOCK_API_KEY or pass --api-key with "
+            "admin, mcp.call, and mcp.read scopes plus a bound role."
+        )
         return 2
 
     base = args.base_url.rstrip("/")
@@ -176,7 +181,6 @@ def repopulate_render(args: argparse.Namespace) -> int:
                 "server_id": server_id,
                 "tool_name": DEMO_TOOL,
                 "arguments": {"doc_id": "canary-demo-doc"},
-                "role": "admin_agent",
             },
         ),
     ]

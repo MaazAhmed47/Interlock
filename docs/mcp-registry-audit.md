@@ -183,6 +183,11 @@ GET /mcp/tools/drifted?server_id=nextcloud
 
 Approve the current tool as the new baseline:
 
+The following approve, quarantine, and global-audit operations require an API
+key with the `admin` scope. Runtime-only keys (`mcp.call`, `mcp.read`) receive
+HTTP 403. The same admin requirement applies to server register, verify,
+rebaseline, and delete routes.
+
 ```http
 POST /mcp/tools/{server_id}/{tool_name}/approve
 {

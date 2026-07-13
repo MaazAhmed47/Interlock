@@ -55,8 +55,9 @@ python -c "import secrets; print('ADMIN_TOKEN=' + secrets.token_urlsafe(32))" >>
 docker compose up -d --build
 ```
 
-Mint a scoped operator token from the root token, then mint an Interlock API key
-with it. **Raw tokens/keys are returned once — only hashes are stored.**
+Mint a scoped operator token from the root token, then mint separate Interlock
+control-plane and runtime keys with it. **Raw tokens/keys are returned once —
+only hashes are stored.**
 
 ```bash
 ADMIN_TOKEN=$(grep '^ADMIN_TOKEN=' .env | cut -d= -f2-)
@@ -69,14 +70,24 @@ curl -s -X POST http://localhost:8001/admin/tokens \
 
 SCOPED='<raw_token-from-above>'
 
-# (b) the Interlock API key you will actually use
+# (b) control-plane key for register/verify/rebaseline/review/global audit
 curl -s -X POST http://localhost:8001/admin/keys \
   -H "x-admin-token: $SCOPED" -H "Content-Type: application/json" \
-  -d '{"plan":"developer","label":"mcp-drift-eval","fail_mode":"fail_open_safe"}'
-# -> copy the returned key into KEY below
+  -d '{"plan":"developer","label":"mcp-drift-control","scopes":["admin"]}'
+# -> copy the returned raw_key into ADMIN_KEY below
 
-export KEY='<your-interlock-api-key>'
+# (c) runtime key; role is resolved from this record, never from /mcp/call input
+curl -s -X POST http://localhost:8001/admin/keys \
+  -H "x-admin-token: $SCOPED" -H "Content-Type: application/json" \
+  -d '{"plan":"developer","label":"mcp-drift-runtime","scopes":["mcp.call","mcp.read"],"role":"data_analyst","fail_mode":"fail_open_safe"}'
+# -> copy the returned raw_key into RUNTIME_KEY below
+
+export ADMIN_KEY='<your-admin-scoped-interlock-api-key>'
+export RUNTIME_KEY='<your-runtime-interlock-api-key>'
 ```
+
+A runtime-only key intentionally receives HTTP 403 on server register, verify,
+rebaseline, tool approve/quarantine, server delete, and global audit listing.
 
 ---
 
@@ -87,7 +98,7 @@ exercise in `allowed_tools`; put genuinely dangerous ones in `blocked_tools`.
 
 ```bash
 curl -s -X POST http://localhost:8001/mcp/servers \
-  -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -H "x-api-key: $ADMIN_KEY" -H "Content-Type: application/json" \
   -d '{
         "server_id": "eval-postgres",
         "url": "https://your-host.example.com/mcp",
@@ -117,7 +128,7 @@ refuses to proxy until verified — this is the deliberate human‑in‑the‑lo
 
 ```bash
 curl -s -X POST http://localhost:8001/mcp/servers/eval-postgres/verify \
-  -H "x-api-key: $KEY"
+  -H "x-api-key: $ADMIN_KEY"
 ```
 
 > **Compatibility:** Interlock sends one plain `POST` with a JSON‑RPC body
@@ -141,14 +152,14 @@ Discovery pulls `tools/list`, **validates every tool**, and persists a trusted
 
 ```bash
 curl -s -X POST http://localhost:8001/mcp/discover \
-  -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -H "x-api-key: $RUNTIME_KEY" -H "Content-Type: application/json" \
   -d '{"server_url":"https://your-host.example.com/mcp","server_id":"eval-postgres"}' | jq
 ```
 
 Confirm your write/DDL/role tools are baselined and clean:
 
 ```bash
-curl -s "http://localhost:8001/mcp/tools?server_id=eval-postgres" -H "x-api-key: $KEY" \
+curl -s "http://localhost:8001/mcp/tools?server_id=eval-postgres" -H "x-api-key: $RUNTIME_KEY" \
   | jq '.tools[] | {tool_name, status, drift_severity, drift_action}'
 ```
 
@@ -159,7 +170,7 @@ Optionally **pin** the current surface as an explicit operator‑approved baseli
 
 ```bash
 curl -s -X POST http://localhost:8001/mcp/tools/eval-postgres/write_query/approve \
-  -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -H "x-api-key: $ADMIN_KEY" -H "Content-Type: application/json" \
   -d '{"reviewer":"operator","reason":"Initial trusted baseline"}'
 ```
 
@@ -204,7 +215,7 @@ Re‑run discovery so Interlock re‑reads the surface and compares it to the ba
 
 ```bash
 curl -s -X POST http://localhost:8001/mcp/discover \
-  -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -H "x-api-key: $RUNTIME_KEY" -H "Content-Type: application/json" \
   -d '{"server_url":"https://your-host.example.com/mcp","server_id":"eval-postgres"}' | jq
 ```
 
@@ -217,7 +228,7 @@ What Interlock classifies here (and why it's **critical → quarantine**):
 The max severity (critical) wins. See it in the review queue:
 
 ```bash
-curl -s "http://localhost:8001/mcp/tools/drifted?server_id=eval-postgres" -H "x-api-key: $KEY" \
+curl -s "http://localhost:8001/mcp/tools/drifted?server_id=eval-postgres" -H "x-api-key: $RUNTIME_KEY" \
   | jq '.tools[] | {tool_name, status, drift_severity, drift_action, drift_reasons}'
 # write_query -> status "quarantined", drift_severity "critical", drift_action "quarantine"
 ```
@@ -227,7 +238,7 @@ your server:
 
 ```bash
 curl -s -X POST http://localhost:8001/mcp/call \
-  -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -H "x-api-key: $RUNTIME_KEY" -H "Content-Type: application/json" \
   -d '{"server_id":"eval-postgres","tool_name":"write_query","arguments":{"sql":"UPDATE accounts SET note='\''x'\'' WHERE id=1"}}' | jq
 ```
 
@@ -254,10 +265,10 @@ existing `maxLength`). Re‑discover:
 
 ```bash
 curl -s -X POST http://localhost:8001/mcp/discover \
-  -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -H "x-api-key: $RUNTIME_KEY" -H "Content-Type: application/json" \
   -d '{"server_url":"https://your-host.example.com/mcp","server_id":"eval-postgres"}' | jq
 
-curl -s "http://localhost:8001/mcp/tools?server_id=eval-postgres" -H "x-api-key: $KEY" \
+curl -s "http://localhost:8001/mcp/tools?server_id=eval-postgres" -H "x-api-key: $RUNTIME_KEY" \
   | jq '.tools[] | select(.tool_name=="list_tables") | {status, drift_severity, drift_action}'
 ```
 
@@ -266,7 +277,7 @@ Interlock records the change but classifies it `minor` with **no security findin
 
 ```bash
 curl -s -X POST http://localhost:8001/mcp/call \
-  -H "x-api-key: $KEY" -H "Content-Type: application/json" \
+  -H "x-api-key: $RUNTIME_KEY" -H "Content-Type: application/json" \
   -d '{"server_id":"eval-postgres","tool_name":"list_tables","arguments":{}}' | jq '.ok, .result'
 # ok: true, with real rows from your sample DB
 ```
@@ -283,10 +294,10 @@ Every decision above is a tamper‑evident row in the runtime audit log.
 
 **Pull the receipt for the quarantine you just triggered:**
 ```bash
-AID=$(curl -s "http://localhost:8001/mcp/audit?limit=50" -H "x-api-key: $KEY" \
+AID=$(curl -s "http://localhost:8001/mcp/audit?limit=50" -H "x-api-key: $ADMIN_KEY" \
       | jq '[.events[] | select(.tool_name=="write_query")][0].id')
 
-curl -s "http://localhost:8001/audit/receipt/$AID" -H "x-api-key: $KEY" | jq
+curl -s "http://localhost:8001/audit/receipt/$AID" -H "x-api-key: $RUNTIME_KEY" | jq
 ```
 
 How to read the receipt:
@@ -303,13 +314,13 @@ How to read the receipt:
 **Re‑derive a surface hash yourself** (don't trust us — recompute sha256 over the
 canonical bytes, canonicalization `json/jcs-rfc8785`):
 ```bash
-curl -s "http://localhost:8001/audit/evidence/surface/<surface_hash>" -H "x-api-key: $KEY" | jq
+curl -s "http://localhost:8001/audit/evidence/surface/<surface_hash>" -H "x-api-key: $RUNTIME_KEY" | jq
 ```
 
 **Batch export** a range of receipts as one artifact:
 ```bash
 curl -s "http://localhost:8001/audit/receipt/export?from=2026-06-01&to=2026-06-30&format=json" \
-  -H "x-api-key: $KEY" -o interlock-receipts.json
+  -H "x-api-key: $RUNTIME_KEY" -o interlock-receipts.json
 ```
 
 **Dashboard view** (optional, nicer for a manager/CISO walkthrough):
@@ -334,4 +345,6 @@ cd interlock-web && npm install && npm run dev
 | Execute through gateway | `POST /mcp/call` |
 | Audit + receipts | `GET /mcp/audit` · `GET /audit/receipt/{id}` · `GET /audit/receipt/export` · `GET /audit/evidence/surface/{hash}` |
 
-All routes require `x-api-key: $KEY` except `/admin/*` (which use `x-admin-token`).
+Runtime/read routes use `x-api-key: $RUNTIME_KEY`. Registry control and global
+audit listing use `x-api-key: $ADMIN_KEY`. `/admin/*` key-management routes use
+`x-admin-token` instead.

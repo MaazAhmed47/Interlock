@@ -1,6 +1,10 @@
 # Agent Client Integration Patterns
 
-Interlock is designed to sit between an agent runtime and MCP/tool infrastructure. The exact adapter depends on the client, but the integration model stays the same: point tool calls through Interlock, pass the agent role, and let the gateway enforce policy before execution.
+Interlock is designed to sit between an agent runtime and MCP/tool
+infrastructure. The exact adapter depends on the client, but the integration
+model stays the same: point tool calls through Interlock and let the gateway
+resolve the agent role from the runtime API key before execution. Do not treat
+an `/mcp/call` request-body role as authorization; it is ignored.
 
 ---
 
@@ -34,9 +38,12 @@ Use this path for prompt and chat-completion protection. Use the MCP gateway pat
 
 Register MCP servers, discover tools, then call tools through Interlock:
 
+Use an admin-scoped API key for registry control and a runtime key with
+`mcp.call`/`mcp.read` plus a bound role for agent traffic.
+
 ```bash
 curl -X POST http://localhost:8001/mcp/servers \
-  -H "x-api-key: <YOUR_INTERLOCK_API_KEY>" \
+  -H "x-api-key: <YOUR_ADMIN_SCOPED_INTERLOCK_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
     "server_id": "internal-slack",
@@ -49,12 +56,11 @@ curl -X POST http://localhost:8001/mcp/servers \
 
 ```bash
 curl -X POST http://localhost:8001/mcp/call \
-  -H "x-api-key: <YOUR_INTERLOCK_API_KEY>" \
+  -H "x-api-key: <YOUR_RUNTIME_INTERLOCK_API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{
     "server_id": "internal-slack",
     "tool_name": "read_channel",
-    "role": "support_agent",
     "arguments": {"channel": "support"}
   }'
 ```
@@ -66,7 +72,7 @@ curl -X POST http://localhost:8001/mcp/call \
 For desktop MCP clients, use a small local adapter that exposes an MCP server to the client and forwards tool calls to Interlock. The adapter should:
 
 - expose the same tool names the client expects
-- add `server_id`, `tool_name`, `role`, and `arguments`
+- add `server_id`, `tool_name`, and `arguments`
 - call Interlock `/mcp/call`
 - return the sanitized response or denial reason to the client
 
@@ -100,15 +106,17 @@ For MCP servers, prefer `/mcp/call` because it adds server trust, whitelist, dri
 
 - The app sends an Interlock API key; provider credentials stay server-side on the gateway.
 - Raw Interlock keys are returned once and stored hashed in the key database.
-- Use one key per environment or pilot team so audit logs and quotas remain clear.
-- Pass an explicit `role` on tool calls so RBAC decisions are explainable.
+- Use separate control-plane and runtime keys per environment or pilot team so
+  privileges, audit logs, and quotas remain clear.
+- Bind the intended role when issuing the runtime key. A conflicting
+  `/mcp/call` body role has no effect.
 - Start with one agent and one MCP server, then expand after allow/block/quarantine/audit are proven.
 
 ---
 
 ## Integration Checklist
 
-- Pick the role for each agent.
+- Pick the role for each agent and bind it to that agent's runtime key.
 - Route MCP tool calls through `/mcp/call` where possible.
 - Use `/inspect/tool-call` for non-MCP tools.
 - Use `/scan/output` for model/tool outputs that may be reused by an agent.

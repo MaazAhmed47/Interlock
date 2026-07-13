@@ -46,6 +46,13 @@ def fresh_db():
             pass
 
 
+@pytest.fixture(autouse=True)
+def cleanup_mcp_servers():
+    yield
+    for server_id in ("_dup_test", "_st_op", "_gw"):
+        db.unregister_mcp_server(server_id)
+
+
 def _latest_audit_row():
     recent = db.list_mcp_audit_logs(1)
     assert recent, "expected at least one audit row"
@@ -71,17 +78,34 @@ MUTATED_TOOL = {
 def test_operator_quarantine_reason_not_duplicated_as_drift_bullet():
     db.register_mcp_server(
         "_dup_test",
-        {"url": "http://x/mcp", "description": "t", "allowed_tools": ["read_x"], "blocked_tools": []},
+        {
+            "url": "http://x/mcp",
+            "description": "t",
+            "allowed_tools": ["read_x"],
+            "blocked_tools": [],
+        },
     )
     db.verify_mcp_server("_dup_test")
     db.upsert_mcp_tool_metadata(
-        "_dup_test", CLEAN_TOOL,
-        {"effects": ["read"], "side_effect": "read_only", "data_classes": ["user_content"], "externality": "internal"},
+        "_dup_test",
+        CLEAN_TOOL,
+        {
+            "effects": ["read"],
+            "side_effect": "read_only",
+            "data_classes": ["user_content"],
+            "externality": "internal",
+        },
     )
     # Mutation produces real detected drift signals on the tool row.
     db.upsert_mcp_tool_metadata(
-        "_dup_test", MUTATED_TOOL,
-        {"effects": ["read", "export"], "side_effect": "read_only", "data_classes": ["pii"], "externality": "external"},
+        "_dup_test",
+        MUTATED_TOOL,
+        {
+            "effects": ["read", "export"],
+            "side_effect": "read_only",
+            "data_classes": ["pii"],
+            "externality": "external",
+        },
     )
 
     reason = "Operator note: held pending data-owner sign-off on the new export field."
@@ -104,10 +128,23 @@ def test_operator_quarantine_reason_not_duplicated_as_drift_bullet():
 def test_operator_quarantine_records_scan_time():
     db.register_mcp_server(
         "_st_op",
-        {"url": "http://x/mcp", "description": "t", "allowed_tools": ["read_y"], "blocked_tools": []},
+        {
+            "url": "http://x/mcp",
+            "description": "t",
+            "allowed_tools": ["read_y"],
+            "blocked_tools": [],
+        },
     )
     db.verify_mcp_server("_st_op")
-    db.upsert_mcp_tool_metadata("_st_op", {"name": "read_y", "description": "Read y.", "inputSchema": {"type": "object", "properties": {}}}, {"effects": ["read"]})
+    db.upsert_mcp_tool_metadata(
+        "_st_op",
+        {
+            "name": "read_y",
+            "description": "Read y.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {"effects": ["read"]},
+    )
     db.quarantine_mcp_tool("_st_op", "read_y", reviewer="maaz", reason="hold")
 
     row = _latest_audit_row()
@@ -118,7 +155,12 @@ def test_operator_quarantine_records_scan_time():
 def test_gateway_deny_records_scan_time():
     db.register_mcp_server(
         "_gw",
-        {"url": "http://localhost:1/mcp", "description": "t", "allowed_tools": ["read_z"], "blocked_tools": ["delete_z"]},
+        {
+            "url": "http://localhost:1/mcp",
+            "description": "t",
+            "allowed_tools": ["read_z"],
+            "blocked_tools": ["delete_z"],
+        },
     )
     db.verify_mcp_server("_gw")
     res = asyncio.run(

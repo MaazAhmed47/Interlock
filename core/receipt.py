@@ -321,6 +321,7 @@ def build_receipt(row: Dict[str, Any], chain_verified: bool = False) -> Dict[str
         "audit_id": row.get("id"),
         "timestamp": _format_utc(ts),
         "timestamp_iso": ts,
+        "principal_id": row.get("principal_id") or "",
         "agent_role": row.get("role") or "",
         "server_id": row.get("server_id") or "",
         "tool_name": row.get("tool_name") or "",
