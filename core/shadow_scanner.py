@@ -183,27 +183,31 @@ async def run_shadow_scan(
                 ),
             )
             try:
-                conn.execute(
-                    "INSERT INTO mcp_audit_log "
-                    "(ts, server_id, tool_name, role, action, matched_rule, reason, confidence, blocked_by) "
-                    "VALUES (?,?,?,?,?,?,?,?,?)",
-                    (
-                        now,
-                        0,
-                        "",
-                        "system",
-                        "shadow_discovered",
-                        "shadow_scanner",
-                        f"Unregistered MCP endpoint responded at {url}",
-                        1.0,
-                        "shadow_scanner",
-                    ),
+                # Route through the single chained writer: a direct INSERT
+                # would land without prev_hash/integrity_hash and poison the
+                # audit hash chain.
+                db.log_mcp_audit_event(
+                    {
+                        "ts": now,
+                        "server_id": "",
+                        "tool_name": "",
+                        "role": "system",
+                        "action": "shadow_discovered",
+                        "matched_rule": "shadow_scanner",
+                        "reason": f"Unregistered MCP endpoint responded at {url}",
+                        "confidence": 1.0,
+                        "blocked_by": "shadow_scanner",
+                    }
                 )
             except Exception:
                 logger.exception(
                     "Failed to write shadow discovery audit log for %s", url
                 )
-        conn.commit()
+        # db.get_conn() connections are autocommit on both backends, and the
+        # Postgres wrapper exposes no commit(); only plain sqlite3 connections
+        # (tests) still need the explicit commit.
+        if hasattr(conn, "commit"):
+            conn.commit()
         findings.append(
             ShadowFinding(url=url, is_registered=False, probe=probe, risk_score=score)
         )
