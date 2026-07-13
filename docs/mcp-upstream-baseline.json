@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "mcp-specification",
+      "repo": "modelcontextprotocol/modelcontextprotocol",
+      "known_release_tags": ["2025-11-25", "2026-07-28-RC"],
+      "reviewed_through": "2026-05-29T12:51:00Z",
+      "focus": "protocol revisions, schema, transports, authorization, tool discovery, and SEPs"
+    },
+    {
+      "id": "mcp-typescript-sdk",
+      "repo": "modelcontextprotocol/typescript-sdk",
+      "known_release_tags": ["v1.29.0"],
+      "reviewed_through": "2026-03-30T16:49:30Z",
+      "focus": "client/server behavior, transport support, schemas, and compatibility"
+    },
+    {
+      "id": "mcp-python-sdk",
+      "repo": "modelcontextprotocol/python-sdk",
+      "known_release_tags": ["v1.28.1"],
+      "reviewed_through": "2026-06-26T12:32:57Z",
+      "focus": "client/server behavior, transport support, schemas, and compatibility"
+    },
+    {
+      "id": "mcp-inspector",
+      "repo": "modelcontextprotocol/inspector",
+      "known_release_tags": ["0.22.0"],
+      "reviewed_through": "2026-06-04T12:36:14Z",
+      "focus": "interoperability diagnostics and reference client behavior"
+    },
+    {
+      "id": "mcp-registry",
+      "repo": "modelcontextprotocol/registry",
+      "known_release_tags": ["v1.8.0"],
+      "reviewed_through": "2026-07-13T08:43:51Z",
+      "focus": "server identity, package metadata, publication, and registry trust signals"
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+name: MCP upstream watch
+
+on:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    name: Public MCP release watch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check public MCP releases
+        id: watch
+        run: |
+          python scripts/mcp_upstream_watch.py --report "$RUNNER_TEMP/mcp-upstream-watch.md"
+          cat "$RUNNER_TEMP/mcp-upstream-watch.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open one review issue per unreviewed release set
+        if: steps.watch.outputs.has_changes == 'true'
+        uses: actions/github-script@v7
+        env:
+          MARKER: ${{ steps.watch.outputs.marker }}
+        with:
+          script: |
+            const fs = require("fs");
+            const marker = process.env.MARKER;
+            const title = "MCP upstream watch: review new public releases";
+            const { data: openIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+            if (openIssues.some(issue => issue.title === title && issue.body.includes(marker))) {
+              core.notice(`An open review issue already covers ${marker}.`);
+              return;
+            }
+            const report = fs.readFileSync(process.env.RUNNER_TEMP + "/mcp-upstream-watch.md", "utf8");
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: `${report}\n\n<!-- mcp-upstream-marker: ${marker} -->`,
+            });
