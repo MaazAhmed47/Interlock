@@ -75,6 +75,8 @@ def test_shadow_discovery_audit_row_is_chain_valid():
     assert "http://shadow-chain:9000" in row["reason"]
     assert row["matched_rule"] == "shadow_scanner"
     assert row["role"] == "system"
+    # No established Interlock server ID exists at discovery time.
+    assert row["server_id"] == ""
     assert row["prev_hash"], "shadow_discovered row must be chained (prev_hash)"
     assert row["integrity_hash"], (
         "shadow_discovered row must carry an integrity hash — a bare INSERT "

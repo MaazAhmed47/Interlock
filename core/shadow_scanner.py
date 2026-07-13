@@ -189,7 +189,7 @@ async def run_shadow_scan(
                 db.log_mcp_audit_event(
                     {
                         "ts": now,
-                        "server_id": "0",
+                        "server_id": "",
                         "tool_name": "",
                         "role": "system",
                         "action": "shadow_discovered",
