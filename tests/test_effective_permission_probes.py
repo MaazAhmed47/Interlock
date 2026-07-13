@@ -83,6 +83,9 @@ SCHEMA_PATH = (
 
 @pytest.fixture(autouse=True)
 def isolated_db(monkeypatch):
+    # The registry allowlist rejects unknown external hosts; permit the
+    # fixture host explicitly, the same way test_hosted_safety.py does.
+    monkeypatch.setenv("MCP_REGISTRY_ALLOWED_HOSTS", "genesys.example")
     db.DB_PATH = TEST_DB
     db.init_db()
     key = db.generate_key("free", label="probe-test")["raw_key"]

@@ -62,6 +62,16 @@ def cleanup_binding_servers():
         db.unregister_mcp_server(server_id)
 
 
+@pytest.fixture(autouse=True)
+def cleanup_fixture_servers():
+    yield
+    for server_id in ("binding-docs", "binding-crm"):
+        try:
+            db.unregister_mcp_server(server_id)
+        except Exception:
+            pass
+
+
 def _log_event(**overrides):
     event = {
         "server_id": "demo-docs",

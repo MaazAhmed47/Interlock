@@ -16,7 +16,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import core.db as db
-import proxy
 from core import receipt as receipt_builder
 from core.mcp_gateway import proxy_mcp_tool_call
 
@@ -24,7 +23,10 @@ _tmp_db = tempfile.mktemp(suffix="_response_drift_runtime_test.db")
 
 
 @pytest.fixture(autouse=True)
-def isolated_db():
+def isolated_db(monkeypatch):
+    # The registry allowlist rejects unknown external hosts; permit the
+    # fixture host explicitly, the same way test_hosted_safety.py does.
+    monkeypatch.setenv("MCP_REGISTRY_ALLOWED_HOSTS", "safe.example")
     db.DB_PATH = _tmp_db
     for suffix in ("", "-wal", "-shm"):
         try:

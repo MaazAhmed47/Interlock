@@ -47,10 +47,13 @@ def fresh_db():
 
 
 @pytest.fixture(autouse=True)
-def cleanup_mcp_servers():
+def cleanup_fixture_servers():
     yield
     for server_id in ("_dup_test", "_st_op", "_gw"):
-        db.unregister_mcp_server(server_id)
+        try:
+            db.unregister_mcp_server(server_id)
+        except Exception:
+            pass
 
 
 def _latest_audit_row():
@@ -79,7 +82,7 @@ def test_operator_quarantine_reason_not_duplicated_as_drift_bullet():
     db.register_mcp_server(
         "_dup_test",
         {
-            "url": "http://x/mcp",
+            "url": "http://localhost/mcp",
             "description": "t",
             "allowed_tools": ["read_x"],
             "blocked_tools": [],
@@ -129,7 +132,7 @@ def test_operator_quarantine_records_scan_time():
     db.register_mcp_server(
         "_st_op",
         {
-            "url": "http://x/mcp",
+            "url": "http://localhost/mcp",
             "description": "t",
             "allowed_tools": ["read_y"],
             "blocked_tools": [],
