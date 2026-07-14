@@ -44,6 +44,9 @@ def isolated_db(monkeypatch):
             "allowed_tools": ["read_message_state", "preview_send_message"],
             "blocked_tools": [],
             "rate_limit": 60,
+            # Probes are authorized by stored registry state, not the request.
+            "environment": "non_production",
+            "probes_enabled": True,
         },
     )
     db.verify_mcp_server(server_id)
@@ -124,21 +127,39 @@ def _request(**overrides):
     return proxy.MCPEffectReadbackProbeRequest(**payload)
 
 
-def test_readback_route_rejects_missing_non_production(isolated_db):
-    request = _request(non_production=False)
-    with patch("proxy.verify_key", return_value=({"rate_per_min": 60}, "test-key")):
+def test_readback_route_fails_closed_on_production_server(isolated_db):
+    """Probe authorization comes from the stored registry state, not the
+    request body: a production server is denied even when the body sets
+    non_production=true."""
+    db.set_mcp_server_environment(
+        isolated_db["server_id"], "production", probes_enabled=False
+    )
+    request = _request(non_production=True)
+    with patch(
+        "proxy.require_scope",
+        return_value=(
+            {"rate_per_min": 60, "key_prefix": "test-prefix", "label": "probe"},
+            "test-key",
+        ),
+    ):
         with pytest.raises(HTTPException) as exc:
             asyncio.run(
                 proxy.mcp_run_effect_readback_observer(
                     isolated_db["server_id"], request, x_api_key="test-key"
                 )
             )
-    assert exc.value.status_code == 400
+    assert exc.value.status_code == 403
 
 
 def test_readback_route_rejects_blank_safety_note(isolated_db):
     request = _request(safety_note="   ")
-    with patch("proxy.verify_key", return_value=({"rate_per_min": 60}, "test-key")):
+    with patch(
+        "proxy.require_scope",
+        return_value=(
+            {"rate_per_min": 60, "key_prefix": "test-prefix", "label": "probe"},
+            "test-key",
+        ),
+    ):
         with pytest.raises(HTTPException) as exc:
             asyncio.run(
                 proxy.mcp_run_effect_readback_observer(
@@ -156,7 +177,13 @@ def test_clean_no_change_readback_allows_and_logs_safe_hashes(isolated_db):
             {"id": "secret-message-123", "status": "draft", "version": 1},
         ]
     )
-    with patch("proxy.verify_key", return_value=({"rate_per_min": 60}, "test-key")):
+    with patch(
+        "proxy.require_scope",
+        return_value=(
+            {"rate_per_min": 60, "key_prefix": "test-prefix", "label": "probe"},
+            "test-key",
+        ),
+    ):
         with patch("core.effect_readback.httpx.AsyncClient", return_value=client):
             out = asyncio.run(
                 proxy.mcp_run_effect_readback_observer(
@@ -187,7 +214,13 @@ def test_hidden_side_effect_readback_quarantines_and_emits_receipt(isolated_db):
             {"id": "secret-message-123", "status": "sent", "version": 2},
         ]
     )
-    with patch("proxy.verify_key", return_value=({"rate_per_min": 60}, "test-key")):
+    with patch(
+        "proxy.require_scope",
+        return_value=(
+            {"rate_per_min": 60, "key_prefix": "test-prefix", "label": "probe"},
+            "test-key",
+        ),
+    ):
         with patch("core.effect_readback.httpx.AsyncClient", return_value=client):
             out = asyncio.run(
                 proxy.mcp_run_effect_readback_observer(
@@ -242,7 +275,13 @@ def test_inconclusive_after_readback_monitors_not_quarantine(isolated_db):
         ]
     )
 
-    with patch("proxy.verify_key", return_value=({"rate_per_min": 60}, "test-key")):
+    with patch(
+        "proxy.require_scope",
+        return_value=(
+            {"rate_per_min": 60, "key_prefix": "test-prefix", "label": "probe"},
+            "test-key",
+        ),
+    ):
         with patch("core.effect_readback.httpx.AsyncClient", return_value=client):
             out = asyncio.run(
                 proxy.mcp_run_effect_readback_observer(

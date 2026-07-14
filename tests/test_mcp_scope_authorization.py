@@ -98,4 +98,14 @@ def test_offline_demo_seed_explicitly_upgrades_demo_key_to_admin():
     db.init_db()
     db.seed_offline_demo_key()
     record = db.lookup_key(db.OFFLINE_DEMO_KEY)
-    assert record["scopes"] == ["admin", "mcp.call", "mcp.read"]
+    assert record["scopes"] == db.OFFLINE_DEMO_KEY_SCOPES
+    # Every scope the offline demo needs is granted explicitly.
+    assert set(record["scopes"]) == {
+        "admin",
+        "mcp.call",
+        "mcp.read",
+        "mcp.discover",
+        "mcp.probe",
+        "audit.read",
+        "audit.export",
+    }

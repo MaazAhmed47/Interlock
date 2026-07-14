@@ -18,8 +18,10 @@ Security Receipt endpoints.
                                    - canonical tool-surface bytes behind a
                                      drift-evidence hash (client recomputation).
 
-All require API-key auth (same surface as GET /mcp/audit, which serves the
-underlying runtime audit log to the dashboard).
+All require API-key auth with an explicit scope: `audit.read` for lookup,
+claims, verification, and surface evidence; `audit.export` for export.
+(`admin` acts as a super-scope. GET /mcp/audit, which serves the underlying
+runtime audit log to the dashboard, stays admin-only.)
 
 NOTE: /audit/receipt/export is declared before /audit/receipt/{audit_id} so the
 literal "export" path is not parsed as an integer audit_id.
@@ -60,7 +62,7 @@ async def export_receipts(
     x_api_key: Optional[str] = Header(None),
 ):
     """Export a batch of Security Receipts for a time range as a download."""
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "audit.export")
 
     fmt = (format or "json").lower()
     if fmt not in receipt_builder.SUPPORTED_FORMATS:
@@ -101,7 +103,7 @@ async def get_surface_snapshot(
     tool-surface bytes, so an external verifier can re-derive the hash
     (sha256 over the UTF-8 bytes of canonical_json) without trusting us.
     """
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "audit.read")
 
     snapshot = db.get_tool_surface_snapshot(surface_hash)
     if not snapshot:
@@ -126,7 +128,7 @@ async def verify_receipt(
     from the hash-chained audit record — a replayed/forwarded receipt cannot
     be re-pointed at a different call.
     """
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "audit.read")
     return receipt_verify_mod.verify_receipt_against_context(
         request.context,
         presented_receipt=request.receipt,
@@ -137,7 +139,7 @@ async def verify_receipt(
 @router.get("/audit/receipt/{audit_id}")
 async def get_receipt(audit_id: int, x_api_key: Optional[str] = Header(None)):
     """Return a single tamper-evident Security Receipt for one audit event."""
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "audit.read")
 
     row = db.get_mcp_audit_log(audit_id)
     if not row:
@@ -156,7 +158,7 @@ async def receipt_claims(audit_id: int, x_api_key: Optional[str] = Header(None))
     changed, what runtime decision fired, and whether any boundary-crossing
     call executed after detection (a real audit-log query, not copy).
     """
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "audit.read")
 
     row = db.get_mcp_audit_log(audit_id)
     if not row:

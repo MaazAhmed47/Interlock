@@ -208,7 +208,7 @@ class _PostgresConn:
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_POSTGRES_BOOLEAN_COLUMNS = ("is_active", "verified")
+_POSTGRES_BOOLEAN_COLUMNS = ("is_active", "verified", "probes_enabled")
 
 
 def _postgres_column_definition(definition: str, column: str = "") -> str:
@@ -364,6 +364,8 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     auth_header     TEXT    NOT NULL DEFAULT '',
     auth_token_env  TEXT    NOT NULL DEFAULT '',
     verified        INTEGER NOT NULL DEFAULT 0,
+    environment     TEXT    NOT NULL DEFAULT 'production',
+    probes_enabled  INTEGER NOT NULL DEFAULT 0,
     registered_at   TEXT    NOT NULL
 );
 
@@ -696,6 +698,15 @@ def init_db() -> None:
         _ensure_column(conn, "mcp_servers", "auth_header", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(
             conn, "mcp_servers", "auth_token_env", "TEXT NOT NULL DEFAULT ''"
+        )
+        # Pre-existing servers migrate to production + probes disabled so
+        # effective-permission probes fail closed until an admin explicitly
+        # marks a server non-production and probe-enabled.
+        _ensure_column(
+            conn, "mcp_servers", "environment", "TEXT NOT NULL DEFAULT 'production'"
+        )
+        _ensure_column(
+            conn, "mcp_servers", "probes_enabled", "INTEGER NOT NULL DEFAULT 0"
         )
         _ensure_column(conn, "mcp_servers", "source_type", "TEXT DEFAULT 'unknown'")
         _ensure_column(conn, "mcp_servers", "registry", "TEXT DEFAULT ''")
@@ -1081,8 +1092,17 @@ ADMIN_ROLE_DEFAULTS = {
 
 
 # ── Key generation ───────────────────────────────────────────────────────────
-API_KEY_SCOPES = {"mcp.call", "mcp.read", "admin"}
+API_KEY_SCOPES = {
+    "mcp.call",
+    "mcp.read",
+    "mcp.discover",
+    "mcp.probe",
+    "audit.read",
+    "audit.export",
+    "admin",
+}
 DEFAULT_API_KEY_SCOPES = ["mcp.call", "mcp.read"]
+MCP_SERVER_ENVIRONMENTS = {"production", "non_production"}
 API_KEY_ROLES = {
     "support_agent",
     "devops_agent",
@@ -1586,6 +1606,21 @@ def seed_legacy_keys() -> None:
 OFFLINE_DEMO_KEY = "lf-demo-offline-key"
 
 
+# The offline demo drives registration/review (admin), runtime calls,
+# discovery, behavioral probes, and receipt verification/export from one
+# bundled key. Each scope is explicit — the demo must not depend on scope
+# inheritance beyond the deliberate admin super-scope.
+OFFLINE_DEMO_KEY_SCOPES = [
+    "admin",
+    "mcp.call",
+    "mcp.read",
+    "mcp.discover",
+    "mcp.probe",
+    "audit.read",
+    "audit.export",
+]
+
+
 def seed_offline_demo_key() -> None:
     """Idempotently seed the fixed offline-demo API key (hash only stored)."""
     key_hash = _hash_key(OFFLINE_DEMO_KEY)
@@ -1598,7 +1633,7 @@ def seed_offline_demo_key() -> None:
             conn.execute(
                 "UPDATE api_keys SET scopes = ?, role = ? WHERE key_hash = ?",
                 (
-                    json.dumps(["admin", "mcp.call", "mcp.read"]),
+                    json.dumps(OFFLINE_DEMO_KEY_SCOPES),
                     "readonly_agent",
                     key_hash,
                 ),
@@ -1624,7 +1659,7 @@ def seed_offline_demo_key() -> None:
                 datetime.now(timezone.utc).isoformat(),
                 defaults["max_response_bytes"],
                 defaults["max_array_items"],
-                json.dumps(["admin", "mcp.call", "mcp.read"]),
+                json.dumps(OFFLINE_DEMO_KEY_SCOPES),
                 "readonly_agent",
             ),
         )
@@ -1965,6 +2000,8 @@ def _mcp_row_to_dict(row) -> Dict[str, Any]:
         except (json.JSONDecodeError, TypeError):
             d[col] = []
     d["verified"] = bool(d.get("verified", 0))
+    d["environment"] = str(d.get("environment") or "production")
+    d["probes_enabled"] = bool(d.get("probes_enabled", 0))
     return _classify_mcp_server(d)
 
 
@@ -2085,9 +2122,21 @@ def _mcp_permission_probe_row_to_dict(row) -> Dict[str, Any]:
     return d
 
 
+def _normalize_mcp_server_environment(environment: Any) -> str:
+    value = str(environment or "production").strip().lower()
+    if value not in MCP_SERVER_ENVIRONMENTS:
+        raise ValueError(
+            f"Unknown MCP server environment '{environment}'. "
+            f"Valid: {sorted(MCP_SERVER_ENVIRONMENTS)}"
+        )
+    return value
+
+
 def register_mcp_server(server_id: str, config: dict) -> bool:
     """Insert a new MCP server. Returns False if server_id already exists."""
     validate_mcp_registration_target(server_id, str(config.get("url") or ""))
+    environment = _normalize_mcp_server_environment(config.get("environment"))
+    probes_enabled = bool(config.get("probes_enabled"))
     try:
         with _db_lock, get_conn() as conn:
             conn.execute(
@@ -2095,8 +2144,8 @@ def register_mcp_server(server_id: str, config: dict) -> bool:
                 INSERT INTO mcp_servers
                   (server_id, url, description, allowed_tools, blocked_tools,
                    rate_limit, auth_type, auth_header, auth_token_env, verified,
-                   registered_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   environment, probes_enabled, registered_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     server_id,
@@ -2109,6 +2158,8 @@ def register_mcp_server(server_id: str, config: dict) -> bool:
                     config.get("auth_header", ""),
                     config.get("auth_token_env", ""),
                     False,
+                    environment,
+                    probes_enabled,
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
@@ -2118,6 +2169,20 @@ def register_mcp_server(server_id: str, config: dict) -> bool:
         if _is_integrity_error(e):
             return False
         raise
+
+
+def set_mcp_server_environment(
+    server_id: str, environment: str, probes_enabled: bool
+) -> bool:
+    """Persist the probe-authorization state for a server. Admin-only path;
+    the runtime probe gate reads this instead of any request flag."""
+    normalized = _normalize_mcp_server_environment(environment)
+    with _db_lock, get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE mcp_servers SET environment = ?, probes_enabled = ? WHERE server_id = ?",
+            (normalized, bool(probes_enabled), server_id),
+        )
+    return cursor.rowcount > 0
 
 
 def lookup_mcp_server(server_id: str) -> Optional[Dict[str, Any]]:
@@ -2742,6 +2807,7 @@ def approve_mcp_tool_baseline(
     tool_name: str,
     reviewer: str = "operator",
     reason: str = "",
+    principal_id: str = "",
 ) -> Dict[str, Any]:
     """Approve the current stored MCP tool definition as the new trusted baseline."""
     reviewer = reviewer or "operator"
@@ -2782,6 +2848,7 @@ def approve_mcp_tool_baseline(
             "server_id": server_id,
             "tool_name": tool_name,
             "role": reviewer,
+            "principal_id": principal_id,
             "action": "approve",
             "matched_rule": "tool_baseline_approved",
             "reason": reason,
@@ -2812,6 +2879,7 @@ def quarantine_mcp_tool(
     tool_name: str,
     reviewer: str = "operator",
     reason: str = "",
+    principal_id: str = "",
 ) -> Dict[str, Any]:
     """Keep or mark an MCP tool quarantined until an operator approves a new baseline."""
     reviewer = reviewer or "operator"
@@ -2863,6 +2931,7 @@ def quarantine_mcp_tool(
             "server_id": server_id,
             "tool_name": tool_name,
             "role": reviewer,
+            "principal_id": principal_id,
             "action": "quarantine",
             "matched_rule": "operator_quarantine",
             "reason": reason,

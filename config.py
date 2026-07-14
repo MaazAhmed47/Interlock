@@ -14,6 +14,19 @@ MCP_REGISTRY_ALLOWED_HOST_SUFFIXES = os.getenv(
     "MCP_REGISTRY_ALLOWED_HOST_SUFFIXES", ".web.val.run,.localhost.run"
 )
 
+
+def mcp_upstream_auth_allowed_env_vars() -> set[str]:
+    """
+    Explicit allowlist of environment-variable NAMES an MCP server may
+    reference for upstream auth tokens (comma-separated). Read at call time
+    so registration-time and call-time validation both see the current
+    value. Default deny: empty allowlist rejects every authenticated
+    upstream configuration.
+    """
+    raw = os.getenv("MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS", "")
+    return {name.strip() for name in raw.split(",") if name.strip()}
+
+
 # Threat levels
 THREAT_LEVELS = {"SAFE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 

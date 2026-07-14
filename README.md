@@ -132,10 +132,14 @@ For any hosted MCP endpoint that requires bearer or API-key auth, store the toke
 
 ```env
 HOSTED_MCP_TOKEN=<YOUR_NON_PRODUCTION_MCP_TOKEN>
+MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS=HOSTED_MCP_TOKEN
 ```
 
 Register the server with an admin-scoped Interlock API key, passing the
-upstream credential's environment-variable name only:
+upstream credential's environment-variable name only. Authenticated upstream
+configuration is default-deny: the variable name must also appear in
+`MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS`. Interlock-internal secrets such as
+`ADMIN_TOKEN` and `DATABASE_URL` can never be used as upstream MCP tokens.
 
 ```json
 {
@@ -446,8 +450,20 @@ curl -X POST http://localhost:8001/admin/keys \
 curl -X POST http://localhost:8001/admin/keys \
   -H "x-admin-token: $ADMIN_SCOPED_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"plan":"developer","label":"local-runtime","scopes":["mcp.call","mcp.read"],"role":"readonly_agent","fail_mode":"fail_open_safe"}'
+  -d '{"plan":"developer","label":"local-runtime","scopes":["mcp.call","mcp.read","mcp.discover"],"role":"readonly_agent","fail_mode":"fail_open_safe"}'
 ```
+
+MCP and receipt API-key scopes are independent least-privilege capabilities:
+
+| Scope | Grants |
+|---|---|
+| `mcp.call` | Proxy MCP tool calls and analyze planned tool chains. |
+| `mcp.read` | Read the registered-server inventory, persisted tools, and drift queue. |
+| `mcp.discover` | Discover and validate MCP tool definitions. |
+| `mcp.probe` | Run explicitly enabled non-production effective-permission and readback probes. |
+| `audit.read` | Read, verify, and resolve individual Security Receipts and their surface evidence. |
+| `audit.export` | Export batches of Security Receipts. |
+| `admin` | Deliberate super-scope: satisfies every API-key scope and gates registry/review/global-audit control-plane routes. |
 
 Set `INTERLOCK_ADMIN_KEY` to the first `raw_key` and `INTERLOCK_KEY` to the
 second. Runtime keys intentionally receive HTTP 403 on MCP control-plane
@@ -786,6 +802,10 @@ MCP authorization is bound to the API-key record. Each key has explicit
 `scopes` and a server-side `role`; a `role` still sent in the request body is
 ignored for backward compatibility and has no effect on enforcement. Audit
 rows and Security Receipts identify the resolved key prefix and effective role.
+The scopes are `mcp.call`, `mcp.read`, `mcp.discover`, `mcp.probe`,
+`audit.read`, and `audit.export`. `admin` is a deliberate super-scope that
+satisfies each API-key scope; ordinary scopes never imply one another or
+grant `admin`.
 
 1. Verify API key and rate limit.
 2. Load registered MCP server and trust state.
@@ -834,7 +854,20 @@ Some MCP providers expose generic tools whose manifest and schema stay stable wh
 POST /mcp/servers/{server_id}/probes/run
 ```
 
-Operators provide a non-production/canary tool call, the expected outcome (`denied` or `allowed`), and a safety note. Interlock runs only that explicit probe, hashes the arguments, normalizes the observed outcome to allowed, accepted, denied, unknown, or an inconclusive class, and records sanitized audit evidence. If a probe expected to be denied is observed as allowed or accepted, Interlock classifies it as `effective_permission_expansion` / `behavioral_scope_drift`, marks severity `high`, and quarantines the known tool for review. Denials, rate limits, upstream errors, malformed responses, missing resources, and network failures do not become auth-scope expansion findings.
+An admin must first store the registered server as `environment=non_production`
+with `probes_enabled=true`, either during registration or through
+`POST /mcp/servers/{server_id}/environment`. Running a probe then requires the
+`mcp.probe` scope plus that stored registry state. A request-body
+`non_production` flag is audit context only and cannot authorize a probe.
+Operators also provide the expected outcome (`denied` or `allowed`) and a
+safety note. Interlock runs only that explicit probe, hashes the arguments,
+normalizes the observed outcome to allowed, accepted, denied, unknown, or an
+inconclusive class, and records sanitized audit evidence. If a probe expected
+to be denied is observed as allowed or accepted, Interlock classifies it as
+`effective_permission_expansion` / `behavioral_scope_drift`, marks severity
+`high`, and quarantines the known tool for review. Denials, rate limits,
+upstream errors, malformed responses, missing resources, and network failures
+do not become auth-scope expansion findings.
 
 This is not generic OAuth introspection. It detects behavior change from an operator-approved canary probe when upstream permissions are opaque to MCP. It does not run destructive probes automatically and it does not store raw auth headers, tokens, probe arguments, or full response bodies.
 
@@ -848,7 +881,12 @@ For hidden side effects, Interlock also exposes an explicit canary route:
 POST /mcp/servers/{server_id}/effects/readback/run
 ```
 
-Operators provide a readback call and a target call. Interlock hashes both argument sets, runs readback -> target -> readback, then compares the before/after state hashes. If `expected_effect` is `no_change` and provider state changes, the target tool is quarantined with readback-effect evidence. This route requires `non_production=true` and a `safety_note`, and it is intentionally not scheduled or automatic.
+Operators provide a readback call and a target call. Interlock hashes both
+argument sets, runs readback -> target -> readback, then compares the
+before/after state hashes. If `expected_effect` is `no_change` and provider
+state changes, the target tool is quarantined with readback-effect evidence.
+This route requires `mcp.probe`, a stored non-production/probe-enabled server,
+and a `safety_note`; it is intentionally not scheduled or automatic.
 
 Readback evidence schema: [`readback-effect-drift-record.v1.json`](interlock-web/public/schemas/readback-effect-drift-record.v1.json).
 
@@ -987,20 +1025,28 @@ Expected: risky metadata/effect warnings and a validation decision.
 | `POST /scan` | Direct prompt scan path. |
 | `POST /scan/output` | Output data-leak scan path. |
 | `POST /inspect/tool-call` | Tool argument inspection plus optional role RBAC. |
-| `POST /mcp/validate-tool` | Validate an MCP tool definition. |
+| `POST /mcp/validate-tool` | Validate an MCP tool definition (`mcp.discover`). |
 | `POST /mcp/servers` | Register an MCP server (`admin` API-key scope). |
-| `GET /mcp/servers` | List registered MCP servers. |
-| `POST /mcp/discover` | Discover and validate tools from an MCP server. |
-| `GET /mcp/tools` | List persisted MCP tool metadata. |
-| `GET /mcp/tools/drifted` | List changed or quarantined MCP tools. |
+| `GET /mcp/servers` | List registered MCP servers (`mcp.read`). |
+| `POST /mcp/discover` | Discover and validate tools from an MCP server (`mcp.discover`). |
+| `GET /mcp/tools` | List persisted MCP tool metadata (`mcp.read`). |
+| `GET /mcp/tools/drifted` | List changed or quarantined MCP tools (`mcp.read`). |
 | `POST /mcp/servers/{server_id}/verify` | Verify a registered server (`admin` API-key scope). |
+| `POST /mcp/servers/{server_id}/environment` | Store non-production/probe-enabled state (`admin` API-key scope). |
 | `POST /mcp/servers/{server_id}/rebaseline` | Clear and rediscover a baseline (`admin` API-key scope). |
 | `DELETE /mcp/servers/{server_id}` | Unregister a server (`admin` API-key scope). |
 | `POST /mcp/tools/{server_id}/{tool_name}/approve` | Approve current tool definition (`admin` API-key scope). |
 | `POST /mcp/tools/{server_id}/{tool_name}/quarantine` | Quarantine a tool (`admin` API-key scope). |
 | `GET /mcp/audit` | List global MCP audit events (`admin` API-key scope). |
+| `POST /mcp/servers/{server_id}/probes/run` | Run an effective-permission probe (`mcp.probe` plus stored probe-enabled state). |
+| `POST /mcp/servers/{server_id}/effects/readback/run` | Run a provider-readback probe (`mcp.probe` plus stored probe-enabled state). |
+| `POST /mcp/chains/analyze` | Analyze a planned tool chain (`mcp.call`). |
+| `GET /audit/receipt/{audit_id}` | Read one Security Receipt (`audit.read`). |
+| `POST /audit/receipt/verify` | Verify a Security Receipt against context (`audit.read`). |
+| `GET /audit/evidence/surface/{surface_hash}` | Resolve canonical surface evidence (`audit.read`). |
+| `GET /audit/receipt/export` | Export Security Receipts (`audit.export`). |
 | `GET /admin/audit/verify` | Verify audit-log hash-chain integrity (admin token). |
-| `POST /mcp/call` | Proxy an MCP tool call through Interlock. |
+| `POST /mcp/call` | Proxy an MCP tool call through Interlock (`mcp.call`). |
 | `GET /admin/mcp/provenance-policy` | Read provenance policy. |
 | `PUT /admin/mcp/provenance-policy` | Update provenance policy. |
 | `POST /admin/shadow/targets` | Add shadow MCP probe targets. |
@@ -1138,6 +1184,7 @@ Common variables:
 | `ENABLE_API_DOCS` | Defaults to off in production and on in local/dev. |
 | `INTERLOCK_PROTECT_OUTBOUND_URLS` | Enables SSRF-oriented outbound URL checks; defaults on in production. |
 | `INTERLOCK_ALLOW_PRIVATE_OUTBOUND` | Override for controlled private/local outbound URLs; avoid on shared hosted deployments. |
+| `MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS` | Comma-separated allowlist of environment-variable names that registered MCP servers may use for upstream auth; default deny. |
 | `SHADOW_SCAN_ENABLED` | Opt-in background shadow MCP probing. |
 | `SHADOW_SCAN_INTERVAL` | Shadow scan interval in seconds. |
 

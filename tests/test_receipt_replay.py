@@ -368,6 +368,8 @@ def test_probe_row_binds_approved_surface_hash(monkeypatch):
             "description": "binding probe server",
             "allowed_tools": ["read_document"],
             "blocked_tools": [],
+            "environment": "non_production",
+            "probes_enabled": True,
         },
     )
     db.verify_mcp_server(server_id)

@@ -350,18 +350,26 @@ def _dedupe_findings(findings: List[Dict[str, str]]) -> List[Dict[str, str]]:
     return out
 
 
-def run_chain_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
+def run_chain_analysis(
+    payload: Dict[str, Any],
+    *,
+    principal: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     chain_id = str(payload.get("chain_id") or "").strip()
     steps = [dict(step or {}) for step in (payload.get("steps") or [])]
     if not chain_id:
         chain_id = f"chain:{_digest_value(steps)[-16:]}"
     profile = build_chain_profile(steps, chain_id=chain_id)
     evaluation = classify_chain_drift(steps)
+    # The audit identity comes from the authenticated key when provided;
+    # the request-body role is a simulation input, never a recorded identity.
+    principal = principal or {}
     audit = _log_chain_audit_event(
         chain_id=chain_id,
         profile=profile,
         evaluation=evaluation,
-        role=str(payload.get("role") or "operator"),
+        role=principal.get("reviewer") or str(payload.get("role") or "operator"),
+        principal_id=principal.get("principal_id") or "",
     )
     audit_id = int(audit.get("id") or 0)
     return {
@@ -382,7 +390,12 @@ def run_chain_analysis(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _log_chain_audit_event(
-    *, chain_id: str, profile: Dict[str, Any], evaluation: Dict[str, Any], role: str
+    *,
+    chain_id: str,
+    profile: Dict[str, Any],
+    evaluation: Dict[str, Any],
+    role: str,
+    principal_id: str = "",
 ) -> Dict[str, Any]:
     action = evaluation.get("action") or "monitor"
     drift_detected = bool(evaluation.get("drift_detected"))
@@ -390,6 +403,7 @@ def _log_chain_audit_event(
         "server_id": "multi-step-chain",
         "tool_name": chain_id,
         "role": role or "operator",
+        "principal_id": principal_id,
         "action": action,
         "matched_rule": "chain_drift",
         "reason": evaluation.get("reason") or "",

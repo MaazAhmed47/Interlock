@@ -310,7 +310,13 @@ class CreateKeyRequest(BaseModel):
     rate_per_min: Optional[int] = None
     custom_policy: Optional[Dict[str, Any]] = None
     siem_configs: Optional[List[Dict[str, Any]]] = None
-    scopes: Optional[List[str]] = Field(None, description="mcp.call | mcp.read | admin")
+    scopes: Optional[List[str]] = Field(
+        None,
+        description=(
+            "mcp.call | mcp.read | mcp.discover | mcp.probe | "
+            "audit.read | audit.export | admin"
+        ),
+    )
     role: Optional[str] = Field(None, description="Server-bound MCP agent role")
 
 

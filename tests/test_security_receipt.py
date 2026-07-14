@@ -55,7 +55,11 @@ def seeded_db():
     global TEST_KEY
     db.DB_PATH = TEST_DB
     db.init_db()
-    TEST_KEY = db.generate_key("free", label="test-receipt")["raw_key"]
+    TEST_KEY = db.generate_key(
+        "free",
+        label="test-receipt",
+        scopes=["mcp.call", "mcp.read", "audit.read", "audit.export"],
+    )["raw_key"]
 
     ids = {}
     ids["out"] = db.log_mcp_audit_event(

@@ -65,6 +65,17 @@ class MCPRegisterRequest(BaseModel):
     auth_type: Literal["none", "bearer", "x-api-key"] = "none"
     auth_header: Optional[str] = None
     auth_token_env: Optional[str] = None
+    # Probe authorization state. Fail closed: production + probes disabled
+    # unless the admin registering the server explicitly says otherwise.
+    environment: Literal["production", "non_production"] = "production"
+    probes_enabled: bool = False
+
+
+class MCPServerEnvironmentRequest(BaseModel):
+    """Admin-only update of a server's stored probe-authorization state."""
+
+    environment: Literal["production", "non_production"]
+    probes_enabled: bool = False
 
 
 class MCPDiscoverRequest(BaseModel):

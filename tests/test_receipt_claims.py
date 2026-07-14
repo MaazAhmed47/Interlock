@@ -229,7 +229,11 @@ def test_routes_verify_and_claims():
     import proxy
     from models.schemas import ReceiptVerifyRequest
 
-    test_key = db.generate_key("free", label="test-claims-routes")["raw_key"]
+    test_key = db.generate_key(
+        "free",
+        label="test-claims-routes",
+        scopes=["mcp.call", "mcp.read", "audit.read"],
+    )["raw_key"]
 
     detection = _detection_row("route-server", "read_document")
     _blocked_attempt("route-server", "read_document")

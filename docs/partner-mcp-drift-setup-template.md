@@ -79,7 +79,7 @@ curl -s -X POST http://localhost:8001/admin/keys \
 # (c) runtime key; role is resolved from this record, never from /mcp/call input
 curl -s -X POST http://localhost:8001/admin/keys \
   -H "x-admin-token: $SCOPED" -H "Content-Type: application/json" \
-  -d '{"plan":"developer","label":"mcp-drift-runtime","scopes":["mcp.call","mcp.read"],"role":"data_analyst","fail_mode":"fail_open_safe"}'
+  -d '{"plan":"developer","label":"mcp-drift-runtime","scopes":["mcp.call","mcp.read","mcp.discover","audit.read","audit.export"],"role":"data_analyst","fail_mode":"fail_open_safe"}'
 # -> copy the returned raw_key into RUNTIME_KEY below
 
 export ADMIN_KEY='<your-admin-scoped-interlock-api-key>'
@@ -88,6 +88,21 @@ export RUNTIME_KEY='<your-runtime-interlock-api-key>'
 
 A runtime-only key intentionally receives HTTP 403 on server register, verify,
 rebaseline, tool approve/quarantine, server delete, and global audit listing.
+The available API-key scopes are independent:
+
+| Scope | Grants |
+|---|---|
+| `mcp.call` | Proxy MCP calls and analyze planned chains. |
+| `mcp.read` | Read registered servers, persisted tools, and the drift queue. |
+| `mcp.discover` | Discover and validate MCP tool definitions. |
+| `mcp.probe` | Run manual effective-permission/readback probes for servers stored as non-production and probe-enabled. |
+| `audit.read` | Read/verify receipts and resolve surface evidence. |
+| `audit.export` | Export receipt batches. |
+| `admin` | Deliberate super-scope: satisfies every API-key scope and gates registry/review/global-audit control-plane routes. |
+
+This template's runtime key includes discovery and receipt scopes because the
+steps below use those routes. Do not grant `mcp.probe` unless this evaluation
+also needs an explicitly enabled non-production canary probe.
 
 ---
 
@@ -120,8 +135,17 @@ put the token in the request body:
 "auth_token_env": "MCP_SERVER_TOKEN" // env var NAME; value lives in the container
 ```
 
-Then add `MCP_SERVER_TOKEN=...` to `.env` and `docker compose up -d --build`.
-Interlock reads that env var at discovery/call time and injects the header upstream.
+Then add both lines to `.env` and run `docker compose up -d --build`:
+
+```env
+MCP_SERVER_TOKEN=<YOUR_NON_PRODUCTION_MCP_TOKEN>
+MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS=MCP_SERVER_TOKEN
+```
+
+Authenticated upstream configuration is default-deny: the variable name must
+be explicitly allowlisted, and Interlock-internal secrets such as `ADMIN_TOKEN`
+and `DATABASE_URL` can never be used as upstream MCP tokens. Interlock reads the
+allowlisted token at discovery/call time and injects the header upstream.
 
 **Mark the server verified** (registration returns `verified:false`; `/mcp/call`
 refuses to proxy until verified — this is the deliberate human‑in‑the‑loop gate):
@@ -171,8 +195,11 @@ Optionally **pin** the current surface as an explicit operator‑approved baseli
 ```bash
 curl -s -X POST http://localhost:8001/mcp/tools/eval-postgres/write_query/approve \
   -H "x-api-key: $ADMIN_KEY" -H "Content-Type: application/json" \
-  -d '{"reviewer":"operator","reason":"Initial trusted baseline"}'
+  -d '{"reason":"Initial trusted baseline"}'
 ```
+
+The recorded reviewer and `principal_id` come from the authenticated admin key;
+caller-supplied reviewer text is ignored for compatibility.
 
 > **Naming gotcha for DB tools.** The discovery‑time validator pre‑blocks tools
 > whose **name** matches `execute*/eval*/run*`, `delete*/drop*/truncate*/wipe*`,
@@ -345,6 +372,7 @@ cd interlock-web && npm install && npm run dev
 | Execute through gateway | `POST /mcp/call` |
 | Audit + receipts | `GET /mcp/audit` · `GET /audit/receipt/{id}` · `GET /audit/receipt/export` · `GET /audit/evidence/surface/{hash}` |
 
-Runtime/read routes use `x-api-key: $RUNTIME_KEY`. Registry control and global
-audit listing use `x-api-key: $ADMIN_KEY`. `/admin/*` key-management routes use
-`x-admin-token` instead.
+Runtime, discovery, and receipt routes use `x-api-key: $RUNTIME_KEY` with the
+explicit scopes minted above. Registry control and global audit listing use
+`x-api-key: $ADMIN_KEY`; `admin` is the deliberate API-key super-scope.
+`/admin/*` key-management routes use `x-admin-token` instead.

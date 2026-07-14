@@ -34,7 +34,9 @@ TEST_KEY = None  # minted in the seeded_db fixture via db.generate_key
 def seeded_db():
     global TEST_KEY
     db.init_db()
-    TEST_KEY = db.generate_key("free", label="test-hosted-safety")["raw_key"]
+    TEST_KEY = db.generate_key("free", label="test-hosted-safety", scopes=["admin"])[
+        "raw_key"
+    ]
     yield
     for path in (TEST_DB, TEST_DB + "-wal", TEST_DB + "-shm"):
         try:

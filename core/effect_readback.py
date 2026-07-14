@@ -237,17 +237,16 @@ def classify_readback_effect_drift(
 
 
 async def run_effect_readback_observer(
-    server_id: str, probe_input: Dict[str, Any]
+    server_id: str,
+    probe_input: Dict[str, Any],
+    *,
+    principal: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Run one explicit non-production readback canary against a registered MCP server."""
+    from core.effective_permission import probe_authorization_gate
+
     start = time.perf_counter()
     probe = _build_probe(server_id, probe_input)
-    if not probe["non_production"]:
-        return {
-            "ok": False,
-            "error": "non_production_required",
-            "message": "Readback effect probes require non_production=true.",
-        }
     if not probe["safety_note"].strip():
         return {
             "ok": False,
@@ -263,6 +262,10 @@ async def run_effect_readback_observer(
     if preflight:
         return preflight
     assert server is not None
+    gate_error = probe_authorization_gate(server)
+    if gate_error:
+        return gate_error
+    probe["principal"] = dict(principal or {})
 
     before_call = await _call_upstream_tool(
         server, probe["readback_tool_name"], probe["readback_arguments"]
@@ -495,10 +498,12 @@ def _log_readback_audit_event(
 ) -> Dict[str, Any]:
     drift_detected = bool(evaluation.get("drift_detected"))
     action = evaluation.get("action") or "monitor"
+    principal = probe.get("principal") or {}
     event = {
         "server_id": probe["server_id"],
         "tool_name": probe["target_tool_name"],
-        "role": "operator",
+        "role": principal.get("reviewer") or "operator",
+        "principal_id": principal.get("principal_id") or "",
         "action": action,
         "matched_rule": "effect_readback_observer",
         "reason": evaluation.get("reason") or "",
