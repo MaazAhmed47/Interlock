@@ -191,18 +191,32 @@ def verify_key(api_key: Optional[str]):
     return record, raw
 
 
+def require_scope(x_api_key: Optional[str], required_scope: str):
+    """
+    Verify the API key AND its capability scope. Returns (key_record, raw_key).
+
+    `admin` is a deliberate super-scope for backward-compatible
+    administration: it satisfies every non-admin scope check. The reverse
+    never holds — ordinary runtime/read scopes do not grant each other and
+    never grant `admin`.
+    """
+    record, raw = verify_key(x_api_key)
+    scopes = set(record.get("scopes") or [])
+    if required_scope not in scopes and not (
+        required_scope != "admin" and "admin" in scopes
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=f"API key lacks required scope: {required_scope}",
+        )
+    return record, raw
+
+
 def require_api_scope(required_scope: str):
     """Build one FastAPI dependency for API-key capability enforcement."""
 
     def dependency(x_api_key: Optional[str] = Header(None)):
-        record, raw = verify_key(x_api_key)
-        scopes = set(record.get("scopes") or [])
-        if required_scope not in scopes:
-            raise HTTPException(
-                status_code=403,
-                detail=f"API key lacks required scope: {required_scope}",
-            )
-        return record, raw
+        return require_scope(x_api_key, required_scope)
 
     return dependency
 

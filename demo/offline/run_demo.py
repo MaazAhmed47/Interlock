@@ -137,7 +137,15 @@ class Demo:
             die(f"could not set mock phase for {path}: {payload}")
         return payload
 
-    def register_and_verify(self, server_id, mock_path, allowed_tools):
+    def register_and_verify(self, server_id, mock_path, allowed_tools, probes=False):
+        """
+        Register + verify a demo server.
+
+        probes=True stores the server as non-production and probe-enabled.
+        Probe authorization is decided by that STORED registry state, not by
+        any request flag, so scenario B's effective-permission probe needs it.
+        Everything here targets the bundled local mock server.
+        """
         status, payload = self.gw(
             "POST",
             "/mcp/servers",
@@ -147,6 +155,8 @@ class Demo:
                 "description": f"Offline demo server ({mock_path})",
                 "allowed_tools": allowed_tools,
                 "blocked_tools": [],
+                "environment": "non_production" if probes else "production",
+                "probes_enabled": probes,
             },
         )
         if (
@@ -154,6 +164,16 @@ class Demo:
             and (payload or {}).get("error") != "already_exists"
         ):
             die(f"register {server_id} failed [{status}]: {payload}")
+        if (payload or {}).get("error") == "already_exists" and probes:
+            # Row survives from an earlier run: re-assert the stored
+            # probe-authorization state through the admin path.
+            status, payload = self.gw(
+                "POST",
+                f"/mcp/servers/{server_id}/environment",
+                {"environment": "non_production", "probes_enabled": True},
+            )
+            if status != 200:
+                die(f"probe-enable {server_id} failed [{status}]: {payload}")
         status, payload = self.gw("POST", f"/mcp/servers/{server_id}/verify")
         if status != 200:
             die(f"verify {server_id} failed [{status}]: {payload}")
@@ -239,7 +259,9 @@ class Demo:
         )
 
         step(f"Register + verify '{CRM_SERVER}' (behavioral-drift scenario)")
-        self.register_and_verify(CRM_SERVER, "/crm", ["update_record"])
+        # Probe-enabled: scenario B runs an effective-permission probe, which
+        # requires stored non-production + probes_enabled registry state.
+        self.register_and_verify(CRM_SERVER, "/crm", ["update_record"], probes=True)
 
         step("Discover clean baselines")
         docs = self.discover(DOCS_SERVER, "/docs")
@@ -410,7 +432,9 @@ class Demo:
         print("  effective-permission expansion and quarantines the tool.")
 
         if server_id != CRM_SERVER:
-            self.register_and_verify(server_id, mock_path, ["update_record"])
+            self.register_and_verify(
+                server_id, mock_path, ["update_record"], probes=True
+            )
         self.restore_baseline(server_id, mock_path, ["update_record"])
 
         probe_body = {

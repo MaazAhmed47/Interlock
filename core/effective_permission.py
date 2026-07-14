@@ -234,19 +234,37 @@ def evaluate_effective_permission_probe(
     return base
 
 
+def probe_authorization_gate(
+    server: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """
+    Manual probes may only run against servers an admin explicitly stored as
+    non-production AND probe-enabled in the registry. The request body's
+    non_production flag and safety_note are audit context, never
+    authorization. Fail closed.
+    """
+    if server.get("environment") == "non_production" and server.get("probes_enabled"):
+        return None
+    return {
+        "ok": False,
+        "error": "probes_not_enabled",
+        "message": (
+            f"MCP server '{server.get('server_id')}' is not stored as a "
+            "non-production, probe-enabled server. An admin must mark it "
+            "non_production with probes_enabled=true before probes can run."
+        ),
+    }
+
+
 async def run_effective_permission_probe(
     server_id: str,
     probe_input: Dict[str, Any],
+    *,
+    principal: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Run one explicit non-production probe against a registered MCP server."""
     start = time.perf_counter()
     probe = _build_probe(server_id, probe_input)
-    if not probe["non_production"]:
-        return {
-            "ok": False,
-            "error": "non_production_required",
-            "message": "Effective-permission probes require non_production=true.",
-        }
     if not probe["safety_note"].strip():
         return {
             "ok": False,
@@ -260,6 +278,9 @@ async def run_effective_permission_probe(
     # _preflight_probe_target returns an error for a missing server, so reaching
     # this point guarantees a non-None server record — narrow it for the checker.
     assert server is not None
+    gate_error = probe_authorization_gate(server)
+    if gate_error:
+        return gate_error
 
     stored_probe = db.upsert_mcp_permission_probe(probe)
     observed = await _call_upstream_for_observation(server, probe)
@@ -278,6 +299,7 @@ async def run_effective_permission_probe(
         probe=stored_probe,
         evaluation=evaluation,
         scan_time_ms=round((time.perf_counter() - start) * 1000, 2),
+        principal=principal,
     )
     audit_id = int(audit.get("id") or 0)
     if not audit_id:
@@ -431,15 +453,18 @@ def _log_probe_audit_event(
     probe: Dict[str, Any],
     evaluation: Dict[str, Any],
     scan_time_ms: float,
+    principal: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     finding_types = evaluation.get("finding_types") or []
     drift_detected = bool(evaluation.get("drift_detected"))
     action = evaluation.get("decision") or "monitor"
     surface_hash = _approved_surface_hash(probe["server_id"], probe["tool_name"])
+    principal = principal or {}
     event = {
         "server_id": probe["server_id"],
         "tool_name": probe["tool_name"],
-        "role": "operator",
+        "role": principal.get("reviewer") or "operator",
+        "principal_id": principal.get("principal_id") or "",
         "action": action,
         "matched_rule": "effective_permission_probe",
         "reason": evaluation.get("reason") or "",

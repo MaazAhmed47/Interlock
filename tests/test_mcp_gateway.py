@@ -415,6 +415,7 @@ def test_discovery_metadata_and_persistence():
 
 
 def test_discovery_sends_bearer_upstream_auth_from_env(monkeypatch):
+    monkeypatch.setenv("MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS", "TEST_MCP_BEARER_TOKEN")
     monkeypatch.setenv("TEST_MCP_BEARER_TOKEN", "secret-bearer-token")
     db.register_mcp_server(
         "_test_discovery_bearer",
@@ -458,7 +459,10 @@ def test_server_rebaseline_resets_tool_metadata_without_losing_auth(monkeypatch)
     from fastapi import HTTPException
 
     server_id = "_test_rebaseline_server"
-    api_key = db.generate_key("free", label="test-rebaseline")["raw_key"]
+    api_key = db.generate_key("free", label="test-rebaseline", scopes=["admin"])[
+        "raw_key"
+    ]
+    monkeypatch.setenv("MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS", "TEST_REBASELINE_TOKEN")
     monkeypatch.setenv("TEST_REBASELINE_TOKEN", "test-token")
     db.register_mcp_server(
         server_id,
@@ -1103,6 +1107,7 @@ def test_discovery_existing_tool_quarantine_surfaced_in_response():
 
 
 def test_call_sends_x_api_key_upstream_auth_and_does_not_log_token(monkeypatch):
+    monkeypatch.setenv("MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS", "TEST_MCP_X_API_KEY")
     monkeypatch.setenv("TEST_MCP_X_API_KEY", "secret-x-api-key")
     db.register_mcp_server(
         "_test_call_x_api_key",

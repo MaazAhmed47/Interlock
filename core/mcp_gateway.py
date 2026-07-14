@@ -83,9 +83,48 @@ TRUSTED_MCP_SERVERS = {
 UPSTREAM_AUTH_TYPES = {"none", "bearer", "x-api-key"}
 AUTH_HEADER_RE = re.compile(r"^[A-Za-z0-9-]+$")
 
+# Interlock-internal secrets and infrastructure credentials. Never usable as
+# upstream MCP auth tokens, even when an operator allowlists them by mistake.
+FORBIDDEN_UPSTREAM_TOKEN_ENV_VARS = {
+    "ADMIN_TOKEN",
+    "DATABASE_URL",
+    "REDIS_URL",
+    "FIREWALL_DB_PATH",
+    "GROQ_API_KEY",
+    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "SLACK_WEBHOOK_URL",
+    "DATADOG_API_KEY",
+    "PAGERDUTY_KEY",
+}
+
 
 class UpstreamAuthConfigError(ValueError):
     """Raised when upstream MCP auth is configured unsafely or incompletely."""
+
+
+def _validate_upstream_token_env(auth_token_env: str) -> None:
+    """
+    Enforce the explicit env-var allowlist for upstream auth tokens.
+
+    Called from _normalize_upstream_auth_config, which runs both at
+    registration and again when headers are resolved before a call — a
+    server registered under an older allowlist fails closed at call time.
+    Error messages name the variable, never its value.
+    """
+    from config import mcp_upstream_auth_allowed_env_vars
+
+    if auth_token_env in FORBIDDEN_UPSTREAM_TOKEN_ENV_VARS:
+        raise UpstreamAuthConfigError(
+            f"Env var '{auth_token_env}' is an Interlock-internal secret and "
+            "can never be used as an upstream MCP auth token."
+        )
+    if auth_token_env not in mcp_upstream_auth_allowed_env_vars():
+        raise UpstreamAuthConfigError(
+            f"Env var '{auth_token_env}' is not allowlisted for upstream MCP "
+            "auth. Add it to MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS to permit it."
+        )
 
 
 def _normalize_upstream_auth_config(config: Optional[Dict[str, Any]]) -> Dict[str, str]:
@@ -110,6 +149,7 @@ def _normalize_upstream_auth_config(config: Optional[Dict[str, Any]]) -> Dict[st
         raise UpstreamAuthConfigError(
             "Upstream auth is enabled but auth_token_env is not configured."
         )
+    _validate_upstream_token_env(auth_token_env)
     if not auth_header or not AUTH_HEADER_RE.fullmatch(auth_header):
         raise UpstreamAuthConfigError("Upstream auth_header is invalid.")
 

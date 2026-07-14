@@ -25,6 +25,7 @@ from models.schemas import (
     MCPDiscoverRequest,
     MCPRebaselineRequest,
     MCPRegisterRequest,
+    MCPServerEnvironmentRequest,
     MCPToolCallRequest,
     MCPToolReviewRequest,
     MCPToolValidateRequest,
@@ -38,6 +39,18 @@ control_plane_router = APIRouter(
 MAX_MCP_SERVER_LIMIT = 100
 MAX_MCP_TOOL_LIMIT = 500
 MAX_MCP_AUDIT_LIMIT = 500
+
+
+def _derived_identity(key_record: dict) -> dict:
+    """
+    Reviewer/principal identity derived from the authenticated key record.
+    Request bodies never contribute to recorded identity — a caller-supplied
+    `reviewer` or `role` string must not enter the hash-chained audit log.
+    """
+    key_prefix = key_record.get("key_prefix") or str(key_record.get("id") or "")
+    label = (key_record.get("label") or "").strip()
+    reviewer = f"{label} (key:{key_prefix})" if label else f"key:{key_prefix}"
+    return {"reviewer": reviewer, "principal_id": key_prefix}
 
 
 def _tool_inventory_with_server_policy(
@@ -111,7 +124,7 @@ async def mcp_list_servers(
     x_api_key: Optional[str] = Header(None),
 ):
     """List all registered MCP servers."""
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "mcp.read")
     safe_limit = clamp_limit(limit, default=100, maximum=MAX_MCP_SERVER_LIMIT)
     return {
         "servers": list_mcp_servers(
@@ -125,7 +138,7 @@ async def mcp_register(
     request: MCPRegisterRequest, x_api_key: Optional[str] = Header(None)
 ):
     """Register a new MCP server (requires manual verification before use)."""
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "admin")
     try:
         ensure_safe_outbound_url(request.url, context="MCP server")
     except OutboundUrlRejected as exc:
@@ -145,7 +158,8 @@ async def mcp_register(
 @control_plane_router.post("/mcp/servers/{server_id}/verify")
 async def mcp_verify_server(server_id: str, x_api_key: Optional[str] = Header(None)):
     """Mark a registered MCP server verified after manual operator review."""
-    proxy.verify_key(x_api_key)
+    key_info, _ = proxy.require_scope(x_api_key, "admin")
+    identity = _derived_identity(key_info)
     verified = db.verify_mcp_server(server_id)
     if not verified:
         raise HTTPException(status_code=404, detail="MCP server not found.")
@@ -158,7 +172,8 @@ async def mcp_verify_server(server_id: str, x_api_key: Optional[str] = Header(No
         {
             "server_id": server_id,
             "tool_name": "",
-            "role": "operator",
+            "role": identity["reviewer"],
+            "principal_id": identity["principal_id"],
             "action": "verify",
             "matched_rule": "manual_server_verification",
             "reason": "MCP server manually verified after operator review.",
@@ -176,6 +191,53 @@ async def mcp_verify_server(server_id: str, x_api_key: Optional[str] = Header(No
     return {"ok": True, "server_id": server_id, "verified": True, "server": server}
 
 
+@control_plane_router.post("/mcp/servers/{server_id}/environment")
+async def mcp_set_server_environment(
+    server_id: str,
+    request: MCPServerEnvironmentRequest,
+    x_api_key: Optional[str] = Header(None),
+):
+    """Admin-only: persist a server's probe-authorization state.
+
+    This is the ONLY path that can mark a server non-production and
+    probe-enabled; the runtime probe gate reads this stored state instead
+    of any request flag.
+    """
+    key_info, _ = proxy.require_scope(x_api_key, "admin")
+    identity = _derived_identity(key_info)
+    updated = db.set_mcp_server_environment(
+        server_id, request.environment, request.probes_enabled
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="MCP server not found.")
+
+    server = db.lookup_mcp_server(server_id)
+    db.log_mcp_audit_event(
+        {
+            "server_id": server_id,
+            "tool_name": "",
+            "role": identity["reviewer"],
+            "principal_id": identity["principal_id"],
+            "action": "environment_update",
+            "matched_rule": "server_environment_update",
+            "reason": (
+                f"MCP server environment set to {request.environment} with "
+                f"probes_enabled={bool(request.probes_enabled)}."
+            ),
+            "effects": [],
+            "side_effect": "unknown",
+            "data_classes": [],
+            "externality": "unknown",
+            "verification_level": "manual",
+            "confidence": 1.0,
+            "warnings": [],
+            "argument_keys": [],
+            "blocked_by": "",
+        }
+    )
+    return {"ok": True, "server_id": server_id, "server": server}
+
+
 @router.post("/mcp/discover")
 async def mcp_discover(
     request: MCPDiscoverRequest, x_api_key: Optional[str] = Header(None)
@@ -184,7 +246,7 @@ async def mcp_discover(
     Discover tools from an MCP server.
     Every tool is validated for malicious patterns before being returned.
     """
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "mcp.discover")
     try:
         ensure_safe_outbound_url(request.server_url, context="MCP discovery")
     except OutboundUrlRejected as exc:
@@ -199,7 +261,7 @@ async def mcp_rebaseline_server(
     x_api_key: Optional[str] = Header(None),
 ):
     """Reset a registered server's stored tool baseline and rediscover it."""
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "admin")
     if not request.confirm_rebaseline:
         raise HTTPException(
             status_code=400,
@@ -232,7 +294,7 @@ async def mcp_tools(
     x_api_key: Optional[str] = Header(None),
 ):
     """List persisted MCP tool metadata, optionally for one server."""
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "mcp.read")
     safe_limit = clamp_limit(limit, default=100, maximum=MAX_MCP_TOOL_LIMIT)
     return {
         "tools": _tool_inventory_with_server_policy(
@@ -249,7 +311,7 @@ async def mcp_drifted_tools(
     x_api_key: Optional[str] = Header(None),
 ):
     """List MCP tools that need operator review because they changed or are quarantined."""
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "mcp.read")
     safe_limit = clamp_limit(limit, default=100, maximum=MAX_MCP_TOOL_LIMIT)
     return {
         "tools": db.list_drifted_mcp_tools(
@@ -265,13 +327,19 @@ async def mcp_approve_tool_baseline(
     request: MCPToolReviewRequest,
     x_api_key: Optional[str] = Header(None),
 ):
-    """Approve the current MCP tool definition as the new trusted baseline."""
-    proxy.verify_key(x_api_key)
+    """Approve the current MCP tool definition as the new trusted baseline.
+
+    request.reviewer is retained for wire compatibility but deliberately
+    ignored — the recorded reviewer is derived from the authenticated key.
+    """
+    key_info, _ = proxy.require_scope(x_api_key, "admin")
+    identity = _derived_identity(key_info)
     result = db.approve_mcp_tool_baseline(
         server_id,
         tool_name,
-        reviewer=request.reviewer or "operator",
+        reviewer=identity["reviewer"],
         reason=request.reason or "",
+        principal_id=identity["principal_id"],
     )
     if not result.get("ok"):
         raise HTTPException(status_code=404, detail="MCP tool metadata not found.")
@@ -287,13 +355,19 @@ async def mcp_quarantine_tool(
     request: MCPToolReviewRequest,
     x_api_key: Optional[str] = Header(None),
 ):
-    """Keep or mark an MCP tool quarantined until an operator approves it."""
-    proxy.verify_key(x_api_key)
+    """Keep or mark an MCP tool quarantined until an operator approves it.
+
+    request.reviewer is retained for wire compatibility but deliberately
+    ignored — the recorded reviewer is derived from the authenticated key.
+    """
+    key_info, _ = proxy.require_scope(x_api_key, "admin")
+    identity = _derived_identity(key_info)
     result = db.quarantine_mcp_tool(
         server_id,
         tool_name,
-        reviewer=request.reviewer or "operator",
+        reviewer=identity["reviewer"],
         reason=request.reason or "",
+        principal_id=identity["principal_id"],
     )
     if not result.get("ok"):
         raise HTTPException(status_code=404, detail="MCP tool metadata not found.")
@@ -308,20 +382,25 @@ async def mcp_run_effective_permission_probe(
     request: MCPEffectivePermissionProbeRequest,
     x_api_key: Optional[str] = Header(None),
 ):
-    """Run one manual non-production effective-permission probe."""
-    proxy.verify_key(x_api_key)
-    if not request.non_production:
-        raise HTTPException(
-            status_code=400,
-            detail="Effective-permission probes require non_production=true.",
-        )
+    """Run one manual effective-permission probe.
+
+    Authorization is the mcp.probe scope PLUS the server's stored registry
+    state (non-production and probe-enabled). The request body's
+    non_production flag and safety_note are recorded as audit context only.
+    """
+    key_info, _ = proxy.require_scope(x_api_key, "mcp.probe")
     if not (request.safety_note or "").strip():
         raise HTTPException(
             status_code=400,
             detail="Effective-permission probes require a safety_note.",
         )
     payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
-    return await run_effective_permission_probe(server_id, payload)
+    result = await run_effective_permission_probe(
+        server_id, payload, principal=_derived_identity(key_info)
+    )
+    if result.get("error") == "probes_not_enabled":
+        raise HTTPException(status_code=403, detail=result.get("message"))
+    return result
 
 
 @router.post("/mcp/servers/{server_id}/effects/readback/run")
@@ -330,20 +409,24 @@ async def mcp_run_effect_readback_observer(
     request: MCPEffectReadbackProbeRequest,
     x_api_key: Optional[str] = Header(None),
 ):
-    """Run one manual non-production provider-readback effect probe."""
-    proxy.verify_key(x_api_key)
-    if not request.non_production:
-        raise HTTPException(
-            status_code=400,
-            detail="Readback effect probes require non_production=true.",
-        )
+    """Run one manual provider-readback effect probe.
+
+    Same authorization model as effective-permission probes: mcp.probe
+    scope PLUS stored non-production, probe-enabled registry state.
+    """
+    key_info, _ = proxy.require_scope(x_api_key, "mcp.probe")
     if not (request.safety_note or "").strip():
         raise HTTPException(
             status_code=400,
             detail="Readback effect probes require a safety_note.",
         )
     payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
-    return await run_effect_readback_observer(server_id, payload)
+    result = await run_effect_readback_observer(
+        server_id, payload, principal=_derived_identity(key_info)
+    )
+    if result.get("error") == "probes_not_enabled":
+        raise HTTPException(status_code=403, detail=result.get("message"))
+    return result
 
 
 @router.post("/mcp/chains/analyze")
@@ -352,20 +435,20 @@ async def mcp_analyze_chain(
     x_api_key: Optional[str] = Header(None),
 ):
     """Analyze a planned multi-step MCP tool chain before execution."""
-    proxy.verify_key(x_api_key)
+    key_info, _ = proxy.require_scope(x_api_key, "mcp.call")
     if not (request.safety_note or "").strip():
         raise HTTPException(
             status_code=400,
             detail="Chain analysis requires a safety_note.",
         )
     payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
-    return run_chain_analysis(payload)
+    return run_chain_analysis(payload, principal=_derived_identity(key_info))
 
 
 @control_plane_router.get("/mcp/audit")
 async def mcp_audit(limit: int = 100, x_api_key: Optional[str] = Header(None)):
     """List recent MCP audit decisions."""
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "admin")
     try:
         safe_limit = clamp_limit(limit, default=100, maximum=MAX_MCP_AUDIT_LIMIT)
         return {"events": db.list_mcp_audit_logs(safe_limit)}
@@ -379,7 +462,7 @@ async def mcp_validate(
     request: MCPToolValidateRequest, x_api_key: Optional[str] = Header(None)
 ):
     """Validate a single MCP tool definition for security issues."""
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "mcp.discover")
     start = time.time()
     result = validate_mcp_tool_definition(request.tool_definition)
     result.scan_time_ms = round((time.time() - start) * 1000, 2)
@@ -395,7 +478,7 @@ async def mcp_call(
     Proxy an MCP tool call through the gateway.
     Pipeline: trust check -> tool whitelist -> inspector -> RBAC -> forward -> response scan.
     """
-    key_info, raw_key = proxy.verify_key(x_api_key)
+    key_info, raw_key = proxy.require_scope(x_api_key, "mcp.call")
     proxy.check_rate(raw_key, key_info["rate_per_min"])
 
     return await proxy_mcp_tool_call(
@@ -413,7 +496,7 @@ async def mcp_call(
 @control_plane_router.delete("/mcp/servers/{server_id}")
 async def mcp_unregister(server_id: str, x_api_key: Optional[str] = Header(None)):
     """Remove an MCP server from the registry."""
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "admin")
     removed = db.unregister_mcp_server(server_id)
     if removed:
         return {"ok": True, "removed": server_id}

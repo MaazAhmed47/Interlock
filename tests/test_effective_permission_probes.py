@@ -86,9 +86,11 @@ def isolated_db(monkeypatch):
     # The registry allowlist rejects unknown external hosts; permit the
     # fixture host explicitly, the same way test_hosted_safety.py does.
     monkeypatch.setenv("MCP_REGISTRY_ALLOWED_HOSTS", "genesys.example")
+    # Upstream auth env vars must be explicitly allowlisted (default deny).
+    monkeypatch.setenv("MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS", "TEST_MCP_PROBE_TOKEN")
     db.DB_PATH = TEST_DB
     db.init_db()
-    key = db.generate_key("free", label="probe-test")["raw_key"]
+    key = db.generate_key("free", label="probe-test", scopes=["mcp.probe"])["raw_key"]
     monkeypatch.setenv("TEST_MCP_PROBE_TOKEN", "super-secret-token")
     yield key
     for suffix in ("", "-wal", "-shm"):
@@ -109,6 +111,9 @@ def seed_probe_server(server_id="_probe_genesys"):
             "rate_limit": 10,
             "auth_type": "bearer",
             "auth_token_env": "TEST_MCP_PROBE_TOKEN",
+            # Probes require stored non-production, probe-enabled state.
+            "environment": "non_production",
+            "probes_enabled": True,
         },
     )
     db.verify_mcp_server(server_id)
@@ -544,15 +549,18 @@ def test_inconclusive_probe_run_does_not_quarantine(isolated_db):
     assert stored_tool["drift_action"] == "allow"
 
 
-def test_probe_requires_non_production_flag(isolated_db):
+def test_probe_requires_registry_probe_enablement(isolated_db):
+    """The stored registry state is the authorization decision. A request-body
+    flag of non_production=true cannot enable probes on a production server."""
     server_id = seed_probe_server("_probe_requires_canary")
+    db.set_mcp_server_environment(server_id, "production", probes_enabled=False)
     request = proxy.MCPEffectivePermissionProbeRequest(
         probe_id="probe-prod-rejected",
         tool_name="call_genesys_api",
         arguments=PROBE_ARGS,
         expected_outcome="denied",
-        non_production=False,
-        safety_note="This should be rejected.",
+        non_production=True,
+        safety_note="This should be rejected by the registry gate.",
     )
 
     with pytest.raises(proxy.HTTPException) as exc:
@@ -564,4 +572,4 @@ def test_probe_requires_non_production_flag(isolated_db):
             )
         )
 
-    assert exc.value.status_code == 400
+    assert exc.value.status_code == 403

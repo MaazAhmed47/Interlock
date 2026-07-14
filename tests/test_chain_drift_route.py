@@ -69,14 +69,26 @@ def _request(**overrides):
 
 def test_chain_analyze_rejects_blank_safety_note():
     request = _request(safety_note="   ")
-    with patch("proxy.verify_key", return_value=({"rate_per_min": 60}, "test-key")):
+    with patch(
+        "proxy.require_scope",
+        return_value=(
+            {"rate_per_min": 60, "key_prefix": "test-prefix", "label": "chain"},
+            "test-key",
+        ),
+    ):
         with pytest.raises(HTTPException) as exc:
             asyncio.run(proxy.mcp_analyze_chain(request, x_api_key="test-key"))
     assert exc.value.status_code == 400
 
 
 def test_chain_analyze_denies_sensitive_read_to_external_send_and_emits_receipt():
-    with patch("proxy.verify_key", return_value=({"rate_per_min": 60}, "test-key")):
+    with patch(
+        "proxy.require_scope",
+        return_value=(
+            {"rate_per_min": 60, "key_prefix": "test-prefix", "label": "chain"},
+            "test-key",
+        ),
+    ):
         out = asyncio.run(proxy.mcp_analyze_chain(_request(), x_api_key="test-key"))
 
     assert out["ok"] is True
@@ -129,7 +141,13 @@ def test_chain_analyze_allows_read_only_chain():
             },
         ],
     )
-    with patch("proxy.verify_key", return_value=({"rate_per_min": 60}, "test-key")):
+    with patch(
+        "proxy.require_scope",
+        return_value=(
+            {"rate_per_min": 60, "key_prefix": "test-prefix", "label": "chain"},
+            "test-key",
+        ),
+    ):
         out = asyncio.run(proxy.mcp_analyze_chain(request, x_api_key="test-key"))
 
     assert out["ok"] is True

@@ -123,7 +123,7 @@ curl -X POST http://localhost:8001/admin/keys \
 curl -X POST http://localhost:8001/admin/keys \
   -H "x-admin-token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"plan":"developer","label":"cto-eval-runtime","scopes":["mcp.call","mcp.read"],"role":"readonly_agent","fail_mode":"fail_open_safe"}'
+  -d '{"plan":"developer","label":"cto-eval-runtime","scopes":["mcp.call","mcp.read","mcp.discover"],"role":"readonly_agent","fail_mode":"fail_open_safe"}'
 ```
 
 Each response returns `raw_key` once. Store both in your secret manager. Set
@@ -131,6 +131,22 @@ Each response returns `raw_key` once. Store both in your secret manager. Set
 runtime key. Runtime keys receive HTTP 403 on register, verify, rebaseline,
 approve, quarantine, delete, and global MCP-audit routes. `/mcp/call` resolves
 `readonly_agent` from the runtime-key record; a request-body role is ignored.
+
+Use these independent API-key scopes when assembling evaluation roles:
+
+| Scope | Evaluation capability |
+|---|---|
+| `mcp.call` | Proxy MCP calls and analyze planned chains. |
+| `mcp.read` | Read server, tool, and drift-queue state. |
+| `mcp.discover` | Discover and validate MCP tool definitions. |
+| `mcp.probe` | Run manual probes only for servers stored as non-production and probe-enabled. |
+| `audit.read` | Read and verify receipts and resolve their surface evidence. |
+| `audit.export` | Export receipt batches. |
+| `admin` | Deliberate super-scope for all API-key scopes plus registry, review, and global-audit control-plane routes. |
+
+Ordinary scopes do not imply one another. Grant only what the evaluator needs;
+the quickstart runtime key includes `mcp.discover` because step 7 validates a
+tool definition.
 
 ## 6. Register An MCP Server Policy
 

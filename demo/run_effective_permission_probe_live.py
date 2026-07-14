@@ -32,6 +32,8 @@ os.environ["INTERLOCK_ENV"] = "test"  # force non-production
 os.environ["INTERLOCK_ALLOW_PRIVATE_OUTBOUND"] = "true"  # allow the localhost upstream
 UPSTREAM_TOKEN = "super-secret-token"  # sent as Bearer; must never be stored
 os.environ["TEST_MCP_PROBE_TOKEN"] = UPSTREAM_TOKEN
+# Upstream auth env vars must be explicitly allowlisted (default deny).
+os.environ["MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS"] = "TEST_MCP_PROBE_TOKEN"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -180,7 +182,9 @@ def run():
     fails = []
     try:
         db.init_db()
-        api_key = db.generate_key("free", label="eperm-live")["raw_key"]
+        api_key = db.generate_key("free", label="eperm-live", scopes=["mcp.probe"])[
+            "raw_key"
+        ]
         db.register_mcp_server(
             SERVER_ID,
             {
@@ -191,6 +195,9 @@ def run():
                 "rate_limit": 10,
                 "auth_type": "bearer",
                 "auth_token_env": "TEST_MCP_PROBE_TOKEN",
+                # Probes require stored non-production, probe-enabled state.
+                "environment": "non_production",
+                "probes_enabled": True,
             },
         )
         db.verify_mcp_server(SERVER_ID)
