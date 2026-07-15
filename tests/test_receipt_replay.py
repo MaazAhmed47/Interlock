@@ -101,7 +101,7 @@ def test_new_event_gets_call_id():
     assert saved["call_id"], "log_mcp_audit_event must assign a call_id"
     row = db.get_mcp_audit_log(saved["id"])
     assert row["call_id"] == saved["call_id"]
-    assert row["hash_v"] == 2
+    assert row["hash_v"] == 3
 
 
 def test_call_ids_are_unique():
