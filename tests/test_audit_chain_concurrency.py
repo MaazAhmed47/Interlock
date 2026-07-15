@@ -112,16 +112,34 @@ def _patched_pg_conn(monkeypatch, fail_on=""):
 def _assert_serialized_append_shape(raw, table):
     sqls = [sql for sql, _params in raw.statements]
     assert sqls[0] == "BEGIN", f"append must open a transaction, got: {sqls}"
-    assert "pg_advisory_xact_lock" in sqls[1], (
-        f"append must take the chain advisory lock before reading the tip, "
-        f"got: {sqls}"
+    assert sqls[-1] == "COMMIT", f"append must commit the transaction, got: {sqls}"
+
+    lock_index = next(
+        (i for i, sql in enumerate(sqls) if "pg_advisory_xact_lock" in sql), None
     )
-    assert raw.statements[1][1] == (db._audit_chain_lock_key(table),)
-    assert f"SELECT integrity_hash FROM {table}" in sqls[2]
-    assert f"INSERT INTO {table}" in sqls[3]
-    assert "RETURNING id" in sqls[3]
-    assert sqls[4] == "COMMIT", f"append must commit the transaction, got: {sqls}"
-    assert len(sqls) == 5
+    assert lock_index is not None, f"append must take the chain lock, got: {sqls}"
+    assert raw.statements[lock_index][1] == (db._audit_chain_lock_key(table),)
+
+    tip_reads = [
+        i for i, sql in enumerate(sqls) if f"SELECT integrity_hash FROM {table}" in sql
+    ]
+    checkpoint_reads = [
+        i for i, sql in enumerate(sqls) if "FROM audit_chain_checkpoints" in sql
+    ]
+    assert tip_reads, f"append must read the current chain tip, got: {sqls}"
+
+    insert_index = next(
+        (i for i, sql in enumerate(sqls) if f"INSERT INTO {table}" in sql), None
+    )
+    assert insert_index is not None, f"append must insert the new row, got: {sqls}"
+    assert "RETURNING id" in sqls[insert_index]
+
+    chain_reads = tip_reads + checkpoint_reads
+    assert all(lock_index < read_index < insert_index for read_index in chain_reads), (
+        "append must lock before reading the chain and insert only after all "
+        f"tip/checkpoint reads, got: {sqls}"
+    )
+    assert insert_index < len(sqls) - 1, f"INSERT must precede COMMIT, got: {sqls}"
 
 
 def test_postgres_mcp_append_locks_chain_inside_one_transaction(monkeypatch):
@@ -261,7 +279,12 @@ from core import db
 assert db.USE_POSTGRES, "reset must run against Postgres"
 db.init_db()
 with db.get_conn() as conn:
-    conn.execute("TRUNCATE mcp_audit_log, admin_audit_log RESTART IDENTITY")
+    # Checkpoints too: an empty chain resumes from the newest retention
+    # checkpoint's boundary hash, and this test wants a true GENESIS start.
+    conn.execute(
+        "TRUNCATE mcp_audit_log, admin_audit_log, audit_chain_checkpoints "
+        "RESTART IDENTITY"
+    )
 print("RESET_OK")
 """
 
