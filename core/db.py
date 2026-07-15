@@ -27,6 +27,7 @@ from datetime import datetime, timezone, timedelta
 from threading import Lock
 from typing import Optional, List, Dict, Any
 from urllib.parse import urlparse
+from core import audit_envelope
 from core.mcp_drift import classify_tool_drift
 
 logger = logging.getLogger("interlock.db")
@@ -226,6 +227,10 @@ def _postgres_column_definition(definition: str, column: str = "") -> str:
 
 def _postgres_schema_sql(sql: str) -> str:
     converted = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+    # SQLite REAL is an 8-byte float; Postgres REAL is float4 and silently
+    # loses precision, which would break the fixed-precision float encoding
+    # in v3 audit envelopes (core/audit_envelope.py).
+    converted = re.sub(r"\bREAL\b", "DOUBLE PRECISION", converted)
     for column in _POSTGRES_BOOLEAN_COLUMNS:
         converted = re.sub(
             rf"(\b{column}\s+)INTEGER(\s+NOT NULL)?\s+DEFAULT\s+1\b",
@@ -555,6 +560,7 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
     result             TEXT    NOT NULL DEFAULT 'success',
     reason             TEXT    NOT NULL DEFAULT '',
     details            TEXT    NOT NULL DEFAULT '{}',
+    hash_v             INTEGER NOT NULL DEFAULT 1,
     prev_hash          TEXT    NOT NULL DEFAULT '',
     integrity_hash     TEXT    NOT NULL DEFAULT ''
 );
@@ -562,6 +568,24 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 CREATE INDEX IF NOT EXISTS idx_admin_audit_ts ON admin_audit_log(ts);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_action ON admin_audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_actor ON admin_audit_log(actor_auth_type, actor_subject, actor_token_prefix);
+
+CREATE TABLE IF NOT EXISTS audit_chain_checkpoints (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain                    TEXT    NOT NULL,
+    created_at               TEXT    NOT NULL,
+    last_deleted_id          INTEGER NOT NULL,
+    last_deleted_hash        TEXT    NOT NULL DEFAULT '',
+    first_retained_id        INTEGER,
+    first_retained_prev_hash TEXT    NOT NULL DEFAULT '',
+    deleted_count            INTEGER NOT NULL DEFAULT 0,
+    retention_policy         TEXT    NOT NULL DEFAULT '{}',
+    actor                    TEXT    NOT NULL DEFAULT '{}',
+    hash_v                   INTEGER NOT NULL DEFAULT 3,
+    prev_hash                TEXT    NOT NULL DEFAULT '',
+    integrity_hash           TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_chain_checkpoints_chain ON audit_chain_checkpoints(chain);
 
 CREATE TABLE IF NOT EXISTS shadow_mcp_servers (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -744,6 +768,11 @@ def init_db() -> None:
         _ensure_column(
             conn, "admin_audit_log", "integrity_hash", "TEXT NOT NULL DEFAULT ''"
         )
+        _ensure_column(conn, "admin_audit_log", "hash_v", "INTEGER NOT NULL DEFAULT 1")
+        # v3 envelopes commit float columns as fixed-precision decimals, which
+        # only round-trip losslessly when Postgres stores them as float8.
+        # Legacy deployments created them as REAL (float4); widen in place.
+        _ensure_double_precision(conn, "mcp_audit_log", ("confidence", "scan_time_ms"))
         _run_schema_statements(conn, indexes=True)
     logger.info(
         "%s DB initialized", "Postgres" if USE_POSTGRES else f"SQLite at {DB_PATH}"
@@ -856,9 +885,29 @@ def _compute_audit_hash_v2(
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
+# The exact hash versions each chain has ever written. Verification rejects
+# anything outside these sets (audit_envelope.require_hash_version): a v3 row
+# relabeled hash_v=4 must fail, not be reinterpreted under the v3 rule.
+_MCP_HASH_VERSIONS = (1, 2, audit_envelope.HASH_V3)
+_ADMIN_HASH_VERSIONS = (1, audit_envelope.HASH_V3)
+
+
 def _recompute_mcp_audit_hash(row: Dict[str, Any]) -> str:
-    """Recompute one mcp_audit_log row's integrity hash per its hash_v."""
-    if int(row.get("hash_v") or 1) >= 2:
+    """Recompute one mcp_audit_log row's integrity hash per its hash_v.
+
+    Raises audit_envelope.UnsupportedHashVersionError for any hash_v outside
+    exactly {1, 2, 3}; callers turn that into a failed verification.
+    """
+    version = audit_envelope.require_hash_version(row.get("hash_v"), _MCP_HASH_VERSIONS)
+    if version == audit_envelope.HASH_V3:
+        # v3: full-field canonical envelope — every stored security-
+        # significant column is committed (core/audit_envelope.py).
+        # strict=False: recomputing a possibly-tampered row must yield a
+        # non-matching hash, never an exception.
+        return audit_envelope.compute_hash_v3(
+            "mcp_audit_log", row, row.get("prev_hash") or "", strict=False
+        )
+    if version == 2:
         return _compute_audit_hash_v2(
             row.get("prev_hash") or "",
             row.get("ts") or "",
@@ -880,6 +929,113 @@ def _recompute_mcp_audit_hash(row: Dict[str, Any]) -> str:
         row.get("role") or "",
         row.get("reason") or "",
     )
+
+
+def _recompute_admin_audit_hash(row: Dict[str, Any]) -> str:
+    """Recompute one admin_audit_log row's integrity hash per its hash_v.
+
+    The admin chain only ever wrote v1 and v3; anything else (including 2)
+    raises audit_envelope.UnsupportedHashVersionError and fails verification.
+    """
+    version = audit_envelope.require_hash_version(
+        row.get("hash_v"), _ADMIN_HASH_VERSIONS
+    )
+    if version == audit_envelope.HASH_V3:
+        return audit_envelope.compute_hash_v3(
+            "admin_audit_log", row, row.get("prev_hash") or "", strict=False
+        )
+    return _compute_audit_hash(
+        row.get("prev_hash") or "",
+        row.get("ts") or "",
+        row.get("action") or "",
+        row.get("target_id") or "",
+        row.get("actor_role") or "",
+        row.get("reason") or "",
+    )
+
+
+def _latest_chain_checkpoint(conn, chain: str) -> Optional[Dict[str, Any]]:
+    """Newest retention checkpoint for one audit chain, or None."""
+    row = conn.execute(
+        "SELECT * FROM audit_chain_checkpoints WHERE chain = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (chain,),
+    ).fetchone()
+    return row_to_plain_dict(row) if row else None
+
+
+def _list_chain_checkpoints(conn, chain: str) -> List[Dict[str, Any]]:
+    """All retention checkpoints for one audit chain, oldest first."""
+    rows = conn.execute(
+        "SELECT * FROM audit_chain_checkpoints WHERE chain = ? ORDER BY id ASC",
+        (chain,),
+    ).fetchall()
+    return [row_to_plain_dict(row) for row in rows]
+
+
+def _verify_checkpoint_rows(checkpoints: List[Dict[str, Any]]) -> Optional[str]:
+    """
+    Verify one chain's retention checkpoints (their own hash chain from
+    GENESIS). Returns None when valid, else a failure reason.
+
+    Beyond the hash chain, each checkpoint's boundary fields must be
+    internally consistent — the checkpoint hash only proves the fields were
+    not mutated after the write, not that the writer recorded a coherent
+    boundary, and an actor with database write access can recompute the
+    checkpoint hashes at will. An honest prefix prune always satisfies:
+    last_deleted_id < first_retained_id, first_retained_prev_hash equal to
+    last_deleted_hash (both name the same boundary row), empty
+    first_retained_prev_hash when nothing was retained, and strictly
+    advancing deleted ranges across successive checkpoints.
+    """
+    prev_hash = "GENESIS"
+    prev_last_deleted_id: Optional[int] = None
+    for checkpoint in checkpoints:
+        # The stored hash_v is not inside the checkpoint envelope (the prefix
+        # pins the constant "3"), so it must be enforced here, exactly.
+        try:
+            audit_envelope.require_hash_version(
+                checkpoint.get("hash_v"), (audit_envelope.HASH_V3,)
+            )
+        except audit_envelope.UnsupportedHashVersionError:
+            return "unsupported checkpoint hash version"
+        stored = checkpoint.get("integrity_hash") or ""
+        if not stored:
+            return "checkpoint missing integrity hash"
+        if (checkpoint.get("prev_hash") or "") != prev_hash:
+            return "checkpoint chain link broken"
+        expected = audit_envelope.compute_hash_v3(
+            "audit_chain_checkpoint", checkpoint, prev_hash, strict=False
+        )
+        if expected != stored:
+            return "checkpoint hash mismatch"
+
+        last_deleted_id = int(checkpoint.get("last_deleted_id") or 0)
+        first_retained_id = checkpoint.get("first_retained_id")
+        boundary_prev = checkpoint.get("first_retained_prev_hash") or ""
+        if first_retained_id is not None:
+            if last_deleted_id >= int(first_retained_id):
+                return "checkpoint boundary ids out of order"
+            if boundary_prev != (checkpoint.get("last_deleted_hash") or ""):
+                return "checkpoint boundary hashes disagree"
+        elif boundary_prev != "":
+            return "checkpoint boundary hashes disagree"
+        if prev_last_deleted_id is not None and last_deleted_id <= prev_last_deleted_id:
+            return "checkpoint ranges not monotonic"
+        prev_last_deleted_id = last_deleted_id
+
+        prev_hash = stored
+    return None
+
+
+def _checkpoint_anchor(checkpoints: List[Dict[str, Any]]) -> str:
+    """
+    The hash the retained chain must start from: the newest checkpoint's
+    recorded last-deleted hash, or GENESIS when nothing was ever pruned.
+    """
+    if not checkpoints:
+        return "GENESIS"
+    return checkpoints[-1].get("last_deleted_hash") or "GENESIS"
 
 
 def _is_postgres_conn(conn) -> bool:
@@ -996,6 +1152,35 @@ def _ensure_column(conn, table: str, column: str, definition: str) -> None:
     except Exception:
         logger.exception("Failed to ensure column %s.%s", table, column)
         raise
+
+
+def _ensure_double_precision(conn, table: str, columns) -> None:
+    """
+    Widen Postgres float4 (REAL) columns to float8 in place.
+
+    No-op on SQLite (REAL is already 8-byte) and for columns already float8.
+    Widening is exact — existing float4 values convert without change.
+    """
+    if not _is_postgres_conn(conn):
+        return
+    _validate_identifier(table)
+    for column in columns:
+        _validate_identifier(column)
+        row = conn.execute(
+            """
+            SELECT data_type
+              FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = ?
+               AND column_name = ?
+            """,
+            (table, column),
+        ).fetchone()
+        data_type = str(row_value(row, "data_type", 0) or "").lower() if row else ""
+        if data_type == "real":
+            conn.execute(
+                f"ALTER TABLE {table} ALTER COLUMN {column} TYPE double precision"
+            )
 
 
 def _insert_returning_id(conn, sql: str, params) -> Optional[int]:
@@ -1421,7 +1606,23 @@ def _json_dumps_object(value: Any) -> str:
 def log_admin_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
     """Persist an auditable admin control-plane action."""
     now = event.get("ts") or datetime.now(timezone.utc).isoformat()
-    details = _json_dumps_object(event.get("details") or {})
+    # The exact values inserted below, keyed by column, so the v3 envelope
+    # hashes precisely what a verifier will read back from either backend.
+    record = {
+        "ts": now,
+        "actor_auth_type": event.get("actor_auth_type") or "",
+        "actor_role": event.get("actor_role") or "",
+        "actor_label": event.get("actor_label") or "",
+        "actor_email": event.get("actor_email") or "",
+        "actor_subject": event.get("actor_subject") or "",
+        "actor_token_prefix": event.get("actor_token_prefix") or "",
+        "action": event.get("action") or "",
+        "target_type": event.get("target_type") or "",
+        "target_id": event.get("target_id") or "",
+        "result": event.get("result") or "success",
+        "reason": event.get("reason") or "",
+        "details": _json_dumps_object(event.get("details") or {}),
+    }
     with (
         _db_lock,
         get_conn() as conn,
@@ -1430,14 +1631,15 @@ def log_admin_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
         row = conn.execute(
             "SELECT integrity_hash FROM admin_audit_log ORDER BY id DESC LIMIT 1"
         ).fetchone()
-        prev_hash = (dict(row).get("integrity_hash") if row else None) or "GENESIS"
-        integrity_hash = _compute_audit_hash(
-            prev_hash,
-            now,
-            event.get("action") or "",
-            event.get("target_id") or "",
-            event.get("actor_role") or "",
-            event.get("reason") or "",
+        if row is not None:
+            prev_hash = (dict(row).get("integrity_hash") or "") or "GENESIS"
+        else:
+            # Empty table: continue from the retention checkpoint boundary
+            # (if the chain was pruned away entirely) instead of GENESIS.
+            latest = _latest_chain_checkpoint(conn, "admin_audit_log")
+            prev_hash = (latest or {}).get("last_deleted_hash") or "GENESIS"
+        integrity_hash = audit_envelope.compute_hash_v3(
+            "admin_audit_log", record, prev_hash
         )
         event_id = _insert_returning_id(
             conn,
@@ -1445,29 +1647,37 @@ def log_admin_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
             INSERT INTO admin_audit_log
               (ts, actor_auth_type, actor_role, actor_label, actor_email, actor_subject,
                actor_token_prefix, action, target_type, target_id, result, reason, details,
-               prev_hash, integrity_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               hash_v, prev_hash, integrity_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                now,
-                event.get("actor_auth_type") or "",
-                event.get("actor_role") or "",
-                event.get("actor_label") or "",
-                event.get("actor_email") or "",
-                event.get("actor_subject") or "",
-                event.get("actor_token_prefix") or "",
-                event.get("action") or "",
-                event.get("target_type") or "",
-                event.get("target_id") or "",
-                event.get("result") or "success",
-                event.get("reason") or "",
-                details,
+                record["ts"],
+                record["actor_auth_type"],
+                record["actor_role"],
+                record["actor_label"],
+                record["actor_email"],
+                record["actor_subject"],
+                record["actor_token_prefix"],
+                record["action"],
+                record["target_type"],
+                record["target_id"],
+                record["result"],
+                record["reason"],
+                record["details"],
+                audit_envelope.HASH_V3,
                 prev_hash,
                 integrity_hash,
             ),
         )
     stored = dict(event)
-    stored.update({"id": event_id, "ts": now, "details": event.get("details") or {}})
+    stored.update(
+        {
+            "id": event_id,
+            "ts": now,
+            "details": event.get("details") or {},
+            "hash_v": audit_envelope.HASH_V3,
+        }
+    )
     return stored
 
 
@@ -1491,36 +1701,95 @@ def list_admin_audit_logs(limit: int = 100) -> List[Dict[str, Any]]:
 
 
 def verify_audit_chain() -> Dict[str, Any]:
+    """
+    Verify both audit hash chains end to end.
+
+    A pruned chain no longer starts at GENESIS: retention writes a durable
+    checkpoint binding the deleted boundary (see prune_retention), so the walk
+    first verifies the chain's checkpoints (their own hash chain from
+    GENESIS), then anchors the row walk at the newest checkpoint's recorded
+    last-deleted hash. Every row is recomputed under its own hash version
+    (v1/v2 legacy rules, v3 full-field envelope) with the walked prev hash, so
+    content and linkage are proven together.
+    """
     result: Dict[str, Any] = {"valid": True}
 
     checks = [
-        ("mcp_audit_log", "mcp", "action", "tool_name", "role"),
-        ("admin_audit_log", "admin", "action", "target_id", "actor_role"),
+        ("mcp_audit_log", "mcp", _recompute_mcp_audit_hash),
+        ("admin_audit_log", "admin", _recompute_admin_audit_hash),
     ]
 
-    for table, key, action_col, target_col, role_col in checks:
-        extra_cols = (
-            ", server_id, call_id, argument_hash, drift_baseline_hash, "
-            "drift_current_hash, hash_v"
-            if table == "mcp_audit_log"
-            else ""
-        )
+    for table, key, recompute in checks:
         with get_conn() as conn:
-            rows = conn.execute(
-                f"SELECT id, ts, {action_col}, {target_col}, {role_col}, "
-                f"reason, prev_hash, integrity_hash{extra_cols} "
-                f"FROM {table} ORDER BY id ASC"
-            ).fetchall()
+            checkpoints = _list_chain_checkpoints(conn, table)
+            rows = conn.execute(f"SELECT * FROM {table} ORDER BY id ASC").fetchall()
 
-        if not rows:
-            result[key] = {"total": 0, "first_ts": None, "last_ts": None}
+        checkpoint_failure = _verify_checkpoint_rows(checkpoints)
+        if checkpoint_failure:
+            result["valid"] = False
+            result["broken_at"] = {"table": "audit_chain_checkpoints", "chain": table}
+            result["reason"] = checkpoint_failure
+            return result
+        anchor = _checkpoint_anchor(checkpoints)
+        latest_checkpoint = checkpoints[-1] if checkpoints else None
+
+        dicts = [row_to_plain_dict(r) for r in rows]
+        summary = {
+            "total": len(dicts),
+            "first_ts": dicts[0]["ts"] if dicts else None,
+            "last_ts": dicts[-1]["ts"] if dicts else None,
+            "checkpoints": len(checkpoints),
+            "anchor": anchor,
+        }
+
+        if not dicts:
+            # An empty chain is only clean when no checkpoint promised
+            # retained rows (all-row prunes record first_retained_id NULL).
+            if (
+                latest_checkpoint is not None
+                and latest_checkpoint.get("first_retained_id") is not None
+            ):
+                result["valid"] = False
+                result["broken_at"] = {
+                    "table": table,
+                    "record_id": latest_checkpoint.get("first_retained_id"),
+                }
+                result["reason"] = "retained rows missing after checkpoint"
+                return result
+            result[key] = summary
             continue
 
-        dicts = [dict(r) for r in rows]
-        first_ts = dicts[0]["ts"]
-        last_ts = dicts[-1]["ts"]
-        prev_hash = "GENESIS"
+        if latest_checkpoint is not None:
+            first = dicts[0]
+            first_retained_id = latest_checkpoint.get("first_retained_id")
+            if first_retained_id is not None and int(first["id"]) != int(
+                first_retained_id
+            ):
+                result["valid"] = False
+                result["broken_at"] = {"table": table, "record_id": first["id"]}
+                result["reason"] = "first retained row does not match checkpoint"
+                return result
+            # Three-way boundary binding: the checkpoint's last-deleted hash
+            # (the anchor), its recorded first-retained prev hash, and the
+            # first retained row's stored prev_hash must all agree exactly.
+            # (_verify_checkpoint_rows already proved anchor == recorded prev
+            # hash; both row-side comparisons are kept explicit anyway.)
+            if first_retained_id is not None and (first.get("prev_hash") or "") != (
+                latest_checkpoint.get("first_retained_prev_hash") or ""
+            ):
+                result["valid"] = False
+                result["broken_at"] = {"table": table, "record_id": first["id"]}
+                result["reason"] = (
+                    "first retained row does not match checkpoint boundary"
+                )
+                return result
+            if (first.get("prev_hash") or "") != anchor:
+                result["valid"] = False
+                result["broken_at"] = {"table": table, "record_id": first["id"]}
+                result["reason"] = "retained chain does not start at checkpoint anchor"
+                return result
 
+        prev_hash = anchor
         for record in dicts:
             stored_hash = record.get("integrity_hash") or ""
             if not stored_hash:
@@ -1528,20 +1797,21 @@ def verify_audit_chain() -> Dict[str, Any]:
                 result["broken_at"] = {"table": table, "record_id": record["id"]}
                 result["reason"] = "pre-integrity records found"
                 return result
-            if table == "mcp_audit_log":
-                # mcp rows carry a per-row hash version (v1 legacy, v2 with
-                # receipt-binding fields); recompute with the walked prev_hash
-                # so content and linkage are proven together, as for admin rows.
-                expected = _recompute_mcp_audit_hash({**record, "prev_hash": prev_hash})
-            else:
-                expected = _compute_audit_hash(
-                    prev_hash,
-                    record.get("ts") or "",
-                    record.get(action_col) or "",
-                    record.get(target_col) or "",
-                    record.get(role_col) or "",
-                    record.get("reason") or "",
-                )
+            # The stored prev_hash must equal the walked predecessor hash;
+            # recomputing with the walked value alone would let a mutated
+            # prev_hash column go unnoticed at chain level.
+            if (record.get("prev_hash") or "") != prev_hash:
+                result["valid"] = False
+                result["broken_at"] = {"table": table, "record_id": record["id"]}
+                result["reason"] = "broken chain link"
+                return result
+            try:
+                expected = recompute({**record, "prev_hash": prev_hash})
+            except audit_envelope.UnsupportedHashVersionError:
+                result["valid"] = False
+                result["broken_at"] = {"table": table, "record_id": record["id"]}
+                result["reason"] = "unsupported hash version"
+                return result
             if expected != stored_hash:
                 result["valid"] = False
                 result["broken_at"] = {"table": table, "record_id": record["id"]}
@@ -1549,7 +1819,7 @@ def verify_audit_chain() -> Dict[str, Any]:
                 return result
             prev_hash = stored_hash
 
-        result[key] = {"total": len(dicts), "first_ts": first_ts, "last_ts": last_ts}
+        result[key] = summary
 
     return result
 
@@ -1735,26 +2005,176 @@ def _delete_older_than(conn, table: str, ts_column: str, days: int) -> int:
     return int(cursor.rowcount or 0)
 
 
-def prune_retention(policy: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+@contextmanager
+def _chain_prune_transaction(conn, table: str):
+    """
+    Run one chain's checkpoint-write + prefix-delete atomically.
+
+    Postgres: reuse the existing chain serialization mechanism — one explicit
+    transaction holding the per-chain advisory lock — so a prune can never
+    interleave with an append reading the tip or the checkpoint anchor.
+    SQLite: callers hold _db_lock; an explicit transaction (the connection is
+    opened in autocommit) makes checkpoint + delete atomic, so a failed prune
+    rolls back to no-checkpoint-and-no-deletion.
+    """
+    if _is_postgres_conn(conn):
+        with _serialized_chain_append(conn, table):
+            yield
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            logger.exception("Failed to roll back %s chain prune", table)
+        raise
+    conn.execute("COMMIT")
+
+
+def _delete_chain_prefix(conn, table: str, boundary_id: Optional[int]) -> int:
+    """
+    Delete one audit chain's id-prefix: every row below boundary_id, or every
+    row when boundary_id is None (nothing is retained). Kept as a seam so
+    tests can inject a failure between checkpoint write and deletion.
+    """
+    if boundary_id is None:
+        cursor = conn.execute(f"DELETE FROM {table}")
+    else:
+        cursor = conn.execute(f"DELETE FROM {table} WHERE id < ?", (boundary_id,))
+    return int(cursor.rowcount or 0)
+
+
+def _prune_chain_with_checkpoint(
+    conn,
+    table: str,
+    days: int,
+    policy: Dict[str, int],
+    actor: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Prune one audit hash chain, leaving a durable checkpoint.
+
+    Deletes the contiguous id-prefix of rows older than the cutoff — never a
+    mid-chain slice — so the retained chain has exactly one cut point. A
+    backdated row sitting behind newer rows is kept until every row before it
+    ages out; retention errs toward retaining rather than breaking the chain.
+
+    Before deleting, writes an audit_chain_checkpoints row binding: the chain
+    name, the last deleted row (id + integrity hash), the first retained row
+    (id + its recorded prev hash; NULL/'' when nothing is retained), the
+    deleted row count, the retention policy, the deletion timestamp, and the
+    deletion actor/context. Checkpoints form their own hash chain (v3
+    envelope), and chain verification anchors the retained walk at the newest
+    checkpoint's last-deleted hash. Checkpoint + delete run in one
+    transaction under the chain's serialization, so a failed prune leaves
+    neither.
+    """
+    _validate_identifier(table)
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=max(1, int(days)))
+    ).isoformat()
+    with _chain_prune_transaction(conn, table):
+        first_retained = conn.execute(
+            f"SELECT id, prev_hash FROM {table} WHERE ts >= ? ORDER BY id ASC LIMIT 1",
+            (cutoff,),
+        ).fetchone()
+        boundary_id = (
+            int(row_value(first_retained, "id", 0)) if first_retained else None
+        )
+        if boundary_id is None:
+            last_deleted = conn.execute(
+                f"SELECT id, integrity_hash FROM {table} ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            count_row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
+        else:
+            last_deleted = conn.execute(
+                f"SELECT id, integrity_hash FROM {table} WHERE id < ? "
+                "ORDER BY id DESC LIMIT 1",
+                (boundary_id,),
+            ).fetchone()
+            count_row = conn.execute(
+                f"SELECT COUNT(*) AS n FROM {table} WHERE id < ?",
+                (boundary_id,),
+            ).fetchone()
+        to_delete = int(row_value(count_row, "n", 0) or 0)
+        if not last_deleted or to_delete <= 0:
+            return {"deleted": 0, "checkpoint_id": None}
+
+        previous_checkpoint = _latest_chain_checkpoint(conn, table)
+        checkpoint_prev = (previous_checkpoint or {}).get("integrity_hash") or "GENESIS"
+        checkpoint = {
+            "chain": table,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_deleted_id": int(row_value(last_deleted, "id", 0)),
+            "last_deleted_hash": row_value(last_deleted, "integrity_hash", 1) or "",
+            "first_retained_id": boundary_id,
+            "first_retained_prev_hash": (
+                (row_value(first_retained, "prev_hash", 1) or "")
+                if first_retained
+                else ""
+            ),
+            "deleted_count": to_delete,
+            "retention_policy": _json_dumps_object(policy),
+            "actor": _json_dumps_object(actor or {}),
+        }
+        integrity_hash = audit_envelope.compute_hash_v3(
+            "audit_chain_checkpoint", checkpoint, checkpoint_prev
+        )
+        checkpoint_id = _insert_returning_id(
+            conn,
+            """
+            INSERT INTO audit_chain_checkpoints
+              (chain, created_at, last_deleted_id, last_deleted_hash,
+               first_retained_id, first_retained_prev_hash, deleted_count,
+               retention_policy, actor, hash_v, prev_hash, integrity_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                checkpoint["chain"],
+                checkpoint["created_at"],
+                checkpoint["last_deleted_id"],
+                checkpoint["last_deleted_hash"],
+                checkpoint["first_retained_id"],
+                checkpoint["first_retained_prev_hash"],
+                checkpoint["deleted_count"],
+                checkpoint["retention_policy"],
+                checkpoint["actor"],
+                audit_envelope.HASH_V3,
+                checkpoint_prev,
+                integrity_hash,
+            ),
+        )
+        deleted = _delete_chain_prefix(conn, table, boundary_id)
+    return {"deleted": deleted, "checkpoint_id": checkpoint_id}
+
+
+def prune_retention(
+    policy: Optional[Dict[str, int]] = None,
+    actor: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     policy = policy or get_retention_policy()
     with _db_lock, get_conn() as conn:
         deleted_scan_history = _delete_older_than(
             conn, "scan_history", "ts", policy["scan_history_days"]
         )
-        deleted_mcp_audit = _delete_older_than(
-            conn, "mcp_audit_log", "ts", policy["mcp_audit_days"]
+        mcp_result = _prune_chain_with_checkpoint(
+            conn, "mcp_audit_log", policy["mcp_audit_days"], policy, actor
         )
-        deleted_admin_audit = _delete_older_than(
-            conn, "admin_audit_log", "ts", policy["admin_audit_days"]
+        admin_result = _prune_chain_with_checkpoint(
+            conn, "admin_audit_log", policy["admin_audit_days"], policy, actor
         )
         deleted_usage = _delete_older_than(
             conn, "usage_log", "ts", policy["usage_log_days"]
         )
     return {
         "scan_history_deleted": deleted_scan_history,
-        "mcp_audit_deleted": deleted_mcp_audit,
-        "admin_audit_deleted": deleted_admin_audit,
+        "mcp_audit_deleted": mcp_result["deleted"],
+        "admin_audit_deleted": admin_result["deleted"],
         "usage_log_deleted": deleted_usage,
+        "mcp_audit_checkpoint_id": mcp_result["checkpoint_id"],
+        "admin_audit_checkpoint_id": admin_result["checkpoint_id"],
         "policy": policy,
     }
 
@@ -3560,6 +3980,55 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
     event = event or {}
     ts = event.get("ts") or datetime.now(timezone.utc).isoformat()
     call_id = str(event.get("call_id") or "") or uuid.uuid4().hex
+    # The exact values inserted below, keyed by column, so the v3 envelope
+    # hashes precisely what a verifier will read back from either backend.
+    record = {
+        "ts": ts,
+        "server_id": event.get("server_id", ""),
+        "tool_name": event.get("tool_name", ""),
+        "principal_id": event.get("principal_id", "") or "",
+        "role": event.get("role", "") or "",
+        "action": event.get("action", ""),
+        "matched_rule": event.get("matched_rule", ""),
+        "reason": event.get("reason", ""),
+        "effects": json.dumps(event.get("effects", []) or []),
+        "side_effect": event.get("side_effect", "unknown"),
+        "data_classes": json.dumps(event.get("data_classes", []) or []),
+        "externality": event.get("externality", "unknown"),
+        "verification_level": event.get("verification_level", "unknown"),
+        # normalize_stored_float: what is hashed must be exactly what either
+        # backend hands back — non-finite rejected, -0.0 folded to 0.0.
+        "confidence": audit_envelope.normalize_stored_float(
+            event.get("confidence"), 0.0
+        ),
+        "warnings": json.dumps(event.get("warnings", []) or []),
+        "argument_keys": json.dumps(event.get("argument_keys", []) or []),
+        "blocked_by": event.get("blocked_by", "") or "",
+        "probe_id": event.get("probe_id", "") or "",
+        "argument_hash": event.get("argument_hash", "") or "",
+        "expected_outcome": event.get("expected_outcome", "") or "",
+        # normalize_stored_int: optional codes stay NULL; non-integer inputs
+        # are rejected before anything is hashed or written.
+        "expected_status_code": audit_envelope.normalize_stored_int(
+            event.get("expected_status_code")
+        ),
+        "observed_outcome": event.get("observed_outcome", "") or "",
+        "observed_status_code": audit_envelope.normalize_stored_int(
+            event.get("observed_status_code")
+        ),
+        "observed_error_class": event.get("observed_error_class", "") or "",
+        "drift_status": event.get("drift_status", "") or "",
+        "drift_severity": event.get("drift_severity", "none") or "none",
+        "drift_action": event.get("drift_action", "allow") or "allow",
+        "drift_types": json.dumps(event.get("drift_types", []) or []),
+        "drift_reasons": json.dumps(event.get("drift_reasons", []) or []),
+        "drift_baseline_hash": event.get("drift_baseline_hash", "") or "",
+        "drift_current_hash": event.get("drift_current_hash", "") or "",
+        "scan_time_ms": audit_envelope.normalize_stored_float(
+            event.get("scan_time_ms")
+        ),
+        "call_id": call_id,
+    }
     with (
         _db_lock,
         get_conn() as conn,
@@ -3568,19 +4037,15 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
         row = conn.execute(
             "SELECT integrity_hash FROM mcp_audit_log ORDER BY id DESC LIMIT 1"
         ).fetchone()
-        prev_hash = (dict(row).get("integrity_hash") if row else None) or "GENESIS"
-        integrity_hash = _compute_audit_hash_v2(
-            prev_hash,
-            ts,
-            event.get("action", ""),
-            event.get("tool_name", ""),
-            event.get("role", "") or "",
-            event.get("reason", ""),
-            event.get("server_id", ""),
-            call_id,
-            event.get("argument_hash", "") or "",
-            event.get("drift_baseline_hash", "") or "",
-            event.get("drift_current_hash", "") or "",
+        if row is not None:
+            prev_hash = (dict(row).get("integrity_hash") or "") or "GENESIS"
+        else:
+            # Empty table: continue from the retention checkpoint boundary
+            # (if the chain was pruned away entirely) instead of GENESIS.
+            latest = _latest_chain_checkpoint(conn, "mcp_audit_log")
+            prev_hash = (latest or {}).get("last_deleted_hash") or "GENESIS"
+        integrity_hash = audit_envelope.compute_hash_v3(
+            "mcp_audit_log", record, prev_hash
         )
         event_id = _insert_returning_id(
             conn,
@@ -3597,40 +4062,40 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                ts,
-                event.get("server_id", ""),
-                event.get("tool_name", ""),
-                event.get("principal_id", "") or "",
-                event.get("role", "") or "",
-                event.get("action", ""),
-                event.get("matched_rule", ""),
-                event.get("reason", ""),
-                json.dumps(event.get("effects", []) or []),
-                event.get("side_effect", "unknown"),
-                json.dumps(event.get("data_classes", []) or []),
-                event.get("externality", "unknown"),
-                event.get("verification_level", "unknown"),
-                float(event.get("confidence") or 0.0),
-                json.dumps(event.get("warnings", []) or []),
-                json.dumps(event.get("argument_keys", []) or []),
-                event.get("blocked_by", "") or "",
-                event.get("probe_id", "") or "",
-                event.get("argument_hash", "") or "",
-                event.get("expected_outcome", "") or "",
-                event.get("expected_status_code"),
-                event.get("observed_outcome", "") or "",
-                event.get("observed_status_code"),
-                event.get("observed_error_class", "") or "",
-                event.get("drift_status", "") or "",
-                event.get("drift_severity", "none") or "none",
-                event.get("drift_action", "allow") or "allow",
-                json.dumps(event.get("drift_types", []) or []),
-                json.dumps(event.get("drift_reasons", []) or []),
-                event.get("drift_baseline_hash", "") or "",
-                event.get("drift_current_hash", "") or "",
-                event.get("scan_time_ms"),
-                call_id,
-                2,
+                record["ts"],
+                record["server_id"],
+                record["tool_name"],
+                record["principal_id"],
+                record["role"],
+                record["action"],
+                record["matched_rule"],
+                record["reason"],
+                record["effects"],
+                record["side_effect"],
+                record["data_classes"],
+                record["externality"],
+                record["verification_level"],
+                record["confidence"],
+                record["warnings"],
+                record["argument_keys"],
+                record["blocked_by"],
+                record["probe_id"],
+                record["argument_hash"],
+                record["expected_outcome"],
+                record["expected_status_code"],
+                record["observed_outcome"],
+                record["observed_status_code"],
+                record["observed_error_class"],
+                record["drift_status"],
+                record["drift_severity"],
+                record["drift_action"],
+                record["drift_types"],
+                record["drift_reasons"],
+                record["drift_baseline_hash"],
+                record["drift_current_hash"],
+                record["scan_time_ms"],
+                record["call_id"],
+                audit_envelope.HASH_V3,
                 prev_hash,
                 integrity_hash,
             ),
@@ -3640,7 +4105,7 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
     saved["id"] = event_id
     saved["ts"] = ts
     saved["call_id"] = call_id
-    saved["hash_v"] = 2
+    saved["hash_v"] = audit_envelope.HASH_V3
     return saved
 
 
@@ -3771,29 +4236,61 @@ def verify_mcp_audit_record(audit_id: int) -> Dict[str, Any]:
 
     Together these make a single receipt tamper-evident without re-walking the
     entire chain from genesis.
+
+    v3 rows commit every stored security-significant column, so the full row
+    is loaded and recomputed. The first retained record of a pruned chain
+    links to the retention checkpoint's recorded boundary hash instead of
+    GENESIS; the checkpoints themselves are verified before being trusted as
+    an anchor.
     """
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id, ts, action, tool_name, role, reason, server_id, call_id, "
-            "argument_hash, drift_baseline_hash, drift_current_hash, hash_v, "
-            "prev_hash, integrity_hash FROM mcp_audit_log WHERE id = ?",
+            "SELECT * FROM mcp_audit_log WHERE id = ?",
             (audit_id,),
         ).fetchone()
         if not row:
             return {"chain_verified": False, "reason": "record_not_found"}
-        row = dict(row)
+        row = row_to_plain_dict(row)
         prev = conn.execute(
             "SELECT integrity_hash FROM mcp_audit_log WHERE id < ? "
             "ORDER BY id DESC LIMIT 1",
             (audit_id,),
         ).fetchone()
+        checkpoints = (
+            _list_chain_checkpoints(conn, "mcp_audit_log") if prev is None else []
+        )
 
     stored_hash = row.get("integrity_hash") or ""
     if not stored_hash:
         return {"chain_verified": False, "reason": "missing_integrity_hash"}
 
-    expected_prev = (dict(prev).get("integrity_hash") if prev else None) or "GENESIS"
-    recomputed = _recompute_mcp_audit_hash(row)
+    if prev is None and checkpoints:
+        checkpoint_failure = _verify_checkpoint_rows(checkpoints)
+        if checkpoint_failure:
+            return {"chain_verified": False, "reason": checkpoint_failure}
+        # This row is the start of the retained chain: it must be exactly the
+        # row the newest checkpoint promised to retain (a self-consistent
+        # replacement row linking to the anchor must still fail).
+        first_retained_id = checkpoints[-1].get("first_retained_id")
+        if first_retained_id is not None and int(row["id"]) != int(first_retained_id):
+            return {
+                "chain_verified": False,
+                "reason": "first retained row does not match checkpoint",
+            }
+        expected_prev = _checkpoint_anchor(checkpoints)
+    else:
+        expected_prev = (
+            dict(prev).get("integrity_hash") if prev else None
+        ) or "GENESIS"
+    try:
+        recomputed = _recompute_mcp_audit_hash(row)
+    except audit_envelope.UnsupportedHashVersionError:
+        return {
+            "chain_verified": False,
+            "reason": "unsupported hash version",
+            "content_ok": False,
+            "link_ok": False,
+        }
     content_ok = recomputed == stored_hash
     link_ok = (row.get("prev_hash") or "") == expected_prev
     verified = content_ok and link_ok
