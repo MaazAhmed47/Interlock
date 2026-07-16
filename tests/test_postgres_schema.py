@@ -50,6 +50,11 @@ def test_postgres_schema_conversion_removes_sqlite_only_constructs():
     assert "SERIAL PRIMARY KEY" in converted
     assert "is_active       BOOLEAN NOT NULL DEFAULT TRUE" in converted
     assert "verified        BOOLEAN NOT NULL DEFAULT FALSE" in converted
+    assert "threat_blocked  BOOLEAN NOT NULL DEFAULT FALSE" in converted
+    assert "is_threat        BOOLEAN NOT NULL DEFAULT FALSE" in converted
+    assert "threat_blocked  INTEGER NOT NULL DEFAULT 0" in db.SCHEMA
+    assert "is_threat        INTEGER NOT NULL DEFAULT 0" in db.SCHEMA
+    assert "is_threat   INTEGER NOT NULL DEFAULT 0" in converted
     assert "CREATE TABLE IF NOT EXISTS admin_tokens" in converted
     assert "enabled    INTEGER DEFAULT 1" in converted
     assert (
