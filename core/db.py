@@ -1636,6 +1636,37 @@ def revoke_key(key_prefix: str) -> bool:
     return revoke_key_by_prefix(key_prefix) is not None
 
 
+_ADMIN_KEY_READ_FIELDS = (
+    "id",
+    "key_prefix",
+    "label",
+    "plan",
+    "monthly_limit",
+    "rate_per_min",
+    "fail_mode",
+    "webhook_url",
+    "custom_policy",
+    "siem_configs",
+    "scopes",
+    "role",
+    "is_active",
+    "created_at",
+    "revoked_at",
+    "max_response_bytes",
+    "max_array_items",
+)
+
+
+def _admin_key_read_record(row) -> Dict[str, Any]:
+    """Return the explicit non-secret representation used by admin read APIs."""
+    internal = _row_to_dict(row)
+    public = {
+        field: internal[field] for field in _ADMIN_KEY_READ_FIELDS if field in internal
+    }
+    public["upstream_key_configured"] = bool(internal.get("upstream_key"))
+    return public
+
+
 def list_keys(include_inactive: bool = False) -> List[Dict[str, Any]]:
     q = (
         "SELECT * FROM api_keys"
@@ -1644,12 +1675,7 @@ def list_keys(include_inactive: bool = False) -> List[Dict[str, Any]]:
     )
     with get_conn() as conn:
         rows = conn.execute(q + " ORDER BY created_at DESC").fetchall()
-    out = []
-    for r in rows:
-        d = _row_to_dict(r)
-        d.pop("key_hash", None)  # never expose hash externally
-        out.append(d)
-    return out
+    return [_admin_key_read_record(row) for row in rows]
 
 
 def lookup_key_by_id(

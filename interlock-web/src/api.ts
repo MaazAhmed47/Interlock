@@ -264,6 +264,7 @@ export interface AdminApiKey {
   max_array_items: number;
   scopes: string[];
   role: string;
+  upstream_key_configured: boolean;
   is_active: boolean;
   created_at: string;
   revoked_at?: string | null;
