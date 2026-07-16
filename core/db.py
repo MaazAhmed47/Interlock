@@ -335,7 +335,6 @@ CREATE TABLE IF NOT EXISTS api_keys (
     webhook_url     TEXT,
     custom_policy   TEXT,                        -- JSON {blocked_keywords, max_prompt_length}
     siem_configs    TEXT,                        -- JSON list of SIEM provider configs
-    upstream_key    TEXT,                        -- if customer wants us to forward their LLM key
     scopes          TEXT    NOT NULL DEFAULT '["mcp.call","mcp.read"]',
     role            TEXT    NOT NULL DEFAULT 'readonly_agent',
     is_active       INTEGER NOT NULL DEFAULT 1,
@@ -1474,6 +1473,21 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
     if plan not in PLAN_DEFAULTS:
         raise ValueError(f"Unknown plan '{plan}'. Valid: {list(PLAN_DEFAULTS)}")
 
+    allowed_overrides = {
+        "monthly_limit",
+        "rate_per_min",
+        "fail_mode",
+        "webhook_url",
+        "custom_policy",
+        "siem_configs",
+        "max_response_bytes",
+        "max_array_items",
+        "scopes",
+        "role",
+    }
+    if set(overrides) - allowed_overrides:
+        raise ValueError("Unsupported API key override.")
+
     raw = f"lf_{plan}_{secrets.token_urlsafe(24)}"
     key_hash = _hash_key(raw)
     key_prefix = raw[:12]
@@ -1485,7 +1499,6 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
     webhook_url = overrides.get("webhook_url")
     custom_policy = overrides.get("custom_policy")
     siem_configs = overrides.get("siem_configs")
-    upstream_key = overrides.get("upstream_key")
     max_response_bytes = overrides.get(
         "max_response_bytes", defaults.get("max_response_bytes", 50_000)
     )
@@ -1501,10 +1514,9 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
             """
             INSERT INTO api_keys
               (key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
-               fail_mode, webhook_url, custom_policy, siem_configs, upstream_key,
-               is_active, created_at, max_response_bytes, max_array_items,
-               scopes, role)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               fail_mode, webhook_url, custom_policy, siem_configs, is_active,
+               created_at, max_response_bytes, max_array_items, scopes, role)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 key_hash,
@@ -1517,7 +1529,6 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
                 webhook_url,
                 json.dumps(custom_policy) if custom_policy else None,
                 json.dumps(siem_configs) if siem_configs else None,
-                upstream_key,
                 True,
                 datetime.now(timezone.utc).isoformat(),
                 max_response_bytes,
@@ -1545,6 +1556,48 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
 
 
 # ── Lookup / verification ────────────────────────────────────────────────────
+_API_KEY_COLUMNS = (
+    "id",
+    "key_hash",
+    "key_prefix",
+    "label",
+    "plan",
+    "monthly_limit",
+    "rate_per_min",
+    "fail_mode",
+    "webhook_url",
+    "custom_policy",
+    "siem_configs",
+    "scopes",
+    "role",
+    "is_active",
+    "created_at",
+    "revoked_at",
+    "max_response_bytes",
+    "max_array_items",
+)
+_API_KEY_SELECT = ", ".join(_API_KEY_COLUMNS)
+_ADMIN_KEY_READ_FIELDS = (
+    "id",
+    "key_prefix",
+    "label",
+    "plan",
+    "monthly_limit",
+    "rate_per_min",
+    "fail_mode",
+    "webhook_url",
+    "custom_policy",
+    "siem_configs",
+    "scopes",
+    "role",
+    "is_active",
+    "created_at",
+    "revoked_at",
+    "max_response_bytes",
+    "max_array_items",
+)
+
+
 def lookup_key(raw_key: str) -> Optional[Dict[str, Any]]:
     """
     Return the full key record by raw key, or None if not found / inactive.
@@ -1555,7 +1608,8 @@ def lookup_key(raw_key: str) -> Optional[Dict[str, Any]]:
     key_hash = _hash_key(raw_key.strip())
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM api_keys WHERE key_hash = ? AND is_active = TRUE",
+            f"SELECT {_API_KEY_SELECT} FROM api_keys "
+            "WHERE key_hash = ? AND is_active = TRUE",
             (key_hash,),
         ).fetchone()
     return _row_to_dict(row) if row else None
@@ -1636,42 +1690,20 @@ def revoke_key(key_prefix: str) -> bool:
     return revoke_key_by_prefix(key_prefix) is not None
 
 
-_ADMIN_KEY_READ_FIELDS = (
-    "id",
-    "key_prefix",
-    "label",
-    "plan",
-    "monthly_limit",
-    "rate_per_min",
-    "fail_mode",
-    "webhook_url",
-    "custom_policy",
-    "siem_configs",
-    "scopes",
-    "role",
-    "is_active",
-    "created_at",
-    "revoked_at",
-    "max_response_bytes",
-    "max_array_items",
-)
-
-
 def _admin_key_read_record(row) -> Dict[str, Any]:
     """Return the explicit non-secret representation used by admin read APIs."""
     internal = _row_to_dict(row)
     public = {
         field: internal[field] for field in _ADMIN_KEY_READ_FIELDS if field in internal
     }
-    public["upstream_key_configured"] = bool(internal.get("upstream_key"))
     return public
 
 
 def list_keys(include_inactive: bool = False) -> List[Dict[str, Any]]:
     q = (
-        "SELECT * FROM api_keys"
+        f"SELECT {_API_KEY_SELECT} FROM api_keys"
         if include_inactive
-        else "SELECT * FROM api_keys WHERE is_active = TRUE"
+        else f"SELECT {_API_KEY_SELECT} FROM api_keys WHERE is_active = TRUE"
     )
     with get_conn() as conn:
         rows = conn.execute(q + " ORDER BY created_at DESC").fetchall()
@@ -1689,7 +1721,7 @@ def lookup_key_by_id(
     if normalized_id <= 0:
         return None
 
-    q = "SELECT * FROM api_keys WHERE id = ?"
+    q = f"SELECT {_API_KEY_SELECT} FROM api_keys WHERE id = ?"
     if not include_inactive:
         q += " AND is_active = TRUE"
     with get_conn() as conn:
@@ -1701,7 +1733,7 @@ def lookup_key_by_prefix(
     key_prefix: str, *, include_inactive: bool = True
 ) -> Optional[Dict[str, Any]]:
     """Resolve a display prefix only when it identifies exactly one row."""
-    q = "SELECT * FROM api_keys WHERE key_prefix = ?"
+    q = f"SELECT {_API_KEY_SELECT} FROM api_keys WHERE key_prefix = ?"
     if not include_inactive:
         q += " AND is_active = TRUE"
     with get_conn() as conn:
@@ -1722,7 +1754,6 @@ def _prepare_key_update_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
         "webhook_url",
         "custom_policy",
         "siem_configs",
-        "upstream_key",
         "max_response_bytes",
         "max_array_items",
         "scopes",

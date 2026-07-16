@@ -153,6 +153,19 @@ For Supabase/Postgres pilots:
 - document RPO/RTO in the pilot agreement
 - store exported audit logs outside the primary DB if the customer requires independent evidence retention
 
+Obsolete API-key credential storage is being retired through an expand-contract
+deployment. In phase 1, fresh SQLite and Postgres schemas omit the retired field,
+and the runtime neither selects nor writes it. Existing databases deliberately
+retain the dormant column unchanged so the immediately previous binary can still
+run its key INSERT and UPDATE statements during rollback.
+
+Phase 2 may drop the dormant column only after phase 1 is deployed and the
+immediate rollback target no longer references it. That later migration needs a
+separately reviewed maintenance window: Postgres `DROP COLUMN` takes an
+`ACCESS EXCLUSIVE` relation lock even when the change is catalog-only, while
+SQLite support and table-rewrite behavior must be validated for every supported
+deployment version.
+
 Supabase's current backup docs describe daily backups for hosted projects and optional Point-in-Time Recovery for finer restore granularity. See [Supabase Database Backups](https://supabase.com/docs/guides/platform/backups).
 
 ## Secret Rotation

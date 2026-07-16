@@ -23,8 +23,6 @@ class RecordingCursor:
         return self
 
     def fetchall(self):
-        if "information_schema.columns" in self.sql:
-            return []
         return []
 
     def fetchone(self):
