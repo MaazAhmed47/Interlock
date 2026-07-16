@@ -18,7 +18,6 @@ FIRST_RAW = "lf_free_sameAAAAAAAAAAAAAAAAAAAA"
 SECOND_RAW = "lf_free_sameBBBBBBBBBBBBBBBBBBBB"
 DISPLAY_PREFIX = "lf_free_same"
 ROOT_TOKEN = "postgres-key-identity-test-token"
-UPSTREAM_SECRET = "sk-postgres-upstream-secret-never-serialize"
 
 pytestmark = pytest.mark.skipif(
     not DB_URL,
@@ -43,7 +42,6 @@ CREATE TABLE api_keys (
     webhook_url        TEXT,
     custom_policy      TEXT,
     siem_configs       TEXT,
-    upstream_key       TEXT,
     is_active          BOOLEAN NOT NULL DEFAULT TRUE,
     created_at         TEXT    NOT NULL,
     revoked_at         TEXT
@@ -167,18 +165,3 @@ def test_migrated_same_plan_keys_revoke_independently(migrated_pg_db):
     assert db.lookup_key(SECOND_RAW) is not None
     with pytest.raises(db.AmbiguousKeyPrefixError):
         db.lookup_key_by_prefix(DISPLAY_PREFIX, include_inactive=True)
-
-
-def test_postgres_admin_list_redacts_seeded_upstream_credential(migrated_pg_db):
-    db, _ = migrated_pg_db
-    created = db.generate_key(
-        "developer", label="postgres-secret-bearing", upstream_key=UPSTREAM_SECRET
-    )
-
-    assert db.lookup_key(created["raw_key"])["upstream_key"] == UPSTREAM_SECRET
-
-    row = next(item for item in db.list_keys() if item["id"] == created["id"])
-    assert "upstream_key" not in row
-    assert row["upstream_key_configured"] is True
-    assert "key_hash" not in row
-    assert UPSTREAM_SECRET not in str(row)

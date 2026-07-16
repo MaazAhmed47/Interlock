@@ -335,7 +335,6 @@ CREATE TABLE IF NOT EXISTS api_keys (
     webhook_url     TEXT,
     custom_policy   TEXT,                        -- JSON {blocked_keywords, max_prompt_length}
     siem_configs    TEXT,                        -- JSON list of SIEM provider configs
-    upstream_key    TEXT,                        -- if customer wants us to forward their LLM key
     scopes          TEXT    NOT NULL DEFAULT '["mcp.call","mcp.read"]',
     role            TEXT    NOT NULL DEFAULT 'readonly_agent',
     is_active       INTEGER NOT NULL DEFAULT 1,
@@ -692,6 +691,7 @@ CREATE INDEX IF NOT EXISTS idx_policies_active ON policies(is_active);
 def init_db() -> None:
     with _db_lock, get_conn() as conn:
         _run_schema_statements(conn, indexes=False)
+        _drop_obsolete_api_key_columns(conn)
         _ensure_column(conn, "scan_history", "key_hash", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "scan_history", "ts", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "scan_history", "confidence", "REAL")
@@ -1209,6 +1209,39 @@ def _ensure_column(conn, table: str, column: str, definition: str) -> None:
         raise
 
 
+_OBSOLETE_API_KEY_COLUMNS = ("upstream_key",)
+
+
+def _drop_obsolete_api_key_columns(conn) -> bool:
+    """Remove retired plaintext credential storage from an existing key table."""
+    existing = set(_table_columns(conn, "api_keys"))
+    changed = False
+    for column in _OBSOLETE_API_KEY_COLUMNS:
+        if column not in existing:
+            continue
+        _validate_identifier(column)
+        if _is_postgres_conn(conn):
+            # The pre-check avoids an ACCESS EXCLUSIVE relation lock on every
+            # startup. IF EXISTS keeps concurrent replicas race-safe.
+            conn.execute(f"ALTER TABLE api_keys DROP COLUMN IF EXISTS {column}")
+        else:
+            if sqlite3.sqlite_version_info < (3, 35, 0):
+                raise RuntimeError(
+                    "This database migration requires SQLite 3.35 or newer. "
+                    "Back up the database and run Interlock with Python 3.12+."
+                )
+            try:
+                conn.execute(f"ALTER TABLE api_keys DROP COLUMN {column}")
+            except sqlite3.OperationalError:
+                # Another process may have completed the same idempotent
+                # startup migration while this connection waited to write.
+                if column not in _table_columns(conn, "api_keys"):
+                    continue
+                raise
+        changed = True
+    return changed
+
+
 def _ensure_double_precision(conn, table: str, columns) -> None:
     """
     Widen Postgres float4 (REAL) columns to float8 in place.
@@ -1474,6 +1507,21 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
     if plan not in PLAN_DEFAULTS:
         raise ValueError(f"Unknown plan '{plan}'. Valid: {list(PLAN_DEFAULTS)}")
 
+    allowed_overrides = {
+        "monthly_limit",
+        "rate_per_min",
+        "fail_mode",
+        "webhook_url",
+        "custom_policy",
+        "siem_configs",
+        "max_response_bytes",
+        "max_array_items",
+        "scopes",
+        "role",
+    }
+    if set(overrides) - allowed_overrides:
+        raise ValueError("Unsupported API key override.")
+
     raw = f"lf_{plan}_{secrets.token_urlsafe(24)}"
     key_hash = _hash_key(raw)
     key_prefix = raw[:12]
@@ -1485,7 +1533,6 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
     webhook_url = overrides.get("webhook_url")
     custom_policy = overrides.get("custom_policy")
     siem_configs = overrides.get("siem_configs")
-    upstream_key = overrides.get("upstream_key")
     max_response_bytes = overrides.get(
         "max_response_bytes", defaults.get("max_response_bytes", 50_000)
     )
@@ -1501,10 +1548,9 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
             """
             INSERT INTO api_keys
               (key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
-               fail_mode, webhook_url, custom_policy, siem_configs, upstream_key,
-               is_active, created_at, max_response_bytes, max_array_items,
-               scopes, role)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               fail_mode, webhook_url, custom_policy, siem_configs, is_active,
+               created_at, max_response_bytes, max_array_items, scopes, role)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 key_hash,
@@ -1517,7 +1563,6 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
                 webhook_url,
                 json.dumps(custom_policy) if custom_policy else None,
                 json.dumps(siem_configs) if siem_configs else None,
-                upstream_key,
                 True,
                 datetime.now(timezone.utc).isoformat(),
                 max_response_bytes,
@@ -1663,7 +1708,6 @@ def _admin_key_read_record(row) -> Dict[str, Any]:
     public = {
         field: internal[field] for field in _ADMIN_KEY_READ_FIELDS if field in internal
     }
-    public["upstream_key_configured"] = bool(internal.get("upstream_key"))
     return public
 
 
@@ -1722,7 +1766,6 @@ def _prepare_key_update_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
         "webhook_url",
         "custom_policy",
         "siem_configs",
-        "upstream_key",
         "max_response_bytes",
         "max_array_items",
         "scopes",

@@ -153,6 +153,18 @@ For Supabase/Postgres pilots:
 - document RPO/RTO in the pilot agreement
 - store exported audit logs outside the primary DB if the customer requires independent evidence retention
 
+SQLite schema cleanup migrations use native `ALTER TABLE ... DROP COLUMN` and
+require SQLite 3.35 or newer. Back up the database first, then run `db.init_db()`
+through the supported Python 3.12 runtime; startup fails explicitly on an older
+SQLite engine instead of rebuilding the table or risking loss of unknown columns.
+The native SQLite operation rewrites the affected table and holds its schema/write
+lock for the statement, so run it during a low-traffic local or pilot window.
+
+Postgres obsolete-column cleanup uses `ALTER TABLE ... DROP COLUMN IF EXISTS`.
+It is a catalog-only change rather than a heap rewrite, but it takes an
+`ACCESS EXCLUSIVE` relation lock while the statement runs. The startup migration
+checks the catalog first, so subsequent initializations do not reacquire that lock.
+
 Supabase's current backup docs describe daily backups for hosted projects and optional Point-in-Time Recovery for finer restore granularity. See [Supabase Database Backups](https://supabase.com/docs/guides/platform/backups).
 
 ## Secret Rotation
