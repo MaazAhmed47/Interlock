@@ -441,16 +441,18 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
 
 
 # ── MCP Server Discovery ──────────────────────────────────────────────────────
-async def discover_mcp_tools(
+async def _fetch_tool_list_payload(
     server_url: str,
-    timeout: float = 10.0,
-    server_id: Optional[str] = None,
+    timeout: float,
+    server_id: Optional[str],
 ) -> Dict[str, Any]:
     """
-    Connect to an MCP server and discover its tools.
-    Validates every tool definition before returning.
+    Transport + shape screening shared by every discovery path: URL safety,
+    registry lookup, upstream auth, the tools/list call, JSON-RPC shape
+    checks, and duplicate-name rejection. Reads the registry but never
+    writes anything. Never raises — every failure maps to an
+    {"ok": False, "error", "message"} dict with the reason.
     """
-    _begin_op()
     try:
         server_url = ensure_safe_outbound_url(server_url, context="MCP discovery")
         registered = (
@@ -473,202 +475,57 @@ async def discover_mcp_tools(
             resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
             resp.raise_for_status()
             data = resp.json()
-            if not isinstance(data, dict):
-                return {
-                    "ok": False,
-                    "error": "mcp_discovery_error",
-                    "message": "MCP server returned a non-object JSON-RPC response.",
-                    "server_url": server_url,
-                }
-            if data.get("error"):
-                return {
-                    "ok": False,
-                    "error": "mcp_discovery_error",
-                    "message": str(data["error"])[:200],
-                    "server_url": server_url,
-                }
-
-            result = data.get("result") or {}
-            tools = result.get("tools", []) if isinstance(result, dict) else []
-            if not isinstance(tools, list):
-                return {
-                    "ok": False,
-                    "error": "mcp_discovery_error",
-                    "message": "MCP tools/list result.tools must be a list.",
-                    "server_url": server_url,
-                }
-
-            seen_tool_names = set()
-            duplicate_tool_names = set()
-            for candidate in tools:
-                if not isinstance(candidate, dict):
-                    continue
-                candidate_name = candidate.get("name")
-                if not isinstance(candidate_name, str) or not candidate_name.strip():
-                    continue
-                normalized_name = candidate_name.strip()
-                if normalized_name in seen_tool_names:
-                    duplicate_tool_names.add(normalized_name)
-                seen_tool_names.add(normalized_name)
-            if duplicate_tool_names:
-                return {
-                    "ok": False,
-                    "error": "duplicate_tool_names",
-                    "message": f"MCP discovery returned duplicate tool names: {sorted(duplicate_tool_names)}.",
-                    "server_url": server_url,
-                }
-
-            # Validate every tool
-            validation_results = []
-            safe_tools = []
-            blocked_tools = []
-
-            # ── Server-level drift check (tool additions / removals) ──────────
-            # Must run BEFORE upsert so previous_names still reflects prior state.
-            # Newly-added tools flagged critical here are quarantined AFTER upsert
-            # (upsert always inserts new tools active), keyed by name below.
-            quarantine_added: Dict[str, str] = {}
-            if registry_server_id:
-                current_tool_defs = {
-                    t.get("name", "").strip(): t
-                    for t in tools
-                    if isinstance(t, dict)
-                    and isinstance(t.get("name"), str)
-                    and t.get("name", "").strip()
-                }
-                current_names = set(current_tool_defs)
-                previous_names = db.get_known_tool_names(registry_server_id)
-                if previous_names:
-                    server_findings = classify_server_drift(
-                        registry_server_id,
-                        previous_names,
-                        current_names,
-                        current_tool_defs,
-                    )
-                    for finding in server_findings:
-                        is_critical_added = (
-                            finding["type"] == "tool_added"
-                            and finding["severity"] == "critical"
-                        )
-                        if finding["type"] == "tool_removed":
-                            db.mark_mcp_tool_removed(
-                                registry_server_id,
-                                finding["tool_name"],
-                                finding["reason"],
-                            )
-                        elif is_critical_added:
-                            quarantine_added[finding["tool_name"]] = finding["reason"]
-                        # Critical new-tool drift is recorded once, by the per-tool
-                        # drift_detected receipt below (with surface hashes); avoid a
-                        # duplicate server-level row here.
-                        if is_critical_added:
-                            continue
-                        db.log_mcp_audit_event(
-                            {
-                                "server_id": registry_server_id,
-                                "tool_name": finding["tool_name"],
-                                "action": (
-                                    "quarantine"
-                                    if finding["severity"] == "critical"
-                                    else "deny"
-                                ),
-                                "role": "system",
-                                "reason": finding["reason"],
-                                "matched_rule": finding["type"],
-                                "drift_status": finding["type"],
-                                "drift_severity": finding["severity"],
-                                "drift_action": (
-                                    "quarantine"
-                                    if finding["severity"] == "critical"
-                                    else "deny"
-                                ),
-                                "drift_types": [finding["type"]],
-                                "drift_reasons": [finding["reason"]],
-                                "scan_time_ms": _elapsed_ms(),
-                            }
-                        )
-
-            for tool in tools:
-                validation = validate_mcp_tool_definition(tool)
-                registry = {"persisted": False, "reason": "server_id_not_registered"}
-                tool_name = (
-                    tool.get("name", "").strip() if isinstance(tool, dict) else ""
-                )
-                quarantined_by_drift = False
-                drift_block_reason = ""
-                if registry_server_id and not validation.is_threat:
-                    registry = db.upsert_mcp_tool_metadata(
-                        registry_server_id,
-                        tool,
-                        validation.tool_metadata or {},
-                    )
-                    registry["persisted"] = True
-                    # A new destructive/exfiltration tool passes the static
-                    # validator (ordinary CRUD is handled by RBAC at call time),
-                    # so the DRIFT path must quarantine it: it was just inserted
-                    # active, flip it to quarantined before it can be used.
-                    if tool_name and tool_name in quarantine_added:
-                        db.mark_mcp_tool_added_drift(
-                            registry_server_id,
-                            tool_name,
-                            quarantine_added[tool_name],
-                        )
-                        registry["status"] = "quarantined"
-                        quarantined_by_drift = True
-                        drift_block_reason = quarantine_added[tool_name]
-                    elif registry.get("status") == "quarantined":
-                        # An EXISTING approved tool escalated capability under the
-                        # same name. Mirror the new-tool path so the discover
-                        # response matches the registry status + call-time
-                        # enforcement instead of leaving it in safe_tools.
-                        quarantined_by_drift = True
-                        _raw_reasons = registry.get("drift_reasons")
-                        _reasons = (
-                            _raw_reasons if isinstance(_raw_reasons, list) else []
-                        )
-                        drift_block_reason = (
-                            "; ".join(str(r) for r in _reasons[:3])
-                            or f"Tool '{tool_name}' quarantined by capability drift."
-                        )
-                    # Record DETECTION at discovery (no-op for unchanged tools):
-                    # a drift_detected receipt distinct from call-time enforcement.
-                    if tool_name:
-                        _emit_discovery_drift_receipt(registry_server_id, tool_name)
-                validation_results.append(
-                    {
-                        "tool_name": (
-                            tool.get("name") if isinstance(tool, dict) else None
-                        ),
-                        "is_safe": not validation.is_threat
-                        and not quarantined_by_drift,
-                        "validation": (
-                            validation.model_dump()
-                            if hasattr(validation, "model_dump")
-                            else vars(validation)
-                        ),
-                        "tool_metadata": validation.tool_metadata,
-                        "registry": registry,
-                    }
-                )
-
-                if validation.is_threat:
-                    blocked_tools.append({"tool": tool, "reason": validation.reason})
-                elif quarantined_by_drift:
-                    blocked_tools.append({"tool": tool, "reason": drift_block_reason})
-                else:
-                    safe_tools.append(tool)
-
+        if not isinstance(data, dict):
             return {
-                "ok": True,
+                "ok": False,
+                "error": "mcp_discovery_error",
+                "message": "MCP server returned a non-object JSON-RPC response.",
                 "server_url": server_url,
-                "total_tools": len(tools),
-                "safe_tools": len(safe_tools),
-                "blocked_tools": len(blocked_tools),
-                "tools": safe_tools,
-                "blocked": blocked_tools,
-                "validations": validation_results,
+            }
+        if data.get("error"):
+            return {
+                "ok": False,
+                "error": "mcp_discovery_error",
+                "message": str(data["error"])[:200],
+                "server_url": server_url,
             }
 
+        result = data.get("result") or {}
+        tools = result.get("tools", []) if isinstance(result, dict) else []
+        if not isinstance(tools, list):
+            return {
+                "ok": False,
+                "error": "mcp_discovery_error",
+                "message": "MCP tools/list result.tools must be a list.",
+                "server_url": server_url,
+            }
+
+        seen_tool_names = set()
+        duplicate_tool_names = set()
+        for candidate in tools:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_name = candidate.get("name")
+            if not isinstance(candidate_name, str) or not candidate_name.strip():
+                continue
+            normalized_name = candidate_name.strip()
+            if normalized_name in seen_tool_names:
+                duplicate_tool_names.add(normalized_name)
+            seen_tool_names.add(normalized_name)
+        if duplicate_tool_names:
+            return {
+                "ok": False,
+                "error": "duplicate_tool_names",
+                "message": f"MCP discovery returned duplicate tool names: {sorted(duplicate_tool_names)}.",
+                "server_url": server_url,
+            }
+        return {
+            "ok": True,
+            "server_url": server_url,
+            "registered": registered,
+            "registry_server_id": registry_server_id,
+            "tools": tools,
+        }
     except OutboundUrlRejected as exc:
         return {"ok": False, "error": "unsafe_mcp_server_url", "message": str(exc)}
     except UpstreamAuthConfigError as exc:
@@ -680,6 +537,238 @@ async def discover_mcp_tools(
         }
     except httpx.TimeoutException:
         return {"ok": False, "error": "MCP server timeout", "server_url": server_url}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200], "server_url": server_url}
+
+
+async def fetch_candidate_tool_surface(
+    server_url: str,
+    timeout: float = 10.0,
+    server_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Fetch and validate a server's COMPLETE tool surface as a rebaseline
+    candidate, in memory, without touching any persisted state — no
+    metadata upserts, no drift receipts, no candidate row (persisting the
+    returned candidate is the caller's decision). The whole candidate is
+    validated before it is usable: one failing tool rejects the candidate.
+    Every failure (timeout, malformed response, duplicate names, validation)
+    returns {"ok": False} with a clear reason and changes nothing.
+    """
+    fetched = await _fetch_tool_list_payload(server_url, timeout, server_id)
+    if not fetched.get("ok"):
+        return fetched
+
+    tools = fetched["tools"]
+    validated_tools = []
+    blocked = []
+    for tool in tools:
+        validation = validate_mcp_tool_definition(tool)
+        if validation.is_threat:
+            blocked.append(
+                {
+                    "tool_name": (tool.get("name") if isinstance(tool, dict) else None),
+                    "reason": validation.reason,
+                    "threat_type": validation.threat_type,
+                }
+            )
+        else:
+            validated_tools.append(
+                {"tool": tool, "normalized_metadata": validation.tool_metadata or {}}
+            )
+    if blocked:
+        return {
+            "ok": False,
+            "error": "candidate_validation_failed",
+            "message": (
+                f"{len(blocked)} of {len(tools)} tools failed validation; "
+                "candidate rejected, active baseline untouched."
+            ),
+            "blocked": blocked,
+            "server_url": fetched["server_url"],
+        }
+
+    tool_defs = [entry["tool"] for entry in validated_tools]
+    return {
+        "ok": True,
+        "server_url": fetched["server_url"],
+        "tool_count": len(validated_tools),
+        "tools": tool_defs,
+        "validated_tools": validated_tools,
+        "candidate_surface_hash": drift_evidence.server_surface_hash(tool_defs),
+        "canonical_surface": drift_evidence.server_surface_canonical_json(tool_defs),
+    }
+
+
+async def discover_mcp_tools(
+    server_url: str,
+    timeout: float = 10.0,
+    server_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Connect to an MCP server and discover its tools.
+    Validates every tool definition before returning.
+    """
+    _begin_op()
+    fetched = await _fetch_tool_list_payload(server_url, timeout, server_id)
+    if not fetched.get("ok"):
+        return fetched
+    server_url = fetched["server_url"]
+    registry_server_id = fetched["registry_server_id"]
+    tools = fetched["tools"]
+    try:
+        validation_results = []
+        safe_tools = []
+        blocked_tools = []
+
+        # ── Server-level drift check (tool additions / removals) ──────────
+        # Must run BEFORE upsert so previous_names still reflects prior state.
+        # Newly-added tools flagged critical here are quarantined AFTER upsert
+        # (upsert always inserts new tools active), keyed by name below.
+        quarantine_added: Dict[str, str] = {}
+        if registry_server_id:
+            current_tool_defs = {
+                t.get("name", "").strip(): t
+                for t in tools
+                if isinstance(t, dict)
+                and isinstance(t.get("name"), str)
+                and t.get("name", "").strip()
+            }
+            current_names = set(current_tool_defs)
+            previous_names = db.get_known_tool_names(registry_server_id)
+            if previous_names:
+                server_findings = classify_server_drift(
+                    registry_server_id,
+                    previous_names,
+                    current_names,
+                    current_tool_defs,
+                )
+                for finding in server_findings:
+                    is_critical_added = (
+                        finding["type"] == "tool_added"
+                        and finding["severity"] == "critical"
+                    )
+                    if finding["type"] == "tool_removed":
+                        db.mark_mcp_tool_removed(
+                            registry_server_id,
+                            finding["tool_name"],
+                            finding["reason"],
+                        )
+                    elif is_critical_added:
+                        quarantine_added[finding["tool_name"]] = finding["reason"]
+                    # Critical new-tool drift is recorded once, by the per-tool
+                    # drift_detected receipt below (with surface hashes); avoid a
+                    # duplicate server-level row here.
+                    if is_critical_added:
+                        continue
+                    db.log_mcp_audit_event(
+                        {
+                            "server_id": registry_server_id,
+                            "tool_name": finding["tool_name"],
+                            "action": (
+                                "quarantine"
+                                if finding["severity"] == "critical"
+                                else "deny"
+                            ),
+                            "role": "system",
+                            "reason": finding["reason"],
+                            "matched_rule": finding["type"],
+                            "drift_status": finding["type"],
+                            "drift_severity": finding["severity"],
+                            "drift_action": (
+                                "quarantine"
+                                if finding["severity"] == "critical"
+                                else "deny"
+                            ),
+                            "drift_types": [finding["type"]],
+                            "drift_reasons": [finding["reason"]],
+                            "scan_time_ms": _elapsed_ms(),
+                        }
+                    )
+
+        for tool in tools:
+            validation = validate_mcp_tool_definition(tool)
+            registry = {"persisted": False, "reason": "server_id_not_registered"}
+            tool_name = tool.get("name", "").strip() if isinstance(tool, dict) else ""
+            quarantined_by_drift = False
+            drift_block_reason = ""
+            if registry_server_id and not validation.is_threat:
+                registry = db.upsert_mcp_tool_metadata(
+                    registry_server_id,
+                    tool,
+                    validation.tool_metadata or {},
+                )
+                if registry.get("ok") is False:
+                    return {
+                        "ok": False,
+                        "error": registry.get("error") or "mcp_registry_error",
+                        "message": (
+                            f"MCP server '{registry_server_id}' was removed "
+                            "during discovery; no tool metadata was persisted."
+                        ),
+                        "server_url": server_url,
+                    }
+                registry["persisted"] = True
+                # A new destructive/exfiltration tool passes the static
+                # validator (ordinary CRUD is handled by RBAC at call time),
+                # so the DRIFT path must quarantine it: it was just inserted
+                # active, flip it to quarantined before it can be used.
+                if tool_name and tool_name in quarantine_added:
+                    db.mark_mcp_tool_added_drift(
+                        registry_server_id,
+                        tool_name,
+                        quarantine_added[tool_name],
+                    )
+                    registry["status"] = "quarantined"
+                    quarantined_by_drift = True
+                    drift_block_reason = quarantine_added[tool_name]
+                elif registry.get("status") == "quarantined":
+                    # An EXISTING approved tool escalated capability under the
+                    # same name. Mirror the new-tool path so the discover
+                    # response matches the registry status + call-time
+                    # enforcement instead of leaving it in safe_tools.
+                    quarantined_by_drift = True
+                    _raw_reasons = registry.get("drift_reasons")
+                    _reasons = _raw_reasons if isinstance(_raw_reasons, list) else []
+                    drift_block_reason = (
+                        "; ".join(str(r) for r in _reasons[:3])
+                        or f"Tool '{tool_name}' quarantined by capability drift."
+                    )
+                # Record DETECTION at discovery (no-op for unchanged tools):
+                # a drift_detected receipt distinct from call-time enforcement.
+                if tool_name:
+                    _emit_discovery_drift_receipt(registry_server_id, tool_name)
+            validation_results.append(
+                {
+                    "tool_name": (tool.get("name") if isinstance(tool, dict) else None),
+                    "is_safe": not validation.is_threat and not quarantined_by_drift,
+                    "validation": (
+                        validation.model_dump()
+                        if hasattr(validation, "model_dump")
+                        else vars(validation)
+                    ),
+                    "tool_metadata": validation.tool_metadata,
+                    "registry": registry,
+                }
+            )
+
+            if validation.is_threat:
+                blocked_tools.append({"tool": tool, "reason": validation.reason})
+            elif quarantined_by_drift:
+                blocked_tools.append({"tool": tool, "reason": drift_block_reason})
+            else:
+                safe_tools.append(tool)
+
+        return {
+            "ok": True,
+            "server_url": server_url,
+            "total_tools": len(tools),
+            "safe_tools": len(safe_tools),
+            "blocked_tools": len(blocked_tools),
+            "tools": safe_tools,
+            "blocked": blocked_tools,
+            "validations": validation_results,
+        }
     except Exception as e:
         return {"ok": False, "error": str(e)[:200], "server_url": server_url}
 

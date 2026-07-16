@@ -85,6 +85,11 @@ class MCPDiscoverRequest(BaseModel):
 
 class MCPRebaselineRequest(BaseModel):
     confirm_rebaseline: bool = False
+    # Compare-and-swap tokens: the active-baseline surface hash the reviewer
+    # saw, and the exact candidate hash (from /rebaseline/discover) they
+    # reviewed. Both are re-checked inside the promote transaction.
+    expected_current_hash: Optional[str] = None
+    expected_candidate_hash: Optional[str] = None
 
 
 class MCPToolValidateRequest(BaseModel):

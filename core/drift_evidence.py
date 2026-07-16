@@ -210,6 +210,26 @@ def tool_surface_hash(tool_def: Dict[str, Any]) -> str:
     return _digest_bytes(canonical_surface_json(tool_def).encode("utf-8"))
 
 
+def server_surface_canonical_json(tool_defs: Optional[List[Dict[str, Any]]]) -> str:
+    """
+    Canonical JSON (as text) of a server's COMPLETE tool surface: the
+    per-tool surface projections ({name, description, inputSchema}) sorted
+    by tool name. Input order is insignificant; every surface field of every
+    tool is committed. This is what rebaseline candidates and baseline
+    version history hash.
+    """
+    surfaces = [
+        json.loads(canonical_surface_json(tool_def)) for tool_def in (tool_defs or [])
+    ]
+    surfaces.sort(key=lambda surface: surface["name"])
+    return canonical_json_bytes(surfaces).decode("utf-8")
+
+
+def server_surface_hash(tool_defs: Optional[List[Dict[str, Any]]]) -> str:
+    """Content address of a server's complete tool surface."""
+    return _digest_bytes(server_surface_canonical_json(tool_defs).encode("utf-8"))
+
+
 def classify_finding_types(finding_types: Iterable[str]) -> str:
     """Map drift finding types to the single highest-precedence classification."""
     buckets = {

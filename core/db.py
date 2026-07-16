@@ -28,6 +28,7 @@ from threading import Lock
 from typing import Optional, List, Dict, Any
 from urllib.parse import urlparse
 from core import audit_envelope
+from core import drift_evidence
 from core.mcp_drift import classify_tool_drift
 
 logger = logging.getLogger("interlock.db")
@@ -450,6 +451,41 @@ CREATE TABLE IF NOT EXISTS tool_surface_snapshots (
     canonical_json TEXT NOT NULL,
     created_at     TEXT NOT NULL
 );
+
+-- Rebaseline staging: at most ONE candidate per server (the latest validated
+-- discovery). A newer discovery replaces the row, which invalidates any
+-- approval still holding the older candidate's hash. Candidates never touch
+-- mcp_tool_metadata until promoted.
+CREATE TABLE IF NOT EXISTS mcp_rebaseline_candidates (
+    server_id              TEXT NOT NULL PRIMARY KEY,
+    candidate_surface_hash TEXT NOT NULL,
+    canonical_surface      TEXT NOT NULL,
+    tools_json             TEXT NOT NULL,
+    tool_count             INTEGER NOT NULL,
+    created_at             TEXT NOT NULL,
+    created_by             TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (server_id) REFERENCES mcp_servers(server_id) ON DELETE CASCADE
+);
+
+-- Immutable history of every ACTIVE baseline a server has had. Exactly one
+-- row per server has replaced_at IS NULL (the current baseline version) and
+-- prior rows are never rewritten beyond their replaced_at closing stamp.
+CREATE TABLE IF NOT EXISTS mcp_baseline_versions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id         TEXT NOT NULL,
+    version           INTEGER NOT NULL,
+    surface_hash      TEXT NOT NULL,
+    canonical_surface TEXT NOT NULL,
+    promoted_at       TEXT NOT NULL,
+    replaced_at       TEXT,
+    approval_audit_id INTEGER,
+    approved_by       TEXT NOT NULL DEFAULT '',
+    UNIQUE (server_id, version),
+    FOREIGN KEY (server_id) REFERENCES mcp_servers(server_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_baseline_versions_server
+    ON mcp_baseline_versions(server_id, version);
 
 CREATE TABLE IF NOT EXISTS mcp_response_profiles (
     server_id    TEXT    NOT NULL,
@@ -2670,8 +2706,17 @@ def update_mcp_server_provenance(server_id: str, provenance_status: str) -> bool
 
 
 def unregister_mcp_server(server_id: str) -> bool:
-    """Delete a server from the registry. Returns False if not found."""
-    with _db_lock, get_conn() as conn:
+    """Delete a server from the registry. Returns False if not found.
+
+    Server-lifecycle writer: serialize with candidate staging, active-surface
+    writers, and promotion so a parent-row delete cannot interleave with the
+    promotion transaction's candidate/history/audit writes.
+    """
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
         cursor = conn.execute(
             "DELETE FROM mcp_servers WHERE server_id = ?",
             (server_id,),
@@ -2680,8 +2725,16 @@ def unregister_mcp_server(server_id: str) -> bool:
 
 
 def clear_mcp_tool_metadata(server_id: str) -> int:
-    """Delete only stored tool baselines for an MCP server."""
-    with _db_lock, get_conn() as conn:
+    """Delete only stored tool baselines for an MCP server.
+
+    Row-set writer: participates in the per-server rebaseline serialization
+    domain so it can never interleave inside an in-flight promotion.
+    """
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
         cursor = conn.execute(
             "DELETE FROM mcp_tool_metadata WHERE server_id = ?",
             (server_id,),
@@ -2697,6 +2750,463 @@ def verify_mcp_server(server_id: str) -> bool:
             (server_id,),
         )
     return cursor.rowcount > 0
+
+
+# ── MCP rebaseline: candidate staging, CAS approval, atomic promote ──────────
+#
+# Invariants this section enforces:
+#   * Discovery only writes mcp_rebaseline_candidates — the active baseline in
+#     mcp_tool_metadata is NEVER mutated by candidate creation.
+#   * Promotion is compare-and-swap: both the active-baseline surface hash the
+#     reviewer saw and the exact candidate hash they reviewed are re-read and
+#     compared inside the final transaction; either differing rejects.
+#   * Promotion is atomic: history snapshot, metadata replacement, candidate
+#     consumption, and the audit-chain evidence row commit together or not at
+#     all (SQLite: BEGIN IMMEDIATE under _db_lock; Postgres: per-server
+#     advisory xact lock, plus the audit chain's lock for the evidence row).
+#   * ONE serialization domain: every writer that can move CAS state takes the
+#     same per-server lock — candidate staging (save_rebaseline_candidate) and
+#     the active-surface writers (upsert_mcp_tool_metadata,
+#     clear_mcp_tool_metadata, _replace_tool_metadata_from_candidate), plus
+#     the server-lifecycle delete (unregister_mcp_server). A discovery or
+#     unregister landing during an in-flight promote therefore WAITS and
+#     applies after it, instead of interleaving inside it. Status-only writers
+#     (approve/quarantine/mark_*) also share the lock: although they do not
+#     change the hashed surface, promotion deletes and reinserts their rows,
+#     so an unlocked status update could report success and then be lost.
+#   * Promotion consumes the candidate defensively: DELETE keyed on server_id
+#     AND candidate_surface_hash, requiring exactly one affected row — if the
+#     reviewed row vanished or was replaced anyway, the whole transaction
+#     rolls back and the caller gets stale_rebaseline_state with the CURRENT
+#     hashes. A newer candidate can never be silently destroyed.
+
+
+class _RebaselineCandidateRace(Exception):
+    """The reviewed candidate row vanished or was replaced mid-promote."""
+
+
+def _rebaseline_lock_key(server_id: str) -> int:
+    """Stable signed-64-bit advisory-lock key for one server's rebaseline."""
+    digest = hashlib.sha256(f"interlock:rebaseline:{server_id}".encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+@contextmanager
+def _rebaseline_transaction(conn, server_id: str):
+    """
+    One atomic rebaseline promote per server.
+
+    Postgres: explicit transaction + transaction-scoped advisory lock keyed
+    on the server, so two replicas cannot interleave promote steps; the lock
+    releases at COMMIT/ROLLBACK. SQLite: callers hold _db_lock; BEGIN
+    IMMEDIATE makes the multi-statement promote roll back as a unit.
+    """
+    if _is_postgres_conn(conn):
+        conn.execute("BEGIN")
+        try:
+            conn.execute(
+                "SELECT pg_advisory_xact_lock(?)", (_rebaseline_lock_key(server_id),)
+            )
+            yield
+        except BaseException:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                logger.exception("Failed to roll back %s rebaseline", server_id)
+            raise
+        conn.execute("COMMIT")
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            logger.exception("Failed to roll back %s rebaseline", server_id)
+        raise
+    conn.execute("COMMIT")
+
+
+def _active_baseline_from_conn(conn, server_id: str) -> Dict[str, Any]:
+    """The server's live stored tool surface, canonicalized and hashed."""
+    rows = conn.execute(
+        "SELECT raw_tool_definition FROM mcp_tool_metadata "
+        "WHERE server_id = ? ORDER BY tool_name",
+        (server_id,),
+    ).fetchall()
+    tool_defs = []
+    for row in rows:
+        raw = row_value(row, "raw_tool_definition", 0) or "{}"
+        try:
+            tool_defs.append(json.loads(raw))
+        except (json.JSONDecodeError, TypeError):
+            tool_defs.append({})
+    return {
+        "server_id": server_id,
+        "surface_hash": drift_evidence.server_surface_hash(tool_defs),
+        "canonical_surface": drift_evidence.server_surface_canonical_json(tool_defs),
+        "tool_count": len(tool_defs),
+    }
+
+
+def get_active_baseline(server_id: str) -> Dict[str, Any]:
+    """Surface hash + canonical form of a server's current active baseline."""
+    with get_conn() as conn:
+        return _active_baseline_from_conn(conn, server_id)
+
+
+def save_rebaseline_candidate(
+    server_id: str,
+    validated_tools: List[Dict[str, Any]],
+    created_by: str = "",
+) -> Dict[str, Any]:
+    """
+    Stage one validated discovery result as the server's rebaseline
+    candidate, replacing any prior candidate. ``validated_tools`` is a list
+    of {"tool": <raw definition>, "normalized_metadata": <validator output>}
+    — the complete surface, already validated by the caller. Never touches
+    mcp_tool_metadata.
+    """
+    assert_not_production_fixture_write(server_id, "MCP rebaseline candidate")
+    validated_tools = validated_tools or []
+    tools = [entry.get("tool") or {} for entry in validated_tools]
+    canonical_surface = drift_evidence.server_surface_canonical_json(tools)
+    candidate_surface_hash = drift_evidence.server_surface_hash(tools)
+    now = datetime.now(timezone.utc).isoformat()
+    # Staging shares the promote's serialization domain: a discovery landing
+    # while an approval is mid-transaction waits for it instead of writing a
+    # candidate row the promote would then consume.
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
+        server = conn.execute(
+            "SELECT server_id FROM mcp_servers WHERE server_id = ?",
+            (server_id,),
+        ).fetchone()
+        if server is None:
+            return {
+                "ok": False,
+                "error": "server_not_found",
+                "server_id": server_id,
+            }
+        conn.execute(
+            """
+            INSERT INTO mcp_rebaseline_candidates
+              (server_id, candidate_surface_hash, canonical_surface, tools_json,
+               tool_count, created_at, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (server_id) DO UPDATE SET
+              candidate_surface_hash = excluded.candidate_surface_hash,
+              canonical_surface = excluded.canonical_surface,
+              tools_json = excluded.tools_json,
+              tool_count = excluded.tool_count,
+              created_at = excluded.created_at,
+              created_by = excluded.created_by
+            """,
+            (
+                server_id,
+                candidate_surface_hash,
+                canonical_surface,
+                json.dumps(validated_tools),
+                len(validated_tools),
+                now,
+                created_by or "",
+            ),
+        )
+    return {
+        "server_id": server_id,
+        "candidate_surface_hash": candidate_surface_hash,
+        "canonical_surface": canonical_surface,
+        "tool_count": len(validated_tools),
+        "created_at": now,
+        "created_by": created_by or "",
+    }
+
+
+def _rebaseline_candidate_from_conn(conn, server_id: str) -> Optional[Dict[str, Any]]:
+    row = conn.execute(
+        "SELECT * FROM mcp_rebaseline_candidates WHERE server_id = ?",
+        (server_id,),
+    ).fetchone()
+    if not row:
+        return None
+    candidate = row_to_plain_dict(row)
+    try:
+        candidate["validated_tools"] = json.loads(candidate.get("tools_json") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        candidate["validated_tools"] = []
+    candidate.pop("tools_json", None)
+    return candidate
+
+
+def get_rebaseline_candidate(server_id: str) -> Optional[Dict[str, Any]]:
+    """The server's staged rebaseline candidate, or None."""
+    with get_conn() as conn:
+        return _rebaseline_candidate_from_conn(conn, server_id)
+
+
+def list_baseline_versions(server_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+    """A server's baseline version history, oldest first."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM mcp_baseline_versions WHERE server_id = ? "
+            "ORDER BY version ASC LIMIT ?",
+            (server_id, int(limit)),
+        ).fetchall()
+    return [row_to_plain_dict(row) for row in rows]
+
+
+def _replace_tool_metadata_from_candidate(
+    conn, server_id: str, candidate: Dict[str, Any]
+) -> int:
+    """
+    Swap the server's stored tool metadata for the candidate's tools — fresh
+    active rows, drift state reset. Runs inside the promote transaction;
+    kept as a seam so tests can inject a failure between the history write
+    and the swap.
+    """
+    conn.execute("DELETE FROM mcp_tool_metadata WHERE server_id = ?", (server_id,))
+    now = datetime.now(timezone.utc).isoformat()
+    inserted = 0
+    for entry in candidate.get("validated_tools") or []:
+        tool = entry.get("tool") or {}
+        normalized_metadata = entry.get("normalized_metadata") or {}
+        schema = tool.get("inputSchema", {}) or tool.get("input_schema", {}) or {}
+        conn.execute(
+            """
+            INSERT INTO mcp_tool_metadata
+              (server_id, tool_name, tool_schema_hash, description_hash,
+               normalized_metadata, raw_annotations, raw_tool_definition,
+               first_seen, last_seen, last_changed, status, drift_severity,
+               drift_action, drift_types, drift_reasons, previous_metadata,
+               previous_tool_definition)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'none', 'allow',
+                    '[]', '[]', '{}', '{}')
+            """,
+            (
+                server_id,
+                str(tool.get("name") or "").strip(),
+                _hash_json(schema),
+                _hash_text(tool.get("description", "")),
+                json.dumps(normalized_metadata),
+                json.dumps(tool.get("annotations") or {}),
+                json.dumps(tool),
+                now,
+                now,
+                None,
+            ),
+        )
+        inserted += 1
+    return inserted
+
+
+def promote_rebaseline_candidate(
+    server_id: str,
+    expected_current_hash: str,
+    expected_candidate_hash: str,
+    actor: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Atomically promote the staged candidate to the active baseline.
+
+    Compare-and-swap: ``expected_current_hash`` (the active baseline the
+    reviewer saw) and ``expected_candidate_hash`` (the exact candidate they
+    reviewed) are re-read and compared inside the transaction; if either
+    differs — the baseline moved, or a newer discovery replaced the
+    candidate — nothing changes and the CURRENT hashes are returned so the
+    caller can re-review (HTTP 409 at the route).
+
+    On success, in one transaction: the outgoing active baseline is
+    preserved in immutable version history, the candidate's tools replace
+    mcp_tool_metadata (fresh active rows), the candidate is consumed, an
+    audit-chain evidence row is appended, and the new version row records
+    that audit id.
+    """
+    assert_not_production_fixture_write(server_id, "MCP rebaseline promote")
+    actor = actor or {}
+    with _db_lock, get_conn() as conn:
+        try:
+            return _promote_rebaseline_candidate_locked(
+                conn, server_id, expected_current_hash, expected_candidate_hash, actor
+            )
+        except _RebaselineCandidateRace:
+            # The reviewed candidate row vanished or was replaced despite the
+            # CAS read — the transaction rolled back; report the CURRENT
+            # hashes (read directly, post-rollback) so the caller re-reviews.
+            active = _active_baseline_from_conn(conn, server_id)
+            row = conn.execute(
+                "SELECT candidate_surface_hash FROM mcp_rebaseline_candidates "
+                "WHERE server_id = ?",
+                (server_id,),
+            ).fetchone()
+            return {
+                "ok": False,
+                "error": "stale_rebaseline_state",
+                "active_surface_hash": active["surface_hash"],
+                "candidate_surface_hash": (
+                    row_value(row, "candidate_surface_hash", 0) if row else None
+                ),
+            }
+
+
+def _promote_rebaseline_candidate_locked(
+    conn,
+    server_id: str,
+    expected_current_hash: str,
+    expected_candidate_hash: str,
+    actor: Dict[str, Any],
+) -> Dict[str, Any]:
+    with _rebaseline_transaction(conn, server_id):
+        server = conn.execute(
+            "SELECT server_id FROM mcp_servers WHERE server_id = ?",
+            (server_id,),
+        ).fetchone()
+        if server is None:
+            return {
+                "ok": False,
+                "error": "server_not_found",
+                "active_surface_hash": None,
+                "candidate_surface_hash": None,
+            }
+        if _is_postgres_conn(conn):
+            # The evidence row extends the audit chain tip; take the
+            # chain's advisory lock inside THIS transaction (nesting
+            # _serialized_chain_append would BEGIN/COMMIT its own).
+            conn.execute(
+                "SELECT pg_advisory_xact_lock(?)",
+                (_audit_chain_lock_key("mcp_audit_log"),),
+            )
+        active = _active_baseline_from_conn(conn, server_id)
+        candidate = _rebaseline_candidate_from_conn(conn, server_id)
+        if candidate is None:
+            return {
+                "ok": False,
+                "error": "no_candidate",
+                "active_surface_hash": active["surface_hash"],
+                "candidate_surface_hash": None,
+            }
+        if (expected_current_hash or "") != active["surface_hash"] or (
+            expected_candidate_hash or ""
+        ) != candidate["candidate_surface_hash"]:
+            return {
+                "ok": False,
+                "error": "stale_rebaseline_state",
+                "active_surface_hash": active["surface_hash"],
+                "candidate_surface_hash": candidate["candidate_surface_hash"],
+            }
+
+        # Consume EXACTLY the reviewed candidate, defensively: keyed on the
+        # hash as well as the server, and requiring exactly one affected
+        # row. If the row vanished or was replaced anyway, roll back the
+        # whole transaction — a newer candidate must never be destroyed by
+        # the promotion of an older one.
+        consumed = conn.execute(
+            "DELETE FROM mcp_rebaseline_candidates "
+            "WHERE server_id = ? AND candidate_surface_hash = ?",
+            (server_id, candidate["candidate_surface_hash"]),
+        )
+        if int(consumed.rowcount or 0) != 1:
+            raise _RebaselineCandidateRace()
+
+        now = datetime.now(timezone.utc).isoformat()
+        current_version = conn.execute(
+            "SELECT id, version FROM mcp_baseline_versions "
+            "WHERE server_id = ? AND replaced_at IS NULL",
+            (server_id,),
+        ).fetchone()
+        max_row = conn.execute(
+            "SELECT COALESCE(MAX(version), 0) AS v FROM mcp_baseline_versions "
+            "WHERE server_id = ?",
+            (server_id,),
+        ).fetchone()
+        max_version = int(row_value(max_row, "v", 0) or 0)
+        if current_version is not None:
+            previous_version = int(row_value(current_version, "version", 1))
+            conn.execute(
+                "UPDATE mcp_baseline_versions SET replaced_at = ? WHERE id = ?",
+                (now, int(row_value(current_version, "id", 0))),
+            )
+        else:
+            # Legacy bootstrap: this baseline predates version history —
+            # preserve it as a closed version row before replacing it.
+            previous_version = max_version + 1
+            max_version = previous_version
+            conn.execute(
+                """
+                INSERT INTO mcp_baseline_versions
+                  (server_id, version, surface_hash, canonical_surface,
+                   promoted_at, replaced_at, approval_audit_id, approved_by)
+                VALUES (?, ?, ?, ?, ?, ?, NULL, '')
+                """,
+                (
+                    server_id,
+                    previous_version,
+                    active["surface_hash"],
+                    active["canonical_surface"],
+                    now,
+                    now,
+                ),
+            )
+
+        replaced_tools = _replace_tool_metadata_from_candidate(
+            conn, server_id, candidate
+        )
+        saved_audit = _append_mcp_audit_event(
+            conn,
+            {
+                "server_id": server_id,
+                "tool_name": "",
+                "role": actor.get("reviewer", "") or "operator",
+                "principal_id": actor.get("principal_id", "") or "",
+                "action": "rebaseline",
+                "matched_rule": "rebaseline_promoted",
+                "reason": (
+                    f"Rebaseline promoted candidate "
+                    f"{candidate['candidate_surface_hash']} over active "
+                    f"{active['surface_hash']} "
+                    f"({candidate['tool_count']} tools)."
+                ),
+                "verification_level": "manual",
+                "confidence": 1.0,
+                "drift_baseline_hash": active["surface_hash"],
+                "drift_current_hash": candidate["candidate_surface_hash"],
+            },
+        )
+        new_version = max_version + 1
+        conn.execute(
+            """
+            INSERT INTO mcp_baseline_versions
+              (server_id, version, surface_hash, canonical_surface,
+               promoted_at, replaced_at, approval_audit_id, approved_by)
+            VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                server_id,
+                new_version,
+                candidate["candidate_surface_hash"],
+                candidate["canonical_surface"],
+                now,
+                saved_audit["id"],
+                actor.get("reviewer", "") or "",
+            ),
+        )
+        return {
+            "ok": True,
+            "server_id": server_id,
+            "version": new_version,
+            "previous_version": previous_version,
+            "old_surface_hash": active["surface_hash"],
+            "new_surface_hash": candidate["candidate_surface_hash"],
+            "tool_count": candidate["tool_count"],
+            "replaced_tools": replaced_tools,
+            "audit": {
+                "audit_id": saved_audit["id"],
+                "call_id": saved_audit["call_id"],
+            },
+        }
 
 
 def seed_mcp_servers() -> None:
@@ -2784,7 +3294,25 @@ def upsert_mcp_tool_metadata(
     raw_annotations = tool.get("annotations") or {}
     now = datetime.now(timezone.utc).isoformat()
 
-    with _db_lock, get_conn() as conn:
+    # Active-surface writer: serialize with rebaseline promotion per server,
+    # so an ordinary discovery cannot mutate the surface INSIDE an in-flight
+    # approval (it waits and applies on top of the new baseline instead).
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
+        server = conn.execute(
+            "SELECT server_id FROM mcp_servers WHERE server_id = ?",
+            (server_id,),
+        ).fetchone()
+        if server is None:
+            return {
+                "ok": False,
+                "error": "server_not_found",
+                "server_id": server_id,
+                "tool_name": tool_name,
+            }
         existing = conn.execute(
             """
             SELECT * FROM mcp_tool_metadata
@@ -3026,7 +3554,11 @@ def mark_mcp_tool_removed(
     )
     now = datetime.now(timezone.utc).isoformat()
 
-    with _db_lock, get_conn() as conn:
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
         row = conn.execute(
             """
             SELECT * FROM mcp_tool_metadata
@@ -3080,7 +3612,11 @@ def mark_mcp_tool_added_drift(
     )
     now = datetime.now(timezone.utc).isoformat()
 
-    with _db_lock, get_conn() as conn:
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
         row = conn.execute(
             """
             SELECT * FROM mcp_tool_metadata
@@ -3127,7 +3663,11 @@ def mark_mcp_tool_effective_permission_drift(
     )
     now = datetime.now(timezone.utc).isoformat()
 
-    with _db_lock, get_conn() as conn:
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
         row = conn.execute(
             """
             SELECT * FROM mcp_tool_metadata
@@ -3234,7 +3774,11 @@ def approve_mcp_tool_baseline(
     reason = reason or "Approved current MCP tool definition as the new baseline."
     t0 = time.perf_counter()
 
-    with _db_lock, get_conn() as conn:
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
         row = conn.execute(
             """
             SELECT * FROM mcp_tool_metadata
@@ -3306,7 +3850,11 @@ def quarantine_mcp_tool(
     reason = reason or "Operator kept this MCP tool quarantined pending review."
     t0 = time.perf_counter()
 
-    with _db_lock, get_conn() as conn:
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
         row = conn.execute(
             """
             SELECT * FROM mcp_tool_metadata
@@ -3744,7 +4292,11 @@ def mark_mcp_tool_external_reach_drift(
     """Quarantine a known tool after critical destination/reach drift."""
     reason = reason or "External destination drift introduced critical reach expansion."
     now = datetime.now(timezone.utc).isoformat()
-    with _db_lock, get_conn() as conn:
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
         row = conn.execute(
             """
             SELECT * FROM mcp_tool_metadata
@@ -3866,7 +4418,11 @@ def mark_mcp_tool_effect_drift(
     """Quarantine a known tool after material effect/outcome drift."""
     reason = reason or "Observed effect drift introduced unexpected side effects."
     now = datetime.now(timezone.utc).isoformat()
-    with _db_lock, get_conn() as conn:
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
         row = conn.execute(
             """
             SELECT * FROM mcp_tool_metadata
@@ -3932,7 +4488,11 @@ def mark_mcp_tool_response_drift(
     """Quarantine a known tool after critical response/data-exposure drift."""
     reason = reason or "Response exposure drift introduced critical data exposure."
     now = datetime.now(timezone.utc).isoformat()
-    with _db_lock, get_conn() as conn:
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
         row = conn.execute(
             """
             SELECT * FROM mcp_tool_metadata
@@ -3975,8 +4535,15 @@ def mark_mcp_tool_response_drift(
 # ── MCP audit log ─────────────────────────────────────────────────────────────
 
 
-def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
-    """Persist a durable MCP policy/audit event."""
+def _append_mcp_audit_event(conn, event: dict) -> Dict[str, Any]:
+    """
+    Append one event to the mcp_audit_log hash chain on an EXISTING
+    connection. The caller must already hold the chain's serialization
+    (_db_lock + _serialized_chain_append, or an open transaction that took
+    the chain's advisory lock on Postgres) — this lets an atomic operation
+    like a rebaseline promote record its audit evidence inside the same
+    transaction as the state change it evidences.
+    """
     event = event or {}
     ts = event.get("ts") or datetime.now(timezone.utc).isoformat()
     call_id = str(event.get("call_id") or "") or uuid.uuid4().hex
@@ -4029,77 +4596,70 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
         ),
         "call_id": call_id,
     }
-    with (
-        _db_lock,
-        get_conn() as conn,
-        _serialized_chain_append(conn, "mcp_audit_log"),
-    ):
-        row = conn.execute(
-            "SELECT integrity_hash FROM mcp_audit_log ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        if row is not None:
-            prev_hash = (dict(row).get("integrity_hash") or "") or "GENESIS"
-        else:
-            # Empty table: continue from the retention checkpoint boundary
-            # (if the chain was pruned away entirely) instead of GENESIS.
-            latest = _latest_chain_checkpoint(conn, "mcp_audit_log")
-            prev_hash = (latest or {}).get("last_deleted_hash") or "GENESIS"
-        integrity_hash = audit_envelope.compute_hash_v3(
-            "mcp_audit_log", record, prev_hash
-        )
-        event_id = _insert_returning_id(
-            conn,
-            """
-            INSERT INTO mcp_audit_log
-              (ts, server_id, tool_name, principal_id, role, action, matched_rule, reason,
-               effects, side_effect, data_classes, externality, verification_level,
-               confidence, warnings, argument_keys, blocked_by, probe_id,
-               argument_hash, expected_outcome, expected_status_code,
-               observed_outcome, observed_status_code, observed_error_class,
-               drift_status, drift_severity, drift_action, drift_types, drift_reasons,
-               drift_baseline_hash, drift_current_hash,
-               scan_time_ms, call_id, hash_v, prev_hash, integrity_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record["ts"],
-                record["server_id"],
-                record["tool_name"],
-                record["principal_id"],
-                record["role"],
-                record["action"],
-                record["matched_rule"],
-                record["reason"],
-                record["effects"],
-                record["side_effect"],
-                record["data_classes"],
-                record["externality"],
-                record["verification_level"],
-                record["confidence"],
-                record["warnings"],
-                record["argument_keys"],
-                record["blocked_by"],
-                record["probe_id"],
-                record["argument_hash"],
-                record["expected_outcome"],
-                record["expected_status_code"],
-                record["observed_outcome"],
-                record["observed_status_code"],
-                record["observed_error_class"],
-                record["drift_status"],
-                record["drift_severity"],
-                record["drift_action"],
-                record["drift_types"],
-                record["drift_reasons"],
-                record["drift_baseline_hash"],
-                record["drift_current_hash"],
-                record["scan_time_ms"],
-                record["call_id"],
-                audit_envelope.HASH_V3,
-                prev_hash,
-                integrity_hash,
-            ),
-        )
+    row = conn.execute(
+        "SELECT integrity_hash FROM mcp_audit_log ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if row is not None:
+        prev_hash = (dict(row).get("integrity_hash") or "") or "GENESIS"
+    else:
+        # Empty table: continue from the retention checkpoint boundary
+        # (if the chain was pruned away entirely) instead of GENESIS.
+        latest = _latest_chain_checkpoint(conn, "mcp_audit_log")
+        prev_hash = (latest or {}).get("last_deleted_hash") or "GENESIS"
+    integrity_hash = audit_envelope.compute_hash_v3("mcp_audit_log", record, prev_hash)
+    event_id = _insert_returning_id(
+        conn,
+        """
+        INSERT INTO mcp_audit_log
+          (ts, server_id, tool_name, principal_id, role, action, matched_rule, reason,
+           effects, side_effect, data_classes, externality, verification_level,
+           confidence, warnings, argument_keys, blocked_by, probe_id,
+           argument_hash, expected_outcome, expected_status_code,
+           observed_outcome, observed_status_code, observed_error_class,
+           drift_status, drift_severity, drift_action, drift_types, drift_reasons,
+           drift_baseline_hash, drift_current_hash,
+           scan_time_ms, call_id, hash_v, prev_hash, integrity_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            record["ts"],
+            record["server_id"],
+            record["tool_name"],
+            record["principal_id"],
+            record["role"],
+            record["action"],
+            record["matched_rule"],
+            record["reason"],
+            record["effects"],
+            record["side_effect"],
+            record["data_classes"],
+            record["externality"],
+            record["verification_level"],
+            record["confidence"],
+            record["warnings"],
+            record["argument_keys"],
+            record["blocked_by"],
+            record["probe_id"],
+            record["argument_hash"],
+            record["expected_outcome"],
+            record["expected_status_code"],
+            record["observed_outcome"],
+            record["observed_status_code"],
+            record["observed_error_class"],
+            record["drift_status"],
+            record["drift_severity"],
+            record["drift_action"],
+            record["drift_types"],
+            record["drift_reasons"],
+            record["drift_baseline_hash"],
+            record["drift_current_hash"],
+            record["scan_time_ms"],
+            record["call_id"],
+            audit_envelope.HASH_V3,
+            prev_hash,
+            integrity_hash,
+        ),
+    )
 
     saved = dict(event)
     saved["id"] = event_id
@@ -4107,6 +4667,16 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
     saved["call_id"] = call_id
     saved["hash_v"] = audit_envelope.HASH_V3
     return saved
+
+
+def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
+    """Persist a durable MCP policy/audit event."""
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _serialized_chain_append(conn, "mcp_audit_log"),
+    ):
+        return _append_mcp_audit_event(conn, event)
 
 
 def list_mcp_audit_logs(limit: int = 100) -> List[Dict[str, Any]]:
