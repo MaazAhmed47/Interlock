@@ -211,7 +211,12 @@ class _PostgresConn:
 
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_POSTGRES_BOOLEAN_COLUMNS = ("is_active", "verified", "probes_enabled")
+_POSTGRES_BOOLEAN_COLUMNS = (
+    "is_active",
+    "verified",
+    "probes_enabled",
+    "threat_blocked",
+)
 
 
 def _postgres_column_definition(definition: str, column: str = "") -> str:
@@ -246,6 +251,17 @@ def _postgres_schema_sql(sql: str) -> str:
             converted,
             flags=re.IGNORECASE,
         )
+    # ``is_threat`` also exists on latency_samples, where the current storage
+    # and queries intentionally use integers. Convert only scan_history, whose
+    # writer binds a Python bool through psycopg2.
+    converted = re.sub(
+        r"(CREATE TABLE IF NOT EXISTS scan_history\s*\(.*?\bis_threat\s+)"
+        r"INTEGER(\s+NOT NULL)?\s+DEFAULT\s+0\b",
+        lambda match: (f"{match.group(1)}BOOLEAN{match.group(2) or ''} DEFAULT FALSE"),
+        converted,
+        count=1,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     return converted
 
 
@@ -810,6 +826,8 @@ def init_db() -> None:
         # only round-trip losslessly when Postgres stores them as float8.
         # Legacy deployments created them as REAL (float4); widen in place.
         _ensure_double_precision(conn, "mcp_audit_log", ("confidence", "scan_time_ms"))
+        _ensure_postgres_boolean_column(conn, "usage_log", "threat_blocked")
+        _ensure_postgres_boolean_column(conn, "scan_history", "is_threat")
         _run_schema_statements(conn, indexes=True)
     logger.info(
         "%s DB initialized", "Postgres" if USE_POSTGRES else f"SQLite at {DB_PATH}"
@@ -1218,6 +1236,46 @@ def _ensure_double_precision(conn, table: str, columns) -> None:
             conn.execute(
                 f"ALTER TABLE {table} ALTER COLUMN {column} TYPE double precision"
             )
+
+
+def _ensure_postgres_boolean_column(conn, table: str, column: str) -> bool:
+    """Convert a legacy Postgres integer boolean column without losing rows."""
+    if not _is_postgres_conn(conn):
+        return False
+    _validate_identifier(table)
+    _validate_identifier(column)
+    row = conn.execute(
+        """
+        SELECT data_type, column_default
+          FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name = ?
+           AND column_name = ?
+        """,
+        (table, column),
+    ).fetchone()
+    if row is None:
+        return False
+
+    data_type = str(row_value(row, "data_type", 0) or "").lower()
+    column_default = str(row_value(row, "column_default", 1) or "").lower()
+    if data_type in {"smallint", "integer", "bigint"}:
+        conn.execute(f"""
+            ALTER TABLE {table}
+              ALTER COLUMN {column} DROP DEFAULT,
+              ALTER COLUMN {column} TYPE BOOLEAN USING ({column} <> 0),
+              ALTER COLUMN {column} SET DEFAULT FALSE
+            """)
+        return True
+    if data_type != "boolean":
+        raise RuntimeError(
+            f"Cannot migrate {table}.{column} from unexpected type {data_type!r}"
+        )
+    normalized_default = column_default.replace("'", "").split("::", 1)[0].strip()
+    if normalized_default != "false":
+        conn.execute(f"ALTER TABLE {table} ALTER COLUMN {column} SET DEFAULT FALSE")
+        return True
+    return False
 
 
 def _insert_returning_id(conn, sql: str, params) -> Optional[int]:
