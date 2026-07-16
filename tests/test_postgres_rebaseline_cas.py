@@ -15,13 +15,17 @@ new candidate/version tables. These tests run against a disposable Postgres:
 Skipped when the env var is absent (same convention as the other PG suites).
 """
 
+import asyncio
 import importlib
+import json
 import os
 import sys
 import threading
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -59,8 +63,58 @@ TOOL_C = {
         "required": ["summary"],
     },
 }
+TOOL_CONTENT_C = {
+    "name": "read_document",
+    "description": "Read one document.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+    },
+    "annotations": {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+    },
+    "outputSchema": {
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+    },
+}
+TOOL_CONTENT_ANNOTATIONS_D = {
+    **TOOL_CONTENT_C,
+    "annotations": {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "openWorldHint": True,
+    },
+}
+TOOL_CONTENT_OUTPUT_D = {
+    **TOOL_CONTENT_C,
+    "outputSchema": {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"},
+            "external_url": {"type": "string"},
+        },
+        "required": ["text", "external_url"],
+    },
+}
+CONTENT_METADATA_C = {
+    "side_effect": "read_only",
+    "data_classes": ["internal"],
+    "custom": {"alpha": 1, "beta": 2},
+}
+CONTENT_METADATA_D = {
+    **CONTENT_METADATA_C,
+    "side_effect": "destructive",
+}
 
 ACTOR = {"reviewer": "ops (key:lf-pg)", "principal_id": "lf-pg"}
+
+
+def _content_entry(tool=TOOL_CONTENT_C, metadata=CONTENT_METADATA_C):
+    return {"tool": tool, "normalized_metadata": metadata}
 
 
 @pytest.fixture(scope="module")
@@ -181,6 +235,153 @@ def test_migration_creates_rebaseline_tables(pg_db):
             assert dict(row)["n"] == 1, f"{table} must exist"
 
 
+@pytest.mark.parametrize(
+    ("changed_entry", "mutation"),
+    [
+        (_content_entry(TOOL_CONTENT_ANNOTATIONS_D), "annotation_only"),
+        (_content_entry(TOOL_CONTENT_OUTPUT_D), "output_schema_only"),
+        (_content_entry(metadata=CONTENT_METADATA_D), "normalized_metadata_only"),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_rebaseline_candidate_hash_covers_complete_content_on_postgres(
+    pg_db, changed_entry, mutation
+):
+    first = pg_db.save_rebaseline_candidate(
+        SERVER_ID, [_content_entry()], f"ops-{mutation}-c"
+    )
+    second = pg_db.save_rebaseline_candidate(
+        SERVER_ID, [changed_entry], f"ops-{mutation}-d"
+    )
+    assert (
+        first["candidate_surface_hash"] != second["candidate_surface_hash"]
+    ), f"{mutation} candidate content must not alias on Postgres"
+
+
+def test_rebaseline_content_canonical_order_is_stable_on_postgres(pg_db):
+    reordered_tool = {
+        "outputSchema": {
+            "required": ["text"],
+            "properties": {"text": {"type": "string"}},
+            "type": "object",
+        },
+        "annotations": {"destructiveHint": False, "readOnlyHint": True},
+        "inputSchema": {
+            "required": ["path"],
+            "properties": {"path": {"type": "string"}},
+            "type": "object",
+        },
+        "description": "Read one document.",
+        "name": "read_document",
+    }
+    reordered_metadata = {
+        "custom": {"beta": 2, "alpha": 1},
+        "data_classes": ["internal"],
+        "side_effect": "read_only",
+    }
+    first = pg_db.save_rebaseline_candidate(
+        SERVER_ID,
+        [_content_entry(), _content_entry(TOOL_A, {"z": 3, "a": 1})],
+        "ops",
+    )
+    second = pg_db.save_rebaseline_candidate(
+        SERVER_ID,
+        [
+            _content_entry(TOOL_A, {"a": 1, "z": 3}),
+            _content_entry(reordered_tool, reordered_metadata),
+        ],
+        "ops",
+    )
+    assert first["candidate_surface_hash"] == second["candidate_surface_hash"]
+    assert first["canonical_surface"] == second["canonical_surface"]
+
+
+@pytest.mark.parametrize(
+    ("newer_tool", "mutation"),
+    [
+        (TOOL_CONTENT_ANNOTATIONS_D, "annotation_only"),
+        (TOOL_CONTENT_OUTPUT_D, "output_schema_only"),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_route_exact_candidate_hash_returns_409_on_postgres(
+    pg_db, newer_tool, mutation
+):
+    import proxy
+
+    active = _seed_baseline(pg_db, [TOOL_A])
+    candidate_c = pg_db.save_rebaseline_candidate(
+        SERVER_ID, [_content_entry()], f"ops-{mutation}-c"
+    )
+    candidate_d = pg_db.save_rebaseline_candidate(
+        SERVER_ID, [_content_entry(newer_tool)], f"ops-{mutation}-d"
+    )
+    assert (
+        candidate_c["candidate_surface_hash"] != candidate_d["candidate_surface_hash"]
+    )
+
+    with patch(
+        "routes.mcp.proxy.require_scope",
+        return_value=({"key_prefix": "lf-pg", "label": "ops"}, None),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(
+                proxy.mcp_rebaseline_server(
+                    SERVER_ID,
+                    request=proxy.MCPRebaselineRequest(
+                        confirm_rebaseline=True,
+                        expected_current_hash=active["surface_hash"],
+                        expected_candidate_hash=candidate_c["candidate_surface_hash"],
+                    ),
+                    x_api_key="test",
+                )
+            )
+    assert exc.value.status_code == 409
+    assert exc.value.detail["error"] == "stale_rebaseline_state"
+    assert (
+        pg_db.get_rebaseline_candidate(SERVER_ID)["candidate_surface_hash"]
+        == candidate_d["candidate_surface_hash"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("changed_tool", "changed_metadata", "mutation"),
+    [
+        (TOOL_CONTENT_ANNOTATIONS_D, CONTENT_METADATA_C, "annotation_only"),
+        (TOOL_CONTENT_OUTPUT_D, CONTENT_METADATA_C, "output_schema_only"),
+        (TOOL_CONTENT_C, CONTENT_METADATA_D, "normalized_metadata_only"),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_active_content_change_invalidates_expected_current_hash_on_postgres(
+    pg_db, changed_tool, changed_metadata, mutation
+):
+    pg_db.upsert_mcp_tool_metadata(SERVER_ID, TOOL_CONTENT_C, CONTENT_METADATA_C)
+    reviewed_active = pg_db.get_active_baseline(SERVER_ID)
+    candidate = pg_db.save_rebaseline_candidate(
+        SERVER_ID, _validated(pg_db, [TOOL_C]), "ops"
+    )
+
+    pg_db.upsert_mcp_tool_metadata(SERVER_ID, changed_tool, changed_metadata)
+    current_active = pg_db.get_active_baseline(SERVER_ID)
+    assert (
+        reviewed_active["surface_hash"] != current_active["surface_hash"]
+    ), f"{mutation} active content must invalidate Postgres expected_current_hash"
+
+    result = pg_db.promote_rebaseline_candidate(
+        SERVER_ID,
+        reviewed_active["surface_hash"],
+        candidate["candidate_surface_hash"],
+        actor=ACTOR,
+    )
+    assert result["ok"] is False, result
+    assert result["error"] == "stale_rebaseline_state"
+    assert (
+        pg_db.get_rebaseline_candidate(SERVER_ID)["candidate_surface_hash"]
+        == candidate["candidate_surface_hash"]
+    )
+
+
 def test_cas_promote_succeeds_and_preserves_history_on_postgres(pg_db):
     active = _seed_baseline(pg_db, [TOOL_A, TOOL_B])
     candidate = pg_db.save_rebaseline_candidate(
@@ -212,6 +413,43 @@ def test_cas_promote_succeeds_and_preserves_history_on_postgres(pg_db):
         is True
     )
     assert pg_db.verify_audit_chain()["valid"] is True
+
+
+def test_promote_history_and_audit_commit_full_content_on_postgres(pg_db):
+    pg_db.upsert_mcp_tool_metadata(SERVER_ID, TOOL_CONTENT_C, CONTENT_METADATA_C)
+    active = pg_db.get_active_baseline(SERVER_ID)
+    candidate_tool = {
+        **TOOL_CONTENT_OUTPUT_D,
+        "annotations": TOOL_CONTENT_ANNOTATIONS_D["annotations"],
+    }
+    candidate = pg_db.save_rebaseline_candidate(
+        SERVER_ID,
+        [_content_entry(candidate_tool, CONTENT_METADATA_D)],
+        "ops",
+    )
+
+    result = pg_db.promote_rebaseline_candidate(
+        SERVER_ID,
+        active["surface_hash"],
+        candidate["candidate_surface_hash"],
+        actor=ACTOR,
+    )
+    assert result["ok"] is True, result
+
+    versions = pg_db.list_baseline_versions(SERVER_ID)
+    assert versions[0]["surface_hash"] == active["surface_hash"]
+    assert versions[0]["canonical_surface"] == active["canonical_surface"]
+    assert versions[1]["surface_hash"] == candidate["candidate_surface_hash"]
+    assert versions[1]["canonical_surface"] == candidate["canonical_surface"]
+
+    canonical = json.loads(versions[1]["canonical_surface"])
+    assert canonical[0]["tool"] == candidate_tool
+    assert canonical[0]["normalized_metadata"] == CONTENT_METADATA_D
+
+    audit = pg_db.get_mcp_audit_log(result["audit"]["audit_id"])
+    assert audit["drift_baseline_hash"] == active["surface_hash"]
+    assert audit["drift_current_hash"] == candidate["candidate_surface_hash"]
+    assert pg_db.verify_mcp_audit_record(audit["id"])["chain_verified"] is True
 
 
 def test_stale_hashes_are_rejected_on_postgres(pg_db):
@@ -395,8 +633,8 @@ def test_promotion_wins_first_new_discovery_waits_and_is_not_lost_on_postgres(
     assert staged is not None, "candidate D was silently lost"
     from core import drift_evidence
 
-    assert staged["candidate_surface_hash"] == drift_evidence.server_surface_hash(
-        [TOOL_C]
+    assert staged["candidate_surface_hash"] == drift_evidence.rebaseline_content_hash(
+        _validated(pg_db, [TOOL_C])
     )
     versions = pg_db.list_baseline_versions(SERVER_ID)
     assert len(versions) == 2

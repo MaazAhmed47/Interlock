@@ -21,6 +21,7 @@ Run: python -m pytest tests/test_rebaseline_cas.py -q
 """
 
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -105,6 +106,57 @@ TOOL_C = {
         "required": ["summary"],
     },
 }
+
+TOOL_CONTENT_C = {
+    "name": "read_document",
+    "description": "Read one document.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+    },
+    "annotations": {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+    },
+    "outputSchema": {
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+    },
+}
+TOOL_CONTENT_ANNOTATIONS_D = {
+    **TOOL_CONTENT_C,
+    "annotations": {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "openWorldHint": True,
+    },
+}
+TOOL_CONTENT_OUTPUT_D = {
+    **TOOL_CONTENT_C,
+    "outputSchema": {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"},
+            "external_url": {"type": "string"},
+        },
+        "required": ["text", "external_url"],
+    },
+}
+CONTENT_METADATA_C = {
+    "side_effect": "read_only",
+    "data_classes": ["internal"],
+    "custom": {"alpha": 1, "beta": 2},
+}
+CONTENT_METADATA_D = {
+    **CONTENT_METADATA_C,
+    "side_effect": "destructive",
+}
+
+
+def _content_entry(tool=TOOL_CONTENT_C, metadata=CONTENT_METADATA_C):
+    return {"tool": tool, "normalized_metadata": metadata}
 
 
 @pytest.fixture(autouse=True)
@@ -192,30 +244,132 @@ ACTOR = {"reviewer": "ops (key:lf-test)", "principal_id": "lf-test"}
 def test_active_baseline_reflects_stored_tool_metadata():
     empty = db.get_active_baseline(SERVER_ID)
     assert empty["tool_count"] == 0
-    assert empty["surface_hash"] == drift_evidence.server_surface_hash([])
+    assert empty["surface_hash"] == drift_evidence.rebaseline_content_hash([])
 
     active = _seed_baseline([TOOL_A, TOOL_B])
+    validated = _validated([TOOL_A, TOOL_B])
     assert active["tool_count"] == 2
-    assert active["surface_hash"] == drift_evidence.server_surface_hash(
-        [TOOL_A, TOOL_B]
+    assert active["surface_hash"] == drift_evidence.rebaseline_content_hash(validated)
+    assert active[
+        "canonical_surface"
+    ] == drift_evidence.rebaseline_content_canonical_json(validated)
+
+
+def test_drift_surface_hash_keeps_formal_projection_semantics():
+    baseline = drift_evidence.server_surface_hash([TOOL_CONTENT_C])
+    assert drift_evidence.server_surface_hash([TOOL_CONTENT_ANNOTATIONS_D]) == baseline
+    assert drift_evidence.server_surface_hash([TOOL_CONTENT_OUTPUT_D]) == baseline
+
+
+@pytest.mark.parametrize(
+    ("changed_entry", "mutation"),
+    [
+        (_content_entry(TOOL_CONTENT_ANNOTATIONS_D), "annotation_only"),
+        (_content_entry(TOOL_CONTENT_OUTPUT_D), "output_schema_only"),
+        (_content_entry(metadata=CONTENT_METADATA_D), "normalized_metadata_only"),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_rebaseline_candidate_hash_covers_complete_persisted_content(
+    changed_entry, mutation
+):
+    first = db.save_rebaseline_candidate(
+        SERVER_ID, [_content_entry()], f"ops-{mutation}-c"
     )
-    assert active["canonical_surface"] == drift_evidence.server_surface_canonical_json(
-        [TOOL_A, TOOL_B]
+    second = db.save_rebaseline_candidate(
+        SERVER_ID, [changed_entry], f"ops-{mutation}-d"
+    )
+    assert (
+        first["candidate_surface_hash"] != second["candidate_surface_hash"]
+    ), f"{mutation} candidate content must not alias the reviewed hash"
+
+
+def test_rebaseline_content_canonical_order_is_stable():
+    reordered_tool = {
+        "outputSchema": {
+            "required": ["text"],
+            "properties": {"text": {"type": "string"}},
+            "type": "object",
+        },
+        "annotations": {"destructiveHint": False, "readOnlyHint": True},
+        "inputSchema": {
+            "required": ["path"],
+            "properties": {"path": {"type": "string"}},
+            "type": "object",
+        },
+        "description": "Read one document.",
+        "name": "read_document",
+    }
+    reordered_metadata = {
+        "custom": {"beta": 2, "alpha": 1},
+        "data_classes": ["internal"],
+        "side_effect": "read_only",
+    }
+    first = db.save_rebaseline_candidate(
+        SERVER_ID,
+        [_content_entry(), _content_entry(TOOL_A, {"z": 3, "a": 1})],
+        "ops",
+    )
+    second = db.save_rebaseline_candidate(
+        SERVER_ID,
+        [
+            _content_entry(TOOL_A, {"a": 1, "z": 3}),
+            _content_entry(reordered_tool, reordered_metadata),
+        ],
+        "ops",
+    )
+    assert first["candidate_surface_hash"] == second["candidate_surface_hash"]
+    assert first["canonical_surface"] == second["canonical_surface"]
+
+
+@pytest.mark.parametrize(
+    ("changed_tool", "changed_metadata", "mutation"),
+    [
+        (TOOL_CONTENT_ANNOTATIONS_D, CONTENT_METADATA_C, "annotation_only"),
+        (TOOL_CONTENT_OUTPUT_D, CONTENT_METADATA_C, "output_schema_only"),
+        (TOOL_CONTENT_C, CONTENT_METADATA_D, "normalized_metadata_only"),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_active_content_change_invalidates_expected_current_hash(
+    changed_tool, changed_metadata, mutation
+):
+    db.upsert_mcp_tool_metadata(SERVER_ID, TOOL_CONTENT_C, CONTENT_METADATA_C)
+    reviewed_active = db.get_active_baseline(SERVER_ID)
+    candidate = db.save_rebaseline_candidate(SERVER_ID, _validated([TOOL_C]), "ops")
+
+    db.upsert_mcp_tool_metadata(SERVER_ID, changed_tool, changed_metadata)
+    current_active = db.get_active_baseline(SERVER_ID)
+    assert (
+        reviewed_active["surface_hash"] != current_active["surface_hash"]
+    ), f"{mutation} active content must invalidate expected_current_hash"
+
+    result = db.promote_rebaseline_candidate(
+        SERVER_ID,
+        reviewed_active["surface_hash"],
+        candidate["candidate_surface_hash"],
+        actor=ACTOR,
+    )
+    assert result["ok"] is False, result
+    assert result["error"] == "stale_rebaseline_state"
+    assert (
+        db.get_rebaseline_candidate(SERVER_ID)["candidate_surface_hash"]
+        == candidate["candidate_surface_hash"]
     )
 
 
 def test_save_candidate_replaces_prior_candidate():
-    first = db.save_rebaseline_candidate(SERVER_ID, _validated([TOOL_A]), "ops")
-    assert first["candidate_surface_hash"] == drift_evidence.server_surface_hash(
-        [TOOL_A]
+    first_validated = _validated([TOOL_A])
+    first = db.save_rebaseline_candidate(SERVER_ID, first_validated, "ops")
+    assert first["candidate_surface_hash"] == drift_evidence.rebaseline_content_hash(
+        first_validated
     )
     assert first["tool_count"] == 1
 
-    second = db.save_rebaseline_candidate(
-        SERVER_ID, _validated([TOOL_A, TOOL_C]), "ops"
-    )
-    assert second["candidate_surface_hash"] == drift_evidence.server_surface_hash(
-        [TOOL_A, TOOL_C]
+    second_validated = _validated([TOOL_A, TOOL_C])
+    second = db.save_rebaseline_candidate(SERVER_ID, second_validated, "ops")
+    assert second["candidate_surface_hash"] == drift_evidence.rebaseline_content_hash(
+        second_validated
     )
     stored = db.get_rebaseline_candidate(SERVER_ID)
     assert stored["candidate_surface_hash"] == second["candidate_surface_hash"]
@@ -317,6 +471,43 @@ def test_promote_atomically_replaces_baseline_and_preserves_history():
         is True
     )
     assert db.verify_audit_chain()["valid"] is True
+
+
+def test_promote_history_and_audit_commit_full_rebaseline_content():
+    db.upsert_mcp_tool_metadata(SERVER_ID, TOOL_CONTENT_C, CONTENT_METADATA_C)
+    active = db.get_active_baseline(SERVER_ID)
+    candidate_tool = {
+        **TOOL_CONTENT_OUTPUT_D,
+        "annotations": TOOL_CONTENT_ANNOTATIONS_D["annotations"],
+    }
+    candidate = db.save_rebaseline_candidate(
+        SERVER_ID,
+        [_content_entry(candidate_tool, CONTENT_METADATA_D)],
+        "ops",
+    )
+
+    result = db.promote_rebaseline_candidate(
+        SERVER_ID,
+        active["surface_hash"],
+        candidate["candidate_surface_hash"],
+        actor=ACTOR,
+    )
+    assert result["ok"] is True, result
+
+    versions = db.list_baseline_versions(SERVER_ID)
+    assert versions[0]["surface_hash"] == active["surface_hash"]
+    assert versions[0]["canonical_surface"] == active["canonical_surface"]
+    assert versions[1]["surface_hash"] == candidate["candidate_surface_hash"]
+    assert versions[1]["canonical_surface"] == candidate["canonical_surface"]
+
+    canonical = json.loads(versions[1]["canonical_surface"])
+    assert canonical[0]["tool"] == candidate_tool
+    assert canonical[0]["normalized_metadata"] == CONTENT_METADATA_D
+
+    audit = db.get_mcp_audit_log(result["audit"]["audit_id"])
+    assert audit["drift_baseline_hash"] == active["surface_hash"]
+    assert audit["drift_current_hash"] == candidate["candidate_surface_hash"]
+    assert db.verify_mcp_audit_record(audit["id"])["chain_verified"] is True
 
 
 def test_second_promote_extends_history_without_rewriting_it():
@@ -490,7 +681,7 @@ def test_racing_save_and_promote_never_lose_the_new_candidate():
     active = _seed_baseline([TOOL_A])
     candidate_c = db.save_rebaseline_candidate(SERVER_ID, _validated([TOOL_B]), "ops")
     validated_d = _validated([TOOL_C])
-    hash_d = drift_evidence.server_surface_hash([TOOL_C])
+    hash_d = drift_evidence.rebaseline_content_hash(validated_d)
 
     outcomes = {}
     barrier = threading.Barrier(2)
@@ -973,8 +1164,8 @@ def test_candidate_discovery_success_is_pure_and_hashes_the_surface():
     result = _fetch(_mock_upstream(json_value={"result": {"tools": [TOOL_B, TOOL_C]}}))
     assert result["ok"] is True, result
     assert result["tool_count"] == 2
-    assert result["candidate_surface_hash"] == drift_evidence.server_surface_hash(
-        [TOOL_B, TOOL_C]
+    assert result["candidate_surface_hash"] == drift_evidence.rebaseline_content_hash(
+        result["validated_tools"]
     )
     assert [e["tool"]["name"] for e in result["validated_tools"]] == [
         "read_document",
@@ -1023,8 +1214,8 @@ def test_route_discover_creates_candidate_and_reports_both_hashes(admin_key):
         _mock_upstream(json_value={"result": {"tools": [TOOL_B, TOOL_C]}}), admin_key
     )
     assert result["ok"] is True, result
-    assert result["candidate_surface_hash"] == drift_evidence.server_surface_hash(
-        [TOOL_B, TOOL_C]
+    assert result["candidate_surface_hash"] == drift_evidence.rebaseline_content_hash(
+        _validated([TOOL_B, TOOL_C])
     )
     assert result["active_surface_hash"] == active["surface_hash"]
     assert result["tool_count"] == 2
@@ -1142,6 +1333,48 @@ def test_route_approve_stale_candidate_after_newer_discovery_is_409(admin_key):
         )
     assert exc.value.status_code == 409
     assert exc.value.detail["candidate_surface_hash"] == newer["candidate_surface_hash"]
+
+
+@pytest.mark.parametrize(
+    ("newer_tool", "mutation"),
+    [
+        (TOOL_CONTENT_ANNOTATIONS_D, "annotation_only"),
+        (TOOL_CONTENT_OUTPUT_D, "output_schema_only"),
+    ],
+    ids=lambda value: value if isinstance(value, str) else None,
+)
+def test_route_exact_candidate_hash_rejects_aliased_newer_candidate(
+    admin_key, newer_tool, mutation
+):
+    active = _seed_baseline([TOOL_A])
+    candidate_c = db.save_rebaseline_candidate(
+        SERVER_ID, [_content_entry()], f"ops-{mutation}-c"
+    )
+    candidate_d = db.save_rebaseline_candidate(
+        SERVER_ID,
+        [_content_entry(newer_tool)],
+        f"ops-{mutation}-d",
+    )
+    assert (
+        candidate_c["candidate_surface_hash"] != candidate_d["candidate_surface_hash"]
+    ), f"{mutation} candidates C and D must have distinct review tokens"
+
+    with pytest.raises(HTTPException) as exc:
+        _route_approve(
+            admin_key,
+            active["surface_hash"],
+            candidate_c["candidate_surface_hash"],
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail["error"] == "stale_rebaseline_state"
+    assert (
+        exc.value.detail["candidate_surface_hash"]
+        == candidate_d["candidate_surface_hash"]
+    )
+    assert (
+        db.get_rebaseline_candidate(SERVER_ID)["candidate_surface_hash"]
+        == candidate_d["candidate_surface_hash"]
+    ), "newer candidate D must remain staged after stale approval of C"
 
 
 def test_route_approve_guards(admin_key):

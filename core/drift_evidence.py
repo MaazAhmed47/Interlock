@@ -212,11 +212,11 @@ def tool_surface_hash(tool_def: Dict[str, Any]) -> str:
 
 def server_surface_canonical_json(tool_defs: Optional[List[Dict[str, Any]]]) -> str:
     """
-    Canonical JSON (as text) of a server's COMPLETE tool surface: the
+    Canonical JSON (as text) of a server's formal drift surface: the
     per-tool surface projections ({name, description, inputSchema}) sorted
-    by tool name. Input order is insignificant; every surface field of every
-    tool is committed. This is what rebaseline candidates and baseline
-    version history hash.
+    by tool name. Input order is insignificant. This intentionally preserves
+    the existing drift receipt projection; rebaseline CAS uses the separate
+    full-content functions below.
     """
     surfaces = [
         json.loads(canonical_surface_json(tool_def)) for tool_def in (tool_defs or [])
@@ -226,8 +226,39 @@ def server_surface_canonical_json(tool_defs: Optional[List[Dict[str, Any]]]) -> 
 
 
 def server_surface_hash(tool_defs: Optional[List[Dict[str, Any]]]) -> str:
-    """Content address of a server's complete tool surface."""
+    """Content address of a server's formal drift surface projection."""
     return _digest_bytes(server_surface_canonical_json(tool_defs).encode("utf-8"))
+
+
+def rebaseline_content_canonical_json(
+    validated_tools: Optional[List[Dict[str, Any]]],
+) -> str:
+    """
+    Canonical JSON for the exact content rebaseline promotion will persist.
+
+    Each entry commits to the complete raw tool definition (no known-field
+    allowlist, so annotations, outputSchema, and future fields are covered)
+    plus the normalized metadata written to mcp_tool_metadata. Tool order and
+    JSON object key order are insignificant.
+    """
+    contents = [
+        {
+            "tool": entry.get("tool") or {},
+            "normalized_metadata": entry.get("normalized_metadata") or {},
+        }
+        for entry in (validated_tools or [])
+    ]
+    contents.sort(key=lambda entry: str(entry["tool"].get("name") or ""))
+    return canonical_json_bytes(contents).decode("utf-8")
+
+
+def rebaseline_content_hash(
+    validated_tools: Optional[List[Dict[str, Any]]],
+) -> str:
+    """Content address of the exact persisted rebaseline content."""
+    return _digest_bytes(
+        rebaseline_content_canonical_json(validated_tools).encode("utf-8")
+    )
 
 
 def classify_finding_types(finding_types: Iterable[str]) -> str:

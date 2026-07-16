@@ -588,15 +588,18 @@ async def fetch_candidate_tool_surface(
             "server_url": fetched["server_url"],
         }
 
-    tool_defs = [entry["tool"] for entry in validated_tools]
     return {
         "ok": True,
         "server_url": fetched["server_url"],
         "tool_count": len(validated_tools),
-        "tools": tool_defs,
+        "tools": [entry["tool"] for entry in validated_tools],
         "validated_tools": validated_tools,
-        "candidate_surface_hash": drift_evidence.server_surface_hash(tool_defs),
-        "canonical_surface": drift_evidence.server_surface_canonical_json(tool_defs),
+        "candidate_surface_hash": drift_evidence.rebaseline_content_hash(
+            validated_tools
+        ),
+        "canonical_surface": drift_evidence.rebaseline_content_canonical_json(
+            validated_tools
+        ),
     }
 
 

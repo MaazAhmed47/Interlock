@@ -2829,24 +2829,34 @@ def _rebaseline_transaction(conn, server_id: str):
 
 
 def _active_baseline_from_conn(conn, server_id: str) -> Dict[str, Any]:
-    """The server's live stored tool surface, canonicalized and hashed."""
+    """The server's exact live persisted rebaseline content and hash."""
     rows = conn.execute(
-        "SELECT raw_tool_definition FROM mcp_tool_metadata "
+        "SELECT raw_tool_definition, normalized_metadata FROM mcp_tool_metadata "
         "WHERE server_id = ? ORDER BY tool_name",
         (server_id,),
     ).fetchall()
-    tool_defs = []
+    validated_tools = []
     for row in rows:
-        raw = row_value(row, "raw_tool_definition", 0) or "{}"
+        raw_tool = row_value(row, "raw_tool_definition", 0) or "{}"
+        raw_metadata = row_value(row, "normalized_metadata", 1) or "{}"
         try:
-            tool_defs.append(json.loads(raw))
+            tool = json.loads(raw_tool)
         except (json.JSONDecodeError, TypeError):
-            tool_defs.append({})
+            tool = {}
+        try:
+            normalized_metadata = json.loads(raw_metadata)
+        except (json.JSONDecodeError, TypeError):
+            normalized_metadata = {}
+        validated_tools.append(
+            {"tool": tool, "normalized_metadata": normalized_metadata}
+        )
     return {
         "server_id": server_id,
-        "surface_hash": drift_evidence.server_surface_hash(tool_defs),
-        "canonical_surface": drift_evidence.server_surface_canonical_json(tool_defs),
-        "tool_count": len(tool_defs),
+        "surface_hash": drift_evidence.rebaseline_content_hash(validated_tools),
+        "canonical_surface": drift_evidence.rebaseline_content_canonical_json(
+            validated_tools
+        ),
+        "tool_count": len(validated_tools),
     }
 
 
@@ -2870,9 +2880,10 @@ def save_rebaseline_candidate(
     """
     assert_not_production_fixture_write(server_id, "MCP rebaseline candidate")
     validated_tools = validated_tools or []
-    tools = [entry.get("tool") or {} for entry in validated_tools]
-    canonical_surface = drift_evidence.server_surface_canonical_json(tools)
-    candidate_surface_hash = drift_evidence.server_surface_hash(tools)
+    canonical_surface = drift_evidence.rebaseline_content_canonical_json(
+        validated_tools
+    )
+    candidate_surface_hash = drift_evidence.rebaseline_content_hash(validated_tools)
     now = datetime.now(timezone.utc).isoformat()
     # Staging shares the promote's serialization domain: a discovery landing
     # while an approval is mid-transaction waits for it instead of writing a
