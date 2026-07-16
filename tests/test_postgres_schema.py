@@ -23,8 +23,6 @@ class RecordingCursor:
         return self
 
     def fetchall(self):
-        if "information_schema.columns" in self.sql:
-            return self.raw.column_rows
         return []
 
     def fetchone(self):
@@ -32,9 +30,8 @@ class RecordingCursor:
 
 
 class RecordingRaw:
-    def __init__(self, column_rows=None):
+    def __init__(self):
         self.statements = []
-        self.column_rows = column_rows or []
         self.closed = False
 
     def cursor(self):
@@ -93,27 +90,6 @@ def test_postgres_ensure_column_uses_information_schema_and_pg_definition():
     assert any(
         "ALTER TABLE api_keys ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE" in sql
         for sql in statements
-    )
-
-
-def test_postgres_obsolete_column_drop_is_checked_and_idempotent():
-    legacy_column = "upstream" + "_key"
-    raw = RecordingRaw(column_rows=[{"column_name": legacy_column}])
-    conn = db._PostgresConn(raw)
-
-    assert db._drop_obsolete_api_key_columns(conn) is True
-    statements = [sql for sql, _params in raw.statements]
-    assert any(
-        f"ALTER TABLE api_keys DROP COLUMN IF EXISTS {legacy_column}" in sql
-        for sql in statements
-    )
-
-    fresh_raw = RecordingRaw()
-    fresh_conn = db._PostgresConn(fresh_raw)
-    assert db._drop_obsolete_api_key_columns(fresh_conn) is False
-    assert not any(
-        "ALTER TABLE api_keys DROP COLUMN" in sql
-        for sql, _params in fresh_raw.statements
     )
 
 

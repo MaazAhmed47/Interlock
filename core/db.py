@@ -691,7 +691,6 @@ CREATE INDEX IF NOT EXISTS idx_policies_active ON policies(is_active);
 def init_db() -> None:
     with _db_lock, get_conn() as conn:
         _run_schema_statements(conn, indexes=False)
-        _drop_obsolete_api_key_columns(conn)
         _ensure_column(conn, "scan_history", "key_hash", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "scan_history", "ts", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "scan_history", "confidence", "REAL")
@@ -1209,39 +1208,6 @@ def _ensure_column(conn, table: str, column: str, definition: str) -> None:
         raise
 
 
-_OBSOLETE_API_KEY_COLUMNS = ("upstream_key",)
-
-
-def _drop_obsolete_api_key_columns(conn) -> bool:
-    """Remove retired plaintext credential storage from an existing key table."""
-    existing = set(_table_columns(conn, "api_keys"))
-    changed = False
-    for column in _OBSOLETE_API_KEY_COLUMNS:
-        if column not in existing:
-            continue
-        _validate_identifier(column)
-        if _is_postgres_conn(conn):
-            # The pre-check avoids an ACCESS EXCLUSIVE relation lock on every
-            # startup. IF EXISTS keeps concurrent replicas race-safe.
-            conn.execute(f"ALTER TABLE api_keys DROP COLUMN IF EXISTS {column}")
-        else:
-            if sqlite3.sqlite_version_info < (3, 35, 0):
-                raise RuntimeError(
-                    "This database migration requires SQLite 3.35 or newer. "
-                    "Back up the database and run Interlock with Python 3.12+."
-                )
-            try:
-                conn.execute(f"ALTER TABLE api_keys DROP COLUMN {column}")
-            except sqlite3.OperationalError:
-                # Another process may have completed the same idempotent
-                # startup migration while this connection waited to write.
-                if column not in _table_columns(conn, "api_keys"):
-                    continue
-                raise
-        changed = True
-    return changed
-
-
 def _ensure_double_precision(conn, table: str, columns) -> None:
     """
     Widen Postgres float4 (REAL) columns to float8 in place.
@@ -1590,6 +1556,48 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
 
 
 # ── Lookup / verification ────────────────────────────────────────────────────
+_API_KEY_COLUMNS = (
+    "id",
+    "key_hash",
+    "key_prefix",
+    "label",
+    "plan",
+    "monthly_limit",
+    "rate_per_min",
+    "fail_mode",
+    "webhook_url",
+    "custom_policy",
+    "siem_configs",
+    "scopes",
+    "role",
+    "is_active",
+    "created_at",
+    "revoked_at",
+    "max_response_bytes",
+    "max_array_items",
+)
+_API_KEY_SELECT = ", ".join(_API_KEY_COLUMNS)
+_ADMIN_KEY_READ_FIELDS = (
+    "id",
+    "key_prefix",
+    "label",
+    "plan",
+    "monthly_limit",
+    "rate_per_min",
+    "fail_mode",
+    "webhook_url",
+    "custom_policy",
+    "siem_configs",
+    "scopes",
+    "role",
+    "is_active",
+    "created_at",
+    "revoked_at",
+    "max_response_bytes",
+    "max_array_items",
+)
+
+
 def lookup_key(raw_key: str) -> Optional[Dict[str, Any]]:
     """
     Return the full key record by raw key, or None if not found / inactive.
@@ -1600,7 +1608,8 @@ def lookup_key(raw_key: str) -> Optional[Dict[str, Any]]:
     key_hash = _hash_key(raw_key.strip())
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM api_keys WHERE key_hash = ? AND is_active = TRUE",
+            f"SELECT {_API_KEY_SELECT} FROM api_keys "
+            "WHERE key_hash = ? AND is_active = TRUE",
             (key_hash,),
         ).fetchone()
     return _row_to_dict(row) if row else None
@@ -1681,27 +1690,6 @@ def revoke_key(key_prefix: str) -> bool:
     return revoke_key_by_prefix(key_prefix) is not None
 
 
-_ADMIN_KEY_READ_FIELDS = (
-    "id",
-    "key_prefix",
-    "label",
-    "plan",
-    "monthly_limit",
-    "rate_per_min",
-    "fail_mode",
-    "webhook_url",
-    "custom_policy",
-    "siem_configs",
-    "scopes",
-    "role",
-    "is_active",
-    "created_at",
-    "revoked_at",
-    "max_response_bytes",
-    "max_array_items",
-)
-
-
 def _admin_key_read_record(row) -> Dict[str, Any]:
     """Return the explicit non-secret representation used by admin read APIs."""
     internal = _row_to_dict(row)
@@ -1713,9 +1701,9 @@ def _admin_key_read_record(row) -> Dict[str, Any]:
 
 def list_keys(include_inactive: bool = False) -> List[Dict[str, Any]]:
     q = (
-        "SELECT * FROM api_keys"
+        f"SELECT {_API_KEY_SELECT} FROM api_keys"
         if include_inactive
-        else "SELECT * FROM api_keys WHERE is_active = TRUE"
+        else f"SELECT {_API_KEY_SELECT} FROM api_keys WHERE is_active = TRUE"
     )
     with get_conn() as conn:
         rows = conn.execute(q + " ORDER BY created_at DESC").fetchall()
@@ -1733,7 +1721,7 @@ def lookup_key_by_id(
     if normalized_id <= 0:
         return None
 
-    q = "SELECT * FROM api_keys WHERE id = ?"
+    q = f"SELECT {_API_KEY_SELECT} FROM api_keys WHERE id = ?"
     if not include_inactive:
         q += " AND is_active = TRUE"
     with get_conn() as conn:
@@ -1745,7 +1733,7 @@ def lookup_key_by_prefix(
     key_prefix: str, *, include_inactive: bool = True
 ) -> Optional[Dict[str, Any]]:
     """Resolve a display prefix only when it identifies exactly one row."""
-    q = "SELECT * FROM api_keys WHERE key_prefix = ?"
+    q = f"SELECT {_API_KEY_SELECT} FROM api_keys WHERE key_prefix = ?"
     if not include_inactive:
         q += " AND is_active = TRUE"
     with get_conn() as conn:

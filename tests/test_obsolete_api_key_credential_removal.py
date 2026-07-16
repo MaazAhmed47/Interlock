@@ -1,4 +1,4 @@
-"""The retired API-key credential field must not remain a storage capability."""
+"""Expand-contract retirement tests for the obsolete API-key credential field."""
 
 import hashlib
 import json
@@ -97,6 +97,40 @@ def _legacy_sqlite_api_keys(path: Path) -> None:
         conn.close()
 
 
+def _prior_release_insert(conn, raw_key: str) -> int:
+    cursor = conn.execute(
+        f"""
+        INSERT INTO api_keys
+          (key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
+           fail_mode, webhook_url, custom_policy, siem_configs, {LEGACY_COLUMN},
+           is_active, created_at, max_response_bytes, max_array_items,
+           scopes, role)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            db._hash_key(raw_key),
+            raw_key[:12],
+            "prior-release-compatible",
+            "free",
+            1000,
+            10,
+            "fail_closed",
+            None,
+            None,
+            None,
+            "prior-release-insert-value",
+            True,
+            "2026-07-17T00:00:00+00:00",
+            50000,
+            500,
+            '["mcp.call","mcp.read"]',
+            "readonly_agent",
+        ),
+    )
+    assert cursor.lastrowid is not None
+    return int(cursor.lastrowid)
+
+
 def test_fresh_sqlite_schema_has_no_obsolete_credential_column(sqlite_key_db):
     assert LEGACY_COLUMN not in db.table_columns("api_keys")
     assert LEGACY_COLUMN not in db.SCHEMA
@@ -106,13 +140,10 @@ def test_fresh_sqlite_schema_has_no_obsolete_credential_column(sqlite_key_db):
     assert LEGACY_STATUS_FIELD not in db.list_keys()[0]
 
 
-def test_removed_field_name_exists_only_in_one_way_database_migration():
+def test_new_runtime_source_does_not_name_or_read_the_dormant_column():
     root = Path(__file__).parents[1]
-    db_source = (root / "core" / "db.py").read_text(encoding="utf-8")
-    assert db_source.count(LEGACY_COLUMN) == 1
-
     searched_paths = [
-        root / "core" / "admin.py",
+        root / "core",
         root / "models",
         root / "routes",
         root / "proxy.py",
@@ -134,57 +165,74 @@ def test_removed_field_name_exists_only_in_one_way_database_migration():
                 assert LEGACY_STATUS_FIELD not in source, candidate
 
 
-def test_legacy_sqlite_schema_drops_column_and_preserves_rows(tmp_path, monkeypatch):
+def test_legacy_sqlite_schema_is_retained_and_new_reads_exclude_column(
+    tmp_path, monkeypatch
+):
     database_path = tmp_path / "legacy-api-keys.db"
     _legacy_sqlite_api_keys(database_path)
     monkeypatch.setattr(db, "DB_PATH", str(database_path))
     monkeypatch.setattr(db, "USE_POSTGRES", False)
 
     db.init_db()
-    assert LEGACY_COLUMN not in db.table_columns("api_keys")
+    assert LEGACY_COLUMN in db.table_columns("api_keys")
     with db.get_conn() as conn:
         rows_after_first_init = [
             tuple(row)
             for row in conn.execute(
-                "SELECT id, key_prefix, label, is_active FROM api_keys ORDER BY id"
+                f"SELECT id, key_prefix, label, is_active, {LEGACY_COLUMN} "
+                "FROM api_keys ORDER BY id"
             ).fetchall()
         ]
-        table_sql = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'api_keys'"
-        ).fetchone()["sql"]
     assert rows_after_first_init == [
-        (7, "lf_free_olda", "legacy-active", 1),
-        (11, "lf_free_oldi", "legacy-inactive", 0),
+        (7, "lf_free_olda", "legacy-active", 1, SENTINEL),
+        (11, "lf_free_oldi", "legacy-inactive", 0, None),
     ]
-    assert LEGACY_COLUMN not in table_sql
+
+    active = db.lookup_key("legacy-active")
+    assert active is not None
+    assert LEGACY_COLUMN not in active
+    assert all(LEGACY_COLUMN not in row for row in db.list_keys(include_inactive=True))
 
     db.init_db()
-    assert LEGACY_COLUMN not in db.table_columns("api_keys")
+    assert LEGACY_COLUMN in db.table_columns("api_keys")
     with db.get_conn() as conn:
         rows_after_second_init = [
             tuple(row)
             for row in conn.execute(
-                "SELECT id, key_prefix, label, is_active FROM api_keys ORDER BY id"
+                f"SELECT id, key_prefix, label, is_active, {LEGACY_COLUMN} "
+                "FROM api_keys ORDER BY id"
             ).fetchall()
         ]
     assert rows_after_second_init == rows_after_first_init
 
 
-def test_legacy_sqlite_migration_requires_native_drop_column_support(
+def test_prior_release_sql_shape_still_writes_after_new_initialization(
     tmp_path, monkeypatch
 ):
-    database_path = tmp_path / "unsupported-sqlite.db"
+    database_path = tmp_path / "rollback-compatible-api-keys.db"
     _legacy_sqlite_api_keys(database_path)
     monkeypatch.setattr(db, "DB_PATH", str(database_path))
     monkeypatch.setattr(db, "USE_POSTGRES", False)
-    monkeypatch.setattr(db.sqlite3, "sqlite_version_info", (3, 34, 1))
+    db.init_db()
 
+    raw_key = "lf_free_prior_release_compatibility"
     with db.get_conn() as conn:
-        with pytest.raises(RuntimeError, match="SQLite 3.35 or newer") as exc:
-            db._drop_obsolete_api_key_columns(conn)
+        key_id = _prior_release_insert(conn, raw_key)
+        conn.execute(
+            f"UPDATE api_keys SET {LEGACY_COLUMN} = ? WHERE id = ?",
+            ("prior-release-update-value", key_id),
+        )
+        dormant_value = conn.execute(
+            f"SELECT {LEGACY_COLUMN} FROM api_keys WHERE id = ?", (key_id,)
+        ).fetchone()[LEGACY_COLUMN]
 
-    assert LEGACY_COLUMN not in str(exc.value)
-    assert LEGACY_COLUMN in db.table_columns("api_keys")
+    assert dormant_value == "prior-release-update-value"
+    current = db.lookup_key(raw_key)
+    assert current is not None
+    assert current["id"] == key_id
+    assert LEGACY_COLUMN not in current
+    listed = next(row for row in db.list_keys() if row["id"] == key_id)
+    assert LEGACY_COLUMN not in listed
 
 
 def test_removed_internal_write_inputs_fail_without_echoing_credentials(
@@ -228,6 +276,17 @@ def test_admin_errors_audit_logs_and_receipts_never_name_removed_field(
             scopes=["audit.read", "audit.export"],
         )
         second = db.generate_key("free", label="surface-second")
+
+    with db.get_conn() as conn:
+        conn.execute(f"ALTER TABLE api_keys ADD COLUMN {LEGACY_COLUMN} TEXT")
+        conn.execute(
+            f"UPDATE api_keys SET {LEGACY_COLUMN} = ? WHERE id = ?",
+            (SENTINEL, first["id"]),
+        )
+
+    internal = db.lookup_key(first["raw_key"])
+    assert internal is not None
+    assert LEGACY_COLUMN not in internal
 
     listed = client.get("/admin/keys?include_inactive=true", headers=admin_headers)
     assert listed.status_code == 200
@@ -292,6 +351,6 @@ def test_admin_errors_audit_logs_and_receipts_never_name_removed_field(
 
     frontend_api = (
         Path(__file__).parents[1] / "interlock-web" / "src" / "api.ts"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert LEGACY_COLUMN not in frontend_api
     assert LEGACY_STATUS_FIELD not in frontend_api
