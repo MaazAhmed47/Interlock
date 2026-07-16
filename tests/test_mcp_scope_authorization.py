@@ -43,7 +43,17 @@ def test_runtime_key_is_denied_and_admin_key_reaches_every_control_plane_route()
     cases = [
         ("post", "/mcp/servers", register_body),
         ("post", f"/mcp/servers/{server_id}/verify", None),
-        ("post", f"/mcp/servers/{server_id}/rebaseline", {"confirm_rebaseline": True}),
+        ("post", f"/mcp/servers/{server_id}/rebaseline/discover", None),
+        ("get", f"/mcp/servers/{server_id}/rebaseline", None),
+        (
+            "post",
+            f"/mcp/servers/{server_id}/rebaseline",
+            {
+                "confirm_rebaseline": True,
+                "expected_current_hash": "sha256:" + "0" * 64,
+                "expected_candidate_hash": "sha256:" + "1" * 64,
+            },
+        ),
         (
             "post",
             f"/mcp/tools/{server_id}/read_document/approve",
@@ -65,6 +75,16 @@ def test_runtime_key_is_denied_and_admin_key_reaches_every_control_plane_route()
     with (
         patch(
             "routes.mcp.discover_mcp_tools", new=AsyncMock(return_value={"ok": True})
+        ),
+        patch(
+            "routes.mcp.fetch_candidate_tool_surface",
+            new=AsyncMock(
+                return_value={"ok": False, "error": "unreachable", "message": ""}
+            ),
+        ),
+        patch(
+            "routes.mcp.db.promote_rebaseline_candidate",
+            return_value={"ok": True, "server_id": server_id},
         ),
         patch(
             "routes.mcp.db.approve_mcp_tool_baseline",

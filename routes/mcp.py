@@ -12,6 +12,7 @@ from core.limits import clamp_limit
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
 from core.mcp_gateway import (
     discover_mcp_tools,
+    fetch_candidate_tool_surface,
     list_mcp_servers,
     proxy_mcp_tool_call,
     register_mcp_server,
@@ -254,20 +255,49 @@ async def mcp_discover(
     return await discover_mcp_tools(request.server_url, server_id=request.server_id)
 
 
-@control_plane_router.post("/mcp/servers/{server_id}/rebaseline")
-async def mcp_rebaseline_server(
+def _candidate_summary(candidate: Optional[dict]) -> Optional[dict]:
+    if not candidate:
+        return None
+    return {
+        "candidate_surface_hash": candidate.get("candidate_surface_hash"),
+        "tool_count": candidate.get("tool_count"),
+        "created_at": candidate.get("created_at"),
+        "created_by": candidate.get("created_by"),
+    }
+
+
+@control_plane_router.get("/mcp/servers/{server_id}/rebaseline")
+async def mcp_rebaseline_status(
     server_id: str,
-    request: MCPRebaselineRequest,
     x_api_key: Optional[str] = Header(None),
 ):
-    """Reset a registered server's stored tool baseline and rediscover it."""
+    """The reviewer's view: active baseline hash, staged candidate, history."""
     proxy.require_scope(x_api_key, "admin")
-    if not request.confirm_rebaseline:
-        raise HTTPException(
-            status_code=400,
-            detail="MCP server rebaseline requires confirm_rebaseline=true.",
-        )
+    snapshot = db.get_rebaseline_review_snapshot(server_id)
+    if not snapshot.get("ok"):
+        raise HTTPException(status_code=404, detail="MCP server not found.")
+    return {
+        "ok": True,
+        "server_id": server_id,
+        "active": snapshot["active"],
+        "candidate": _candidate_summary(snapshot["candidate"]),
+        "versions": snapshot["versions"],
+    }
 
+
+@control_plane_router.post("/mcp/servers/{server_id}/rebaseline/discover")
+async def mcp_rebaseline_discover(
+    server_id: str,
+    x_api_key: Optional[str] = Header(None),
+):
+    """
+    Stage a rebaseline CANDIDATE: fetch and validate the server's complete
+    tool surface, then store it for review. Never mutates the active
+    baseline — on timeout, malformed response, or validation failure the
+    active baseline AND any previously staged candidate stay unchanged.
+    """
+    key_info, _ = proxy.require_scope(x_api_key, "admin")
+    identity = _derived_identity(key_info)
     server = db.lookup_mcp_server(server_id)
     if not server:
         raise HTTPException(status_code=404, detail="MCP server not found.")
@@ -276,14 +306,89 @@ async def mcp_rebaseline_server(
     except OutboundUrlRejected as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    cleared = db.clear_mcp_tool_metadata(server_id)
-    discovery = await discover_mcp_tools(server["url"], server_id=server_id)
+    result = await fetch_candidate_tool_surface(server["url"], server_id=server_id)
+    if not result.get("ok"):
+        snapshot = db.get_rebaseline_review_snapshot(server_id)
+        if not snapshot.get("ok"):
+            raise HTTPException(status_code=404, detail="MCP server not found.")
+        return {
+            "ok": False,
+            "server_id": server_id,
+            "error": result.get("error"),
+            "message": result.get("message", ""),
+            "blocked": result.get("blocked", []),
+            "active_surface_hash": snapshot["active"]["surface_hash"],
+            "candidate": _candidate_summary(snapshot["candidate"]),
+        }
+
+    candidate = db.save_rebaseline_candidate(
+        server_id, result["validated_tools"], identity["reviewer"]
+    )
+    if candidate.get("ok") is False:
+        raise HTTPException(status_code=404, detail="MCP server not found.")
     return {
-        "ok": bool(discovery.get("ok")),
+        "ok": True,
         "server_id": server_id,
-        "cleared_tools": cleared,
-        "discovery": discovery,
+        "candidate_surface_hash": candidate["candidate_surface_hash"],
+        "tool_count": candidate["tool_count"],
+        "created_at": candidate["created_at"],
+        "created_by": candidate["created_by"],
+        "active_surface_hash": candidate["active_surface_hash"],
     }
+
+
+@control_plane_router.post("/mcp/servers/{server_id}/rebaseline")
+async def mcp_rebaseline_server(
+    server_id: str,
+    request: MCPRebaselineRequest,
+    x_api_key: Optional[str] = Header(None),
+):
+    """
+    Approve the staged candidate as the new active baseline —
+    compare-and-swap protected and atomic. Requires the active-baseline
+    hash the reviewer saw AND the exact candidate hash they reviewed; if
+    either is stale (the baseline moved, or a newer discovery replaced the
+    candidate) the request is rejected with 409 and the current hashes.
+    """
+    key_info, _ = proxy.require_scope(x_api_key, "admin")
+    identity = _derived_identity(key_info)
+    if not request.confirm_rebaseline:
+        raise HTTPException(
+            status_code=400,
+            detail="MCP server rebaseline requires confirm_rebaseline=true.",
+        )
+    if not db.lookup_mcp_server(server_id):
+        raise HTTPException(status_code=404, detail="MCP server not found.")
+    if not request.expected_current_hash or not request.expected_candidate_hash:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "MCP rebaseline is compare-and-swap protected: provide "
+                "expected_current_hash (the active baseline you reviewed) and "
+                "expected_candidate_hash (from /rebaseline/discover)."
+            ),
+        )
+
+    result = db.promote_rebaseline_candidate(
+        server_id,
+        request.expected_current_hash,
+        request.expected_candidate_hash,
+        actor=identity,
+    )
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": result.get("error"),
+                "message": (
+                    "Rebaseline state changed since review: re-read the "
+                    "current hashes and re-review before approving."
+                ),
+                "active_surface_hash": result.get("active_surface_hash"),
+                "candidate_surface_hash": result.get("candidate_surface_hash"),
+            },
+        )
+    return result
 
 
 @router.get("/mcp/tools")

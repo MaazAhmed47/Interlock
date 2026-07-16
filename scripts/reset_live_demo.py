@@ -6,7 +6,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 from dotenv import load_dotenv
 
@@ -16,7 +15,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core import db  # noqa: E402
-from core.tool_metadata import normalize_tool_metadata  # noqa: E402
 
 
 def _with_v(url: str, version: int) -> str:
@@ -24,41 +22,20 @@ def _with_v(url: str, version: int) -> str:
     return f"{url}{sep}v={version}"
 
 
-def _json(value: Any) -> Any:
-    if isinstance(value, (dict, list)):
-        return value
-    try:
-        return json.loads(value or "{}")
-    except (TypeError, json.JSONDecodeError):
-        return {}
+def _fetch_delete_candidates() -> list[dict]:
+    return [
+        {"server_id": server["server_id"], "url": server["url"]}
+        for server in db.list_mcp_servers()
+        if server["server_id"] not in db.INTENDED_DEMO_SERVER_IDS
+    ]
 
 
-def _intended_placeholders() -> str:
-    return ", ".join("?" for _ in db.INTENDED_DEMO_SERVER_IDS)
-
-
-def _fetch_delete_candidates(conn) -> list[dict]:
-    rows = conn.execute(
-        f"""
-        SELECT server_id, url
-          FROM mcp_servers
-         WHERE server_id NOT IN ({_intended_placeholders()})
-         ORDER BY registered_at ASC
-        """,
-        tuple(sorted(db.INTENDED_DEMO_SERVER_IDS)),
-    ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def _delete_non_intended(conn) -> int:
-    cursor = conn.execute(
-        f"""
-        DELETE FROM mcp_servers
-         WHERE server_id NOT IN ({_intended_placeholders()})
-        """,
-        tuple(sorted(db.INTENDED_DEMO_SERVER_IDS)),
+def _delete_non_intended(candidates: list[dict]) -> int:
+    return sum(
+        1
+        for candidate in candidates
+        if db.unregister_mcp_server(candidate["server_id"])
     )
-    return int(cursor.rowcount or 0)
 
 
 def _ensure_clean_proof_docs(mock_url: str | None, dry_run: bool) -> None:
@@ -84,47 +61,30 @@ def _ensure_clean_proof_docs(mock_url: str | None, dry_run: bool) -> None:
 
 def _rederive_tool_metadata(dry_run: bool) -> list[dict]:
     changes: list[dict] = []
-    with db.get_conn() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT server_id, tool_name, normalized_metadata, raw_tool_definition
-              FROM mcp_tool_metadata
-             WHERE server_id IN ({_intended_placeholders()})
-             ORDER BY server_id ASC, tool_name ASC
-            """,
-            tuple(sorted(db.INTENDED_DEMO_SERVER_IDS)),
-        ).fetchall()
-        for row in rows:
-            item = dict(row)
-            raw_tool = _json(item.get("raw_tool_definition"))
-            if not raw_tool:
-                continue
-            old_meta = _json(item.get("normalized_metadata"))
-            new_meta = normalize_tool_metadata(raw_tool)
-            if old_meta == new_meta:
-                continue
-            change = {
-                "server_id": item["server_id"],
-                "tool_name": item["tool_name"],
+    tool_keys = [
+        (server_id, tool["tool_name"])
+        for server_id in sorted(db.INTENDED_DEMO_SERVER_IDS)
+        for tool in db.list_mcp_tool_metadata(server_id)
+    ]
+    for server_id, tool_name in tool_keys:
+        result = db.rederive_mcp_tool_metadata(server_id, tool_name, dry_run=dry_run)
+        if not result.get("ok"):
+            print("metadata_rederive_skipped=" + json.dumps(result, sort_keys=True))
+            continue
+        if not result["changed"]:
+            continue
+        old_meta = result["old_metadata"]
+        new_meta = result["new_metadata"]
+        changes.append(
+            {
+                "server_id": server_id,
+                "tool_name": tool_name,
                 "old_side_effect": old_meta.get("side_effect"),
                 "new_side_effect": new_meta.get("side_effect"),
                 "old_effects": old_meta.get("effects"),
                 "new_effects": new_meta.get("effects"),
             }
-            changes.append(change)
-            if not dry_run:
-                conn.execute(
-                    """
-                    UPDATE mcp_tool_metadata
-                       SET normalized_metadata = ?
-                     WHERE server_id = ? AND tool_name = ?
-                    """,
-                    (
-                        json.dumps(new_meta, sort_keys=True),
-                        item["server_id"],
-                        item["tool_name"],
-                    ),
-                )
+        )
     return changes
 
 
@@ -150,14 +110,13 @@ def main() -> int:
         )
 
     print(f"intended_demo_servers={sorted(db.INTENDED_DEMO_SERVER_IDS)}")
-    with db.get_conn() as conn:
-        candidates = _fetch_delete_candidates(conn)
-        print(f"delete_candidates={len(candidates)}")
-        for row in candidates:
-            print(f"  remove {row['server_id']} {row['url']}")
-        if not args.dry_run:
-            deleted = _delete_non_intended(conn)
-            print(f"deleted_servers={deleted}")
+    candidates = _fetch_delete_candidates()
+    print(f"delete_candidates={len(candidates)}")
+    for row in candidates:
+        print(f"  remove {row['server_id']} {row['url']}")
+    if not args.dry_run:
+        deleted = _delete_non_intended(candidates)
+        print(f"deleted_servers={deleted}")
 
     if args.dry_run:
         print("dry_run=true; seed/register/update skipped")

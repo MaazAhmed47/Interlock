@@ -547,16 +547,31 @@ def test_server_rebaseline_resets_tool_metadata_without_losing_auth(monkeypatch)
 
     try:
         with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
+            # Two-phase rebaseline: stage a validated candidate (active
+            # baseline untouched), then approve it with both CAS hashes.
+            discovered = asyncio.run(
+                proxy.mcp_rebaseline_discover(server_id, x_api_key=api_key)
+            )
+            assert discovered["ok"] is True
+            # candidate staged; the polluted-but-active baseline is intact
+            still_denied = db.lookup_mcp_tool_metadata(server_id, "list_avatars")
+            assert still_denied["drift_action"] == "deny"
+
             result = asyncio.run(
                 proxy.mcp_rebaseline_server(
                     server_id,
-                    request=proxy.MCPRebaselineRequest(confirm_rebaseline=True),
+                    request=proxy.MCPRebaselineRequest(
+                        confirm_rebaseline=True,
+                        expected_current_hash=discovered["active_surface_hash"],
+                        expected_candidate_hash=discovered["candidate_surface_hash"],
+                    ),
                     x_api_key=api_key,
                 )
             )
             assert result["ok"] is True
             assert result["server_id"] == server_id
-            assert result["cleared_tools"] == 1
+            assert result["new_surface_hash"] == discovered["candidate_surface_hash"]
+            assert result["replaced_tools"] == 1
 
             clean = db.lookup_mcp_tool_metadata(server_id, "list_avatars")
             assert clean["status"] == "active"
