@@ -1239,43 +1239,92 @@ def _ensure_double_precision(conn, table: str, columns) -> None:
 
 
 def _ensure_postgres_boolean_column(conn, table: str, column: str) -> bool:
-    """Convert a legacy Postgres integer boolean column without losing rows."""
+    """Converge a persistence flag to BOOLEAN NOT NULL DEFAULT FALSE."""
     if not _is_postgres_conn(conn):
         return False
     _validate_identifier(table)
     _validate_identifier(column)
-    row = conn.execute(
-        """
-        SELECT data_type, column_default
-          FROM information_schema.columns
-         WHERE table_schema = current_schema()
-           AND table_name = ?
-           AND column_name = ?
-        """,
-        (table, column),
-    ).fetchone()
-    if row is None:
+
+    def read_state():
+        row = conn.execute(
+            """
+            SELECT data_type, column_default, is_nullable
+              FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = ?
+               AND column_name = ?
+            """,
+            (table, column),
+        ).fetchone()
+        if row is None:
+            return None
+        data_type = str(row_value(row, "data_type", 0) or "").lower()
+        column_default = str(row_value(row, "column_default", 1) or "").lower()
+        is_nullable = str(row_value(row, "is_nullable", 2) or "").upper() == "YES"
+        integer_type = data_type in {"smallint", "integer", "bigint"}
+        if not integer_type and data_type != "boolean":
+            raise RuntimeError(
+                f"Cannot migrate {table}.{column} from unexpected type {data_type!r}"
+            )
+        normalized_default = column_default.replace("'", "").split("::", 1)[0].strip()
+        return integer_type, is_nullable, normalized_default == "false"
+
+    state = read_state()
+    if state is None:
+        return False
+    integer_type, is_nullable, default_is_false = state
+    if not integer_type and default_is_false and not is_nullable:
         return False
 
-    data_type = str(row_value(row, "data_type", 0) or "").lower()
-    column_default = str(row_value(row, "column_default", 1) or "").lower()
-    if data_type in {"smallint", "integer", "bigint"}:
-        conn.execute(f"""
-            ALTER TABLE {table}
-              ALTER COLUMN {column} DROP DEFAULT,
-              ALTER COLUMN {column} TYPE BOOLEAN USING ({column} <> 0),
-              ALTER COLUMN {column} SET DEFAULT FALSE
-            """)
-        return True
-    if data_type != "boolean":
-        raise RuntimeError(
-            f"Cannot migrate {table}.{column} from unexpected type {data_type!r}"
-        )
-    normalized_default = column_default.replace("'", "").split("::", 1)[0].strip()
-    if normalized_default != "false":
-        conn.execute(f"ALTER TABLE {table} ALTER COLUMN {column} SET DEFAULT FALSE")
-        return True
-    return False
+    # The pooled Postgres connections use autocommit, so explicitly bound the
+    # backfill and constraint changes to one transaction. Taking the table lock
+    # first prevents a concurrent explicit NULL insert between the backfill and
+    # SET NOT NULL. init_db always migrates usage_log before scan_history, which
+    # gives concurrent initializers a consistent lock order.
+    conn.execute("BEGIN")
+    try:
+        conn.execute(f"LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE")
+        # Another initializer may have completed while this connection waited
+        # for the lock. Re-read under the lock so no stale type/nullability
+        # decision can drive the migration SQL.
+        state = read_state()
+        if state is None:
+            raise RuntimeError(f"Cannot migrate missing column {table}.{column}")
+        integer_type, is_nullable, default_is_false = state
+        if not integer_type and default_is_false and not is_nullable:
+            conn.execute("COMMIT")
+            return False
+        if integer_type:
+            if is_nullable:
+                conn.execute(f"UPDATE {table} SET {column} = 0 WHERE {column} IS NULL")
+            conn.execute(f"""
+                ALTER TABLE {table}
+                  ALTER COLUMN {column} DROP DEFAULT,
+                  ALTER COLUMN {column} TYPE BOOLEAN USING ({column} <> 0),
+                  ALTER COLUMN {column} SET DEFAULT FALSE,
+                  ALTER COLUMN {column} SET NOT NULL
+                """)
+        else:
+            if is_nullable:
+                conn.execute(
+                    f"UPDATE {table} SET {column} = FALSE WHERE {column} IS NULL"
+                )
+            alter_actions = []
+            if not default_is_false:
+                alter_actions.append(f"ALTER COLUMN {column} SET DEFAULT FALSE")
+            if is_nullable:
+                alter_actions.append(f"ALTER COLUMN {column} SET NOT NULL")
+            conn.execute(f"ALTER TABLE {table} " + ", ".join(alter_actions))
+        conn.execute("COMMIT")
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            logger.exception(
+                "Failed to roll back boolean migration for %s.%s", table, column
+            )
+        raise
+    return True
 
 
 def _insert_returning_id(conn, sql: str, params) -> Optional[int]:
