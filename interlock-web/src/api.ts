@@ -102,12 +102,16 @@ async function adminRequest<T>(
   let res: Response;
 
   try {
+    const headers: Record<string, string> = {
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      Authorization: `Bearer ${accessToken}`,
+    }
+    if (['POST', 'PATCH', 'DELETE'].includes(method.toUpperCase())) {
+      headers['x-requested-with'] = 'XMLHttpRequest'
+    }
     res = await fetch(`${baseUrl}${path}`, {
       method,
-      headers: {
-        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-        Authorization: `Bearer ${accessToken}`,
-      },
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: controller.signal,
     });
@@ -243,6 +247,50 @@ export interface AdminAuditEvent {
   reason?: string;
   details?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+export interface AdminApiKey {
+  id: number;
+  key_prefix: string;
+  label: string;
+  plan: string;
+  monthly_limit: number;
+  rate_per_min: number;
+  fail_mode: string;
+  webhook_url?: string | null;
+  custom_policy?: Record<string, unknown> | null;
+  siem_configs?: Array<Record<string, unknown>> | null;
+  max_response_bytes: number;
+  max_array_items: number;
+  scopes: string[];
+  role: string;
+  is_active: boolean;
+  created_at: string;
+  revoked_at?: string | null;
+}
+
+export type AdminApiKeyUpdate = Partial<Pick<AdminApiKey,
+  | 'label'
+  | 'plan'
+  | 'monthly_limit'
+  | 'rate_per_min'
+  | 'fail_mode'
+  | 'webhook_url'
+  | 'custom_policy'
+  | 'siem_configs'
+  | 'max_response_bytes'
+  | 'max_array_items'
+  | 'scopes'
+  | 'role'
+>>;
+
+export interface AdminApiKeyUsage {
+  key_id: number;
+  key_prefix: string;
+  plan: string;
+  used_this_month: number;
+  monthly_limit: number;
+  remaining: number | 'unlimited';
 }
 
 export interface ReceiptDrift {
@@ -822,6 +870,14 @@ export const api = {
     request<{ ok: boolean }>('POST', `/mcp/tools/${encodeURIComponent(server_id)}/${encodeURIComponent(tool_name)}/quarantine`, payload),
   mcpAudit: (limit = 100) => request<{ events: AuditEvent[] }>('GET', `/mcp/audit?limit=${limit}`),
   adminAudit: (accessToken: string, limit = 100) => adminRequest<{ events: AdminAuditEvent[] }>('GET', `/admin/audit?limit=${limit}`, accessToken),
+  adminKeys: (accessToken: string, includeInactive = false) =>
+    adminRequest<{ keys: AdminApiKey[] }>('GET', `/admin/keys?include_inactive=${includeInactive}`, accessToken),
+  updateAdminKey: (accessToken: string, keyId: number, updates: AdminApiKeyUpdate) =>
+    adminRequest<{ ok: boolean; key_id: number; key_prefix: string; updated_fields: string[] }>('PATCH', `/admin/keys/id/${encodeURIComponent(String(keyId))}`, accessToken, updates),
+  adminKeyUsage: (accessToken: string, keyId: number) =>
+    adminRequest<AdminApiKeyUsage>('GET', `/admin/keys/id/${encodeURIComponent(String(keyId))}/usage`, accessToken),
+  revokeAdminKey: (accessToken: string, keyId: number) =>
+    adminRequest<{ ok: boolean; revoked_id: number; key_prefix: string }>('DELETE', `/admin/keys/id/${encodeURIComponent(String(keyId))}`, accessToken),
   receipt: (auditId: number) => request<SecurityReceipt>('GET', `/audit/receipt/${auditId}`),
   receiptClaims: (auditId: number) => request<ReceiptClaims>('GET', `/audit/receipt/${auditId}/claims`),
   verifyReceipt: (context: ReceiptVerifyContext, receipt?: SecurityReceipt, auditId?: number) =>

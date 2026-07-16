@@ -1,4 +1,5 @@
 """Tests for admin identity audit logging."""
+
 import os
 import sys
 import tempfile
@@ -16,8 +17,8 @@ os.environ.pop("DATABASE_URL", None)
 TEST_DB = tempfile.mktemp(suffix="_admin_audit_test.db")
 os.environ["FIREWALL_DB_PATH"] = TEST_DB
 
-from core import db
-from core import admin
+from core import db  # noqa: E402
+from core import admin  # noqa: E402
 
 ROOT_TOKEN = "root-admin-audit-token"
 
@@ -50,15 +51,20 @@ def test_bootstrap_and_scoped_admin_actions_are_attributed():
     )
 
     events = db.list_admin_audit_logs(limit=10)
-    create_key_event = next(event for event in events if event["action"] == "api_key.created")
-    create_token_event = next(event for event in events if event["action"] == "admin_token.created")
+    create_key_event = next(
+        event for event in events if event["action"] == "api_key.created"
+    )
+    create_token_event = next(
+        event for event in events if event["action"] == "admin_token.created"
+    )
 
     assert create_key_event["actor_auth_type"] == "scoped_token"
     assert create_key_event["actor_role"] == "operator"
     assert create_key_event["actor_label"] == "audit-operator"
     assert create_key_event["actor_token_prefix"] == operator["token_prefix"]
     assert create_key_event["target_type"] == "api_key"
-    assert create_key_event["target_id"] == key["key_prefix"]
+    assert create_key_event["target_id"] == str(key["id"])
+    assert create_key_event["details"]["key_prefix"] == key["key_prefix"]
     assert create_key_event["details"]["label"] == "audit-key"
     assert key["raw_key"] not in str(create_key_event)
     assert operator["raw_token"] not in str(create_key_event)
@@ -88,7 +94,9 @@ def test_auditor_can_read_admin_audit_but_not_write_actions():
 
 def test_retention_and_shadow_review_actions_are_logged():
     operator = admin.create_admin_token(
-        admin.CreateAdminTokenRequest(label="audit-retention-operator", role="operator"),
+        admin.CreateAdminTokenRequest(
+            label="audit-retention-operator", role="operator"
+        ),
         x_admin_token=ROOT_TOKEN,
     )
 
@@ -107,13 +115,21 @@ def test_retention_and_shadow_review_actions_are_logged():
 
     admin.review_shadow_server(
         server_id,
-        admin.ShadowServerReviewRequest(status="approved", notes="reviewed by security"),
+        admin.ShadowServerReviewRequest(
+            status="approved", notes="reviewed by security"
+        ),
         x_admin_token=operator["raw_token"],
     )
 
     events = db.list_admin_audit_logs(limit=20)
-    assert any(event["action"] == "retention.updated" and event["details"]["updated_fields"] == ["scan_history_days"] for event in events)
-    shadow_event = next(event for event in events if event["action"] == "shadow_server.reviewed")
+    assert any(
+        event["action"] == "retention.updated"
+        and event["details"]["updated_fields"] == ["scan_history_days"]
+        for event in events
+    )
+    shadow_event = next(
+        event for event in events if event["action"] == "shadow_server.reviewed"
+    )
     assert shadow_event["actor_label"] == "audit-retention-operator"
     assert shadow_event["target_id"] == str(server_id)
     assert shadow_event["reason"] == "reviewed by security"
