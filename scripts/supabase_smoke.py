@@ -10,6 +10,7 @@ Default mode is schema/readiness only:
 Use --write-test to create and revoke one admin token plus one customer API key.
 That mode leaves only revoked smoke-test rows for auditability.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -38,11 +39,39 @@ REQUIRED_TABLES = {
 }
 
 REQUIRED_COLUMNS = {
-    "api_keys": {"key_hash", "key_prefix", "plan", "fail_mode", "max_response_bytes", "max_array_items"},
-    "admin_tokens": {"token_hash", "token_prefix", "role", "permissions", "revoked_at", "last_used_at"},
-    "admin_audit_log": {"actor_auth_type", "actor_role", "actor_label", "action", "target_type", "target_id", "details"},
+    "api_keys": {
+        "key_hash",
+        "key_prefix",
+        "plan",
+        "fail_mode",
+        "max_response_bytes",
+        "max_array_items",
+    },
+    "admin_tokens": {
+        "token_hash",
+        "token_prefix",
+        "role",
+        "permissions",
+        "revoked_at",
+        "last_used_at",
+    },
+    "admin_audit_log": {
+        "actor_auth_type",
+        "actor_role",
+        "actor_label",
+        "action",
+        "target_type",
+        "target_id",
+        "details",
+    },
     "mcp_servers": {"server_id", "url", "verified", "source_type", "provenance_status"},
-    "mcp_tool_metadata": {"server_id", "tool_name", "drift_severity", "drift_action", "previous_metadata"},
+    "mcp_tool_metadata": {
+        "server_id",
+        "tool_name",
+        "drift_severity",
+        "drift_action",
+        "previous_metadata",
+    },
     "scan_history": {"key_hash", "ts", "risk_score", "sanitized_output", "redactions"},
 }
 
@@ -95,22 +124,44 @@ def table_exists(conn, table: str) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Smoke test Interlock against Supabase/Postgres")
-    parser.add_argument("--env-file", default=str(ROOT / ".env"), help="Env file containing DATABASE_URL")
-    parser.add_argument("--write-test", action="store_true", help="Create and revoke one smoke admin token and API key")
+    parser = argparse.ArgumentParser(
+        description="Smoke test Interlock against Supabase/Postgres"
+    )
+    parser.add_argument(
+        "--env-file",
+        default=str(ROOT / ".env"),
+        help="Env file containing DATABASE_URL",
+    )
+    parser.add_argument(
+        "--write-test",
+        action="store_true",
+        help="Create and revoke one smoke admin token and API key",
+    )
     args = parser.parse_args()
 
     load_dotenv(args.env_file)
     database_url = (os.getenv("DATABASE_URL") or "").strip()
     if not database_url:
-        print("DATABASE_URL is not set. Add it to .env or export it before running this smoke test.", file=sys.stderr)
+        print(
+            "DATABASE_URL is not set. Add it to .env or export it before running this smoke test.",
+            file=sys.stderr,
+        )
         return 2
     if not database_url.startswith(("postgresql://", "postgres://")):
-        print("DATABASE_URL must be a Supabase/Postgres connection string.", file=sys.stderr)
+        print(
+            "DATABASE_URL must be a Supabase/Postgres connection string.",
+            file=sys.stderr,
+        )
         return 2
     if not database_url_is_well_formed(database_url):
-        print("DATABASE_URL is malformed. Use the Supabase Postgres URI format and URL-encode special characters in the password.", file=sys.stderr)
-        print("Expected shape: postgresql://USER:PASSWORD@HOST:5432/DATABASE", file=sys.stderr)
+        print(
+            "DATABASE_URL is malformed. Use the Supabase Postgres URI format and URL-encode special characters in the password.",
+            file=sys.stderr,
+        )
+        print(
+            "Expected shape: postgresql://USER:PASSWORD@HOST:5432/DATABASE",
+            file=sys.stderr,
+        )
         return 2
 
     from core import db
@@ -151,7 +202,9 @@ def main() -> int:
     print(f"Schema OK: {len(REQUIRED_TABLES)} required tables verified.")
 
     if args.write_test:
-        admin_token = db.generate_admin_token(label="supabase-smoke-test", role="auditor")
+        admin_token = db.generate_admin_token(
+            label="supabase-smoke-test", role="auditor"
+        )
         if not db.lookup_admin_token(admin_token["raw_token"]):
             print("Admin token lookup failed.")
             return 1
@@ -163,11 +216,13 @@ def main() -> int:
         if not db.lookup_key(api_key["raw_key"]):
             print("API key lookup failed.")
             return 1
-        if not db.revoke_key(api_key["key_prefix"]):
+        if db.revoke_key_by_id(api_key["id"]) is None:
             print("API key revoke failed.")
             return 1
 
-        print("Write test OK: smoke admin token and API key created, looked up, and revoked.")
+        print(
+            "Write test OK: smoke admin token and API key created, looked up, and revoked."
+        )
 
     print("Supabase smoke test passed.")
     return 0

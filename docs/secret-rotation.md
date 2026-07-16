@@ -70,7 +70,14 @@ curl -s -X POST "https://<interlock-api>/admin/tokens"   -H "x-admin-token: <boo
 1. Create a replacement key with `/admin/keys`.
 2. Update the customer's agent/dashboard/client configuration.
 3. Confirm traffic is using the new key.
-4. Revoke the old key with `/admin/keys/{key_prefix}`.
+4. Revoke the old key by its immutable list-response ID with
+   `/admin/keys/id/{key_id}`. The prefix route is legacy-only and rejects
+   ambiguous matches.
+
+Administrative updates and historical usage queries follow the same identity
+rule: use `PATCH /admin/keys/id/{key_id}` and
+`GET /admin/keys/id/{key_id}/usage`. Legacy prefix forms work only when the
+prefix resolves to exactly one row, including inactive rows for usage history.
 
 ## Provider Keys
 

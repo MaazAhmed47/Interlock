@@ -1496,7 +1496,8 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
     role = _normalize_api_key_role(overrides.get("role"))
 
     with _db_lock, get_conn() as conn:
-        conn.execute(
+        key_id = _insert_returning_id(
+            conn,
             """
             INSERT INTO api_keys
               (key_hash, key_prefix, label, plan, monthly_limit, rate_per_min,
@@ -1525,11 +1526,14 @@ def generate_key(plan: str = "free", label: str = "", **overrides) -> Dict[str, 
                 role,
             ),
         )
+    if key_id is None:
+        raise RuntimeError("API key insert did not return an immutable row ID")
 
     logger.info(
         "Issued new API key: prefix=%s plan=%s label=%s", key_prefix, plan, label
     )
     return {
+        "id": key_id,
         "raw_key": raw,
         "key_prefix": key_prefix,
         "plan": plan,
@@ -1557,17 +1561,79 @@ def lookup_key(raw_key: str) -> Optional[Dict[str, Any]]:
     return _row_to_dict(row) if row else None
 
 
-def revoke_key(key_prefix: str) -> bool:
-    """Mark a key inactive. Lookup by prefix (admin doesn't have the raw key)."""
-    with _db_lock, get_conn() as conn:
-        cursor = conn.execute(
-            "UPDATE api_keys SET is_active = FALSE, revoked_at = ? WHERE key_prefix = ? AND is_active = TRUE",
-            (datetime.now(timezone.utc).isoformat(), key_prefix),
+class AmbiguousKeyPrefixError(ValueError):
+    """A display prefix matched more than one API key in the requested scope."""
+
+    def __init__(self, key_prefix: str, match_count: int):
+        self.key_prefix = key_prefix
+        self.match_count = match_count
+        super().__init__(
+            f"Display prefix '{key_prefix}' matches {match_count} active API keys"
         )
-        revoked = cursor.rowcount > 0
-    if revoked:
-        logger.info("Revoked API key: prefix=%s", key_prefix)
-    return revoked
+
+
+def revoke_key_by_id(key_id: int) -> Optional[Dict[str, Any]]:
+    """Revoke exactly one API key by its immutable database row ID."""
+    try:
+        normalized_id = int(key_id)
+    except (TypeError, ValueError):
+        return None
+    if normalized_id <= 0:
+        return None
+
+    with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, key_prefix FROM api_keys WHERE id = ? AND is_active = TRUE",
+            (normalized_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        cursor = conn.execute(
+            "UPDATE api_keys SET is_active = FALSE, revoked_at = ? WHERE id = ? AND is_active = TRUE",
+            (datetime.now(timezone.utc).isoformat(), normalized_id),
+        )
+        if cursor.rowcount != 1:
+            return None
+
+    key_prefix = str(row_value(row, "key_prefix", 1) or "")
+    logger.info("Revoked API key: id=%s prefix=%s", normalized_id, key_prefix)
+    return {"id": normalized_id, "key_prefix": key_prefix}
+
+
+def revoke_key_by_prefix(key_prefix: str) -> Optional[Dict[str, Any]]:
+    """Legacy compatibility path: revoke only an exactly-one active match."""
+    with _db_lock, get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, key_prefix
+              FROM api_keys
+             WHERE key_prefix = ? AND is_active = TRUE
+             ORDER BY id
+            """,
+            (key_prefix,),
+        ).fetchall()
+        if len(rows) > 1:
+            raise AmbiguousKeyPrefixError(key_prefix, len(rows))
+        if not rows:
+            return None
+
+        key_id = int(row_value(rows[0], "id", 0))
+        cursor = conn.execute(
+            "UPDATE api_keys SET is_active = FALSE, revoked_at = ? WHERE id = ? AND is_active = TRUE",
+            (datetime.now(timezone.utc).isoformat(), key_id),
+        )
+        if cursor.rowcount != 1:
+            return None
+
+    logger.info(
+        "Revoked API key through legacy prefix: id=%s prefix=%s", key_id, key_prefix
+    )
+    return {"id": key_id, "key_prefix": key_prefix}
+
+
+def revoke_key(key_prefix: str) -> bool:
+    """Backward-compatible prefix revoke that rejects ambiguous active matches."""
+    return revoke_key_by_prefix(key_prefix) is not None
 
 
 def list_keys(include_inactive: bool = False) -> List[Dict[str, Any]]:
@@ -1586,8 +1652,41 @@ def list_keys(include_inactive: bool = False) -> List[Dict[str, Any]]:
     return out
 
 
-def update_key(key_prefix: str, **fields) -> bool:
-    """Update mutable fields on a key. Whitelist what's editable."""
+def lookup_key_by_id(
+    key_id: int, *, include_inactive: bool = True
+) -> Optional[Dict[str, Any]]:
+    """Return one API-key row by immutable ID, optionally requiring it active."""
+    try:
+        normalized_id = int(key_id)
+    except (TypeError, ValueError):
+        return None
+    if normalized_id <= 0:
+        return None
+
+    q = "SELECT * FROM api_keys WHERE id = ?"
+    if not include_inactive:
+        q += " AND is_active = TRUE"
+    with get_conn() as conn:
+        row = conn.execute(q, (normalized_id,)).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def lookup_key_by_prefix(
+    key_prefix: str, *, include_inactive: bool = True
+) -> Optional[Dict[str, Any]]:
+    """Resolve a display prefix only when it identifies exactly one row."""
+    q = "SELECT * FROM api_keys WHERE key_prefix = ?"
+    if not include_inactive:
+        q += " AND is_active = TRUE"
+    with get_conn() as conn:
+        rows = conn.execute(q + " ORDER BY id", (key_prefix,)).fetchall()
+    if len(rows) > 1:
+        raise AmbiguousKeyPrefixError(key_prefix, len(rows))
+    return _row_to_dict(rows[0]) if rows else None
+
+
+def _prepare_key_update_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Whitelist and serialize mutable API-key fields for either backend."""
     EDITABLE = {
         "label",
         "plan",
@@ -1603,33 +1702,89 @@ def update_key(key_prefix: str, **fields) -> bool:
         "scopes",
         "role",
     }
-    fields = {k: v for k, v in fields.items() if k in EDITABLE}
-    if not fields:
-        return False
+    prepared = {k: v for k, v in fields.items() if k in EDITABLE}
+    if not prepared:
+        return {}
 
-    if "scopes" in fields:
-        fields["scopes"] = _normalize_scopes(fields["scopes"])
-    if "role" in fields:
-        fields["role"] = _normalize_api_key_role(fields["role"])
+    if "scopes" in prepared:
+        prepared["scopes"] = _normalize_scopes(prepared["scopes"])
+    if "role" in prepared:
+        prepared["role"] = _normalize_api_key_role(prepared["role"])
 
-    # JSON-encode the JSON columns
     for col in ("custom_policy", "siem_configs", "scopes"):
         if (
-            col in fields
-            and fields[col] is not None
-            and not isinstance(fields[col], str)
+            col in prepared
+            and prepared[col] is not None
+            and not isinstance(prepared[col], str)
         ):
-            fields[col] = json.dumps(fields[col])
+            prepared[col] = json.dumps(prepared[col])
+    return prepared
 
-    set_clause = ", ".join(f"{k} = ?" for k in fields)
-    values = list(fields.values()) + [key_prefix]
 
+def update_key_by_id(key_id: int, **fields) -> Optional[Dict[str, Any]]:
+    """Update exactly one API-key row selected by immutable ID."""
+    try:
+        normalized_id = int(key_id)
+    except (TypeError, ValueError):
+        return None
+    if normalized_id <= 0:
+        return None
+
+    prepared = _prepare_key_update_fields(fields)
+    if not prepared:
+        return None
+
+    set_clause = ", ".join(f"{key} = ?" for key in prepared)
+    values = list(prepared.values()) + [normalized_id]
     with _db_lock, get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, key_prefix FROM api_keys WHERE id = ?", (normalized_id,)
+        ).fetchone()
+        if row is None:
+            return None
         cursor = conn.execute(
-            f"UPDATE api_keys SET {set_clause} WHERE key_prefix = ?",
+            f"UPDATE api_keys SET {set_clause} WHERE id = ?",
             values,
         )
-    return cursor.rowcount > 0
+        if cursor.rowcount != 1:
+            return None
+    return {
+        "id": normalized_id,
+        "key_prefix": str(row_value(row, "key_prefix", 1) or ""),
+    }
+
+
+def update_key_by_prefix(key_prefix: str, **fields) -> Optional[Dict[str, Any]]:
+    """Legacy update path: mutate only an exactly-one prefix match."""
+    prepared = _prepare_key_update_fields(fields)
+    if not prepared:
+        return None
+
+    set_clause = ", ".join(f"{key} = ?" for key in prepared)
+    with _db_lock, get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, key_prefix FROM api_keys WHERE key_prefix = ? ORDER BY id",
+            (key_prefix,),
+        ).fetchall()
+        if len(rows) > 1:
+            raise AmbiguousKeyPrefixError(key_prefix, len(rows))
+        if not rows:
+            return None
+
+        key_id = int(row_value(rows[0], "id", 0))
+        values = list(prepared.values()) + [key_id]
+        cursor = conn.execute(
+            f"UPDATE api_keys SET {set_clause} WHERE id = ?",
+            values,
+        )
+        if cursor.rowcount != 1:
+            return None
+    return {"id": key_id, "key_prefix": key_prefix}
+
+
+def update_key(key_prefix: str, **fields) -> bool:
+    """Backward-compatible prefix update that rejects ambiguous matches."""
+    return update_key_by_prefix(key_prefix, **fields) is not None
 
 
 # -- Admin token management ---------------------------------------------------

@@ -451,8 +451,9 @@ def create_key(
         context,
         "api_key.created",
         "api_key",
-        result["key_prefix"],
+        str(result["id"]),
         details={
+            "key_prefix": result["key_prefix"],
             "label": req.label,
             "plan": req.plan,
             "overrides": sorted(overrides.keys()),
@@ -471,6 +472,42 @@ def list_all_keys(
     return {"keys": db.list_keys(include_inactive=include_inactive)}
 
 
+@router.patch("/keys/id/{key_id}")
+def update_existing_key_by_id(
+    key_id: int,
+    req: UpdateKeyRequest,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    """Canonical update route: one immutable API-key row ID."""
+    context = _require_admin(x_admin_token, "keys:write", authorization=authorization)
+    fields = {k: v for k, v in req.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(status_code=400, detail="No fields to update.")
+    updated = db.update_key_by_id(key_id, **fields)
+    if updated is None:
+        raise HTTPException(
+            status_code=404, detail=f"Key with ID '{key_id}' not found."
+        )
+    _audit_admin_action(
+        context,
+        "api_key.updated",
+        "api_key",
+        str(updated["id"]),
+        details={
+            "key_prefix": updated["key_prefix"],
+            "identity": "id",
+            "updated_fields": sorted(fields.keys()),
+        },
+    )
+    return {
+        "ok": True,
+        "key_id": updated["id"],
+        "key_prefix": updated["key_prefix"],
+        "updated_fields": list(fields.keys()),
+    }
+
+
 @router.patch("/keys/{key_prefix}")
 def update_existing_key(
     key_prefix: str,
@@ -482,8 +519,17 @@ def update_existing_key(
     fields = {k: v for k, v in req.model_dump().items() if v is not None}
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update.")
-    ok = db.update_key(key_prefix, **fields)
-    if not ok:
+    try:
+        updated = db.update_key_by_prefix(key_prefix, **fields)
+    except db.AmbiguousKeyPrefixError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Display prefix '{key_prefix}' matches {exc.match_count} keys; "
+                "update by immutable key ID."
+            ),
+        ) from exc
+    if updated is None:
         raise HTTPException(
             status_code=404, detail=f"Key with prefix '{key_prefix}' not found."
         )
@@ -491,10 +537,46 @@ def update_existing_key(
         context,
         "api_key.updated",
         "api_key",
-        key_prefix,
-        details={"updated_fields": sorted(fields.keys())},
+        str(updated["id"]),
+        details={
+            "key_prefix": updated["key_prefix"],
+            "identity": "legacy_prefix",
+            "updated_fields": sorted(fields.keys()),
+        },
     )
-    return {"ok": True, "updated_fields": list(fields.keys())}
+    return {
+        "ok": True,
+        "key_id": updated["id"],
+        "key_prefix": updated["key_prefix"],
+        "updated_fields": list(fields.keys()),
+    }
+
+
+@router.delete("/keys/id/{key_id}")
+def revoke_existing_key_by_id(
+    key_id: int,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    """Canonical revoke route: one immutable API-key row ID."""
+    context = _require_admin(x_admin_token, "keys:write", authorization=authorization)
+    revoked = db.revoke_key_by_id(key_id)
+    if revoked is None:
+        raise HTTPException(
+            status_code=404, detail=f"Active key with ID '{key_id}' not found."
+        )
+    _audit_admin_action(
+        context,
+        "api_key.revoked",
+        "api_key",
+        str(revoked["id"]),
+        details={"key_prefix": revoked["key_prefix"], "identity": "id"},
+    )
+    return {
+        "ok": True,
+        "revoked_id": revoked["id"],
+        "key_prefix": revoked["key_prefix"],
+    }
 
 
 @router.delete("/keys/{key_prefix}")
@@ -504,13 +586,55 @@ def revoke_existing_key(
     authorization: Optional[str] = Header(None),
 ):
     context = _require_admin(x_admin_token, "keys:write", authorization=authorization)
-    ok = db.revoke_key(key_prefix)
-    if not ok:
+    try:
+        revoked = db.revoke_key_by_prefix(key_prefix)
+    except db.AmbiguousKeyPrefixError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Display prefix '{key_prefix}' matches {exc.match_count} active "
+                "keys; revoke by immutable key ID."
+            ),
+        ) from exc
+    if revoked is None:
         raise HTTPException(
             status_code=404, detail=f"Active key with prefix '{key_prefix}' not found."
         )
-    _audit_admin_action(context, "api_key.revoked", "api_key", key_prefix)
-    return {"ok": True, "revoked": key_prefix}
+    _audit_admin_action(
+        context,
+        "api_key.revoked",
+        "api_key",
+        str(revoked["id"]),
+        details={"key_prefix": key_prefix, "identity": "legacy_prefix"},
+    )
+    return {"ok": True, "revoked": key_prefix, "revoked_id": revoked["id"]}
+
+
+def _key_usage_response(target: Dict[str, Any]) -> Dict[str, Any]:
+    used = db.usage_this_month(target["id"])
+    limit = target["monthly_limit"]
+    return {
+        "key_id": target["id"],
+        "key_prefix": target["key_prefix"],
+        "plan": target["plan"],
+        "used_this_month": used,
+        "monthly_limit": limit,
+        "remaining": max(0, limit - used) if limit > 0 else "unlimited",
+    }
+
+
+@router.get("/keys/id/{key_id}/usage")
+def get_usage_by_id(
+    key_id: int,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    """Canonical usage route, including historical usage for inactive keys."""
+    _require_admin(x_admin_token, "keys:read", authorization=authorization)
+    target = db.lookup_key_by_id(key_id, include_inactive=True)
+    if target is None:
+        raise HTTPException(status_code=404, detail="Key not found.")
+    return _key_usage_response(target)
 
 
 @router.get("/keys/{key_prefix}/usage")
@@ -520,19 +644,19 @@ def get_usage(
     authorization: Optional[str] = Header(None),
 ):
     _require_admin(x_admin_token, "keys:read", authorization=authorization)
-    keys = db.list_keys(include_inactive=True)
-    target = next((k for k in keys if k["key_prefix"] == key_prefix), None)
-    if not target:
+    try:
+        target = db.lookup_key_by_prefix(key_prefix, include_inactive=True)
+    except db.AmbiguousKeyPrefixError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Display prefix '{key_prefix}' matches {exc.match_count} keys; "
+                "query usage by immutable key ID."
+            ),
+        ) from exc
+    if target is None:
         raise HTTPException(status_code=404, detail="Key not found.")
-    used = db.usage_this_month(target["id"])
-    limit = target["monthly_limit"]
-    return {
-        "key_prefix": key_prefix,
-        "plan": target["plan"],
-        "used_this_month": used,
-        "monthly_limit": limit,
-        "remaining": max(0, limit - used) if limit > 0 else "unlimited",
-    }
+    return _key_usage_response(target)
 
 
 # ── Retention policy endpoints ──────────────────────────────────────────────
