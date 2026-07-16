@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { LogIn, Save, Search, ShieldCheck } from 'lucide-react'
 import { API_URL_KEY, API_KEY_KEY, DEFAULT_API_URL, api } from '../api'
@@ -9,6 +9,7 @@ import { useDashboardData } from '../components/DashLayout'
 export default function Settings() {
   const [url, setUrl] = useState(sessionStorage.getItem(API_URL_KEY) || DEFAULT_API_URL)
   const [key, setKey] = useState(sessionStorage.getItem(API_KEY_KEY) || '')
+  const keyInputRef = useRef<HTMLInputElement>(null)
   const [urlError, setUrlError] = useState('')
   const [saved, setSaved] = useState(false)
   const [siemProviders, setSiemProviders] = useState<string[]>([])
@@ -73,11 +74,13 @@ export default function Settings() {
     if (err) { setUrlError(err); return }
     setUrlError('')
     sessionStorage.setItem(API_URL_KEY, url.trim() || DEFAULT_API_URL)
-    if (key.trim()) {
-      sessionStorage.setItem(API_KEY_KEY, key.trim())
+    const currentKey = (keyInputRef.current?.value ?? key).trim()
+    if (currentKey) {
+      sessionStorage.setItem(API_KEY_KEY, currentKey)
     } else {
       sessionStorage.removeItem(API_KEY_KEY)
     }
+    setKey(currentKey)
     setSaved(true)
     void refreshAll()
     setTimeout(() => setSaved(false), 2500)
@@ -143,7 +146,7 @@ export default function Settings() {
           </div>
           <div className="form-group">
             <label className="form-label">Customer API Key</label>
-            <input className="form-input" type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="API key" autoComplete="off" />
+            <input ref={keyInputRef} className="form-input" type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="API key" autoComplete="off" />
             {fingerprint && <div className="key-fingerprint">Active key: {fingerprint}</div>}
             <div className="form-hint">Stored in browser sessionStorage only. Cleared when the tab is closed. Used for scan, MCP inventory, and runtime audit views.</div>
           </div>
