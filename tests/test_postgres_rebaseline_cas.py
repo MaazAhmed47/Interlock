@@ -616,9 +616,12 @@ def test_promotion_wins_first_new_discovery_waits_and_is_not_lost_on_postgres(
     approval of C is mid-transaction. D must wait for the lock and stage
     AFTER the promotion — never be consumed by it."""
     validated_d = _validated(pg_db, [TOOL_C])
+    staged_result = {}
 
     def stage_d():
-        pg_db.save_rebaseline_candidate(SERVER_ID, validated_d, "ops")
+        staged_result.update(
+            pg_db.save_rebaseline_candidate(SERVER_ID, validated_d, "ops")
+        )
 
     active, candidate_c = _run_writer_blocked_during_promote(
         pg_db, monkeypatch, stage_d
@@ -636,10 +639,33 @@ def test_promotion_wins_first_new_discovery_waits_and_is_not_lost_on_postgres(
     assert staged["candidate_surface_hash"] == drift_evidence.rebaseline_content_hash(
         _validated(pg_db, [TOOL_C])
     )
+    assert staged_result["active_surface_hash"] == candidate_c["candidate_surface_hash"]
     versions = pg_db.list_baseline_versions(SERVER_ID)
     assert len(versions) == 2
     assert versions[1]["replaced_at"] is None
     assert pg_db.verify_audit_chain()["valid"] is True
+
+
+def test_review_snapshot_waits_for_promote_and_is_coherent_on_postgres(
+    pg_db, monkeypatch
+):
+    captured = {}
+
+    def read_snapshot():
+        captured.update(pg_db.get_rebaseline_review_snapshot(SERVER_ID))
+
+    _active, candidate = _run_writer_blocked_during_promote(
+        pg_db, monkeypatch, read_snapshot
+    )
+
+    assert captured["ok"] is True
+    assert captured["active"]["surface_hash"] == candidate["candidate_surface_hash"]
+    assert captured["candidate"] is None
+    assert len(captured["versions"]) == 2
+    assert (
+        captured["versions"][-1]["surface_hash"] == candidate["candidate_surface_hash"]
+    )
+    assert captured["versions"][-1]["replaced_at"] is None
 
 
 def test_ordinary_discovery_upsert_waits_for_promote_and_applies_after(
@@ -759,6 +785,83 @@ def test_quarantine_waits_for_promote_and_is_not_silently_lost_on_postgres(
     stored = pg_db.lookup_mcp_tool_metadata(SERVER_ID, TOOL_A["name"])
     assert stored["status"] == "quarantined"
     assert "operator_quarantine" in stored["drift_types"]
+
+
+def test_metadata_rederivation_waits_for_promote_and_reads_promoted_row_on_postgres(
+    pg_db, monkeypatch
+):
+    from core.tool_metadata import normalize_tool_metadata
+
+    active = _seed_baseline(pg_db, [TOOL_CONTENT_C])
+    candidate = pg_db.save_rebaseline_candidate(
+        SERVER_ID,
+        [{"tool": TOOL_CONTENT_ANNOTATIONS_D, "normalized_metadata": {}}],
+        "ops",
+    )
+    monkeypatch.setattr(pg_db, "_db_lock", _NoOpLock())
+
+    promote_at_seam = threading.Event()
+    release_promote = threading.Event()
+    rederive_done = threading.Event()
+    real_replace = pg_db._replace_tool_metadata_from_candidate
+    results = {}
+    errors = []
+
+    def holding_replace(conn, server_id, candidate_row):
+        promote_at_seam.set()
+        if not release_promote.wait(timeout=15):
+            raise RuntimeError("test deadlock: promotion was not released")
+        return real_replace(conn, server_id, candidate_row)
+
+    monkeypatch.setattr(pg_db, "_replace_tool_metadata_from_candidate", holding_replace)
+
+    def promote():
+        try:
+            results["promote"] = pg_db.promote_rebaseline_candidate(
+                SERVER_ID,
+                active["surface_hash"],
+                candidate["candidate_surface_hash"],
+                actor=ACTOR,
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    def rederive():
+        try:
+            results["rederive"] = pg_db.rederive_mcp_tool_metadata(
+                SERVER_ID, TOOL_CONTENT_ANNOTATIONS_D["name"]
+            )
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            rederive_done.set()
+
+    promote_thread = threading.Thread(target=promote)
+    rederive_thread = threading.Thread(target=rederive)
+    promote_thread.start()
+    assert promote_at_seam.wait(timeout=15), "promotion never reached replace seam"
+    rederive_thread.start()
+    try:
+        rederive_waited = _wait_for(lambda: _advisory_waiters(pg_db) > 0)
+        rederive_finished_early = rederive_done.is_set()
+    finally:
+        release_promote.set()
+        promote_thread.join(timeout=30)
+        rederive_thread.join(timeout=30)
+
+    assert rederive_waited, "metadata rederivation never waited on the server lock"
+    assert not rederive_finished_early, "metadata rederivation read the old row"
+    assert not promote_thread.is_alive() and not rederive_thread.is_alive()
+    assert errors == []
+    assert results["promote"]["ok"] is True
+    assert results["rederive"]["outcome"] == "changed"
+    expected_metadata = normalize_tool_metadata(TOOL_CONTENT_ANNOTATIONS_D)
+    assert results["rederive"]["new_metadata"] == expected_metadata
+    stored = pg_db.lookup_mcp_tool_metadata(
+        SERVER_ID, TOOL_CONTENT_ANNOTATIONS_D["name"]
+    )
+    assert stored["raw_tool_definition"] == TOOL_CONTENT_ANNOTATIONS_D
+    assert stored["normalized_metadata"] == expected_metadata
 
 
 def test_promotion_wins_then_unregister_waits_and_cascades_on_postgres(

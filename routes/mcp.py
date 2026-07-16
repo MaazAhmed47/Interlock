@@ -273,14 +273,15 @@ async def mcp_rebaseline_status(
 ):
     """The reviewer's view: active baseline hash, staged candidate, history."""
     proxy.require_scope(x_api_key, "admin")
-    if not db.lookup_mcp_server(server_id):
+    snapshot = db.get_rebaseline_review_snapshot(server_id)
+    if not snapshot.get("ok"):
         raise HTTPException(status_code=404, detail="MCP server not found.")
     return {
         "ok": True,
         "server_id": server_id,
-        "active": db.get_active_baseline(server_id),
-        "candidate": _candidate_summary(db.get_rebaseline_candidate(server_id)),
-        "versions": db.list_baseline_versions(server_id),
+        "active": snapshot["active"],
+        "candidate": _candidate_summary(snapshot["candidate"]),
+        "versions": snapshot["versions"],
     }
 
 
@@ -306,16 +307,18 @@ async def mcp_rebaseline_discover(
         raise HTTPException(status_code=400, detail=str(exc))
 
     result = await fetch_candidate_tool_surface(server["url"], server_id=server_id)
-    active = db.get_active_baseline(server_id)
     if not result.get("ok"):
+        snapshot = db.get_rebaseline_review_snapshot(server_id)
+        if not snapshot.get("ok"):
+            raise HTTPException(status_code=404, detail="MCP server not found.")
         return {
             "ok": False,
             "server_id": server_id,
             "error": result.get("error"),
             "message": result.get("message", ""),
             "blocked": result.get("blocked", []),
-            "active_surface_hash": active["surface_hash"],
-            "candidate": _candidate_summary(db.get_rebaseline_candidate(server_id)),
+            "active_surface_hash": snapshot["active"]["surface_hash"],
+            "candidate": _candidate_summary(snapshot["candidate"]),
         }
 
     candidate = db.save_rebaseline_candidate(
@@ -330,7 +333,7 @@ async def mcp_rebaseline_discover(
         "tool_count": candidate["tool_count"],
         "created_at": candidate["created_at"],
         "created_by": candidate["created_by"],
-        "active_surface_hash": active["surface_hash"],
+        "active_surface_hash": candidate["active_surface_hash"],
     }
 
 

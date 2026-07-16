@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 from core import audit_envelope
 from core import drift_evidence
 from core.mcp_drift import classify_tool_drift
+from core.tool_metadata import normalize_tool_metadata
 
 logger = logging.getLogger("interlock.db")
 
@@ -2866,6 +2867,43 @@ def get_active_baseline(server_id: str) -> Dict[str, Any]:
         return _active_baseline_from_conn(conn, server_id)
 
 
+def _baseline_versions_from_conn(
+    conn, server_id: str, limit: int = 100
+) -> List[Dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM mcp_baseline_versions WHERE server_id = ? "
+        "ORDER BY version ASC LIMIT ?",
+        (server_id, int(limit)),
+    ).fetchall()
+    return [row_to_plain_dict(row) for row in rows]
+
+
+def get_rebaseline_review_snapshot(server_id: str, limit: int = 100) -> Dict[str, Any]:
+    """Return one coherent reviewer view under the server's lock domain."""
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
+        server = conn.execute(
+            "SELECT server_id FROM mcp_servers WHERE server_id = ?",
+            (server_id,),
+        ).fetchone()
+        if server is None:
+            return {
+                "ok": False,
+                "error": "server_not_found",
+                "server_id": server_id,
+            }
+        return {
+            "ok": True,
+            "server_id": server_id,
+            "active": _active_baseline_from_conn(conn, server_id),
+            "candidate": _rebaseline_candidate_from_conn(conn, server_id),
+            "versions": _baseline_versions_from_conn(conn, server_id, limit),
+        }
+
+
 def save_rebaseline_candidate(
     server_id: str,
     validated_tools: List[Dict[str, Any]],
@@ -2903,6 +2941,7 @@ def save_rebaseline_candidate(
                 "error": "server_not_found",
                 "server_id": server_id,
             }
+        active = _active_baseline_from_conn(conn, server_id)
         conn.execute(
             """
             INSERT INTO mcp_rebaseline_candidates
@@ -2934,6 +2973,7 @@ def save_rebaseline_candidate(
         "tool_count": len(validated_tools),
         "created_at": now,
         "created_by": created_by or "",
+        "active_surface_hash": active["surface_hash"],
     }
 
 
@@ -2962,12 +3002,7 @@ def get_rebaseline_candidate(server_id: str) -> Optional[Dict[str, Any]]:
 def list_baseline_versions(server_id: str, limit: int = 100) -> List[Dict[str, Any]]:
     """A server's baseline version history, oldest first."""
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM mcp_baseline_versions WHERE server_id = ? "
-            "ORDER BY version ASC LIMIT ?",
-            (server_id, int(limit)),
-        ).fetchall()
-    return [row_to_plain_dict(row) for row in rows]
+        return _baseline_versions_from_conn(conn, server_id, limit)
 
 
 def _replace_tool_metadata_from_candidate(
@@ -3478,6 +3513,123 @@ def upsert_mcp_tool_metadata(
         "last_seen": now,
         "last_changed": last_changed,
     }
+
+
+def rederive_mcp_tool_metadata(
+    server_id: str, tool_name: str, *, dry_run: bool = False
+) -> Dict[str, Any]:
+    """Recompute metadata from the current raw tool while holding its server lock."""
+    assert_not_production_fixture_write(server_id, "MCP metadata rederivation")
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
+        server = conn.execute(
+            "SELECT server_id FROM mcp_servers WHERE server_id = ?",
+            (server_id,),
+        ).fetchone()
+        if server is None:
+            return {
+                "ok": False,
+                "outcome": "not_found",
+                "error": "server_not_found",
+                "server_id": server_id,
+                "tool_name": tool_name,
+            }
+
+        row = conn.execute(
+            "SELECT raw_tool_definition, normalized_metadata "
+            "FROM mcp_tool_metadata WHERE server_id = ? AND tool_name = ?",
+            (server_id, tool_name),
+        ).fetchone()
+        if row is None:
+            return {
+                "ok": False,
+                "outcome": "not_found",
+                "error": "tool_not_found",
+                "server_id": server_id,
+                "tool_name": tool_name,
+            }
+
+        raw_tool_value = row_value(row, "raw_tool_definition", 0)
+        raw_metadata_value = row_value(row, "normalized_metadata", 1)
+        try:
+            raw_tool = (
+                dict(raw_tool_value)
+                if isinstance(raw_tool_value, dict)
+                else json.loads(raw_tool_value)
+            )
+        except (json.JSONDecodeError, TypeError, ValueError):
+            raw_tool = None
+        if not isinstance(raw_tool, dict):
+            return {
+                "ok": False,
+                "outcome": "corrupt",
+                "error": "corrupt_raw_tool_definition",
+                "server_id": server_id,
+                "tool_name": tool_name,
+            }
+
+        try:
+            old_metadata = (
+                dict(raw_metadata_value)
+                if isinstance(raw_metadata_value, dict)
+                else json.loads(raw_metadata_value)
+            )
+        except (json.JSONDecodeError, TypeError, ValueError):
+            old_metadata = None
+        if not isinstance(old_metadata, dict):
+            return {
+                "ok": False,
+                "outcome": "corrupt",
+                "error": "corrupt_normalized_metadata",
+                "server_id": server_id,
+                "tool_name": tool_name,
+            }
+
+        try:
+            new_metadata = normalize_tool_metadata(raw_tool)
+        except Exception:
+            logger.exception(
+                "Failed to rederive MCP metadata for %s/%s", server_id, tool_name
+            )
+            return {
+                "ok": False,
+                "outcome": "corrupt",
+                "error": "metadata_derivation_failed",
+                "server_id": server_id,
+                "tool_name": tool_name,
+            }
+
+        changed = old_metadata != new_metadata
+        applied = False
+        if changed and not dry_run:
+            cursor = conn.execute(
+                "UPDATE mcp_tool_metadata SET normalized_metadata = ? "
+                "WHERE server_id = ? AND tool_name = ?",
+                (json.dumps(new_metadata, sort_keys=True), server_id, tool_name),
+            )
+            if int(cursor.rowcount or 0) != 1:
+                return {
+                    "ok": False,
+                    "outcome": "not_found",
+                    "error": "tool_not_found",
+                    "server_id": server_id,
+                    "tool_name": tool_name,
+                }
+            applied = True
+
+        return {
+            "ok": True,
+            "outcome": "changed" if changed else "unchanged",
+            "server_id": server_id,
+            "tool_name": tool_name,
+            "changed": changed,
+            "applied": applied,
+            "old_metadata": old_metadata,
+            "new_metadata": new_metadata,
+        }
 
 
 def lookup_mcp_tool_metadata(

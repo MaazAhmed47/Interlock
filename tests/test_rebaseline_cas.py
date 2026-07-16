@@ -21,8 +21,10 @@ Run: python -m pytest tests/test_rebaseline_cas.py -q
 """
 
 import asyncio
+import ast
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -43,6 +45,7 @@ os.environ.setdefault("FIREWALL_DB_PATH", _tmp_db)
 
 import core.db as db  # noqa: E402
 from core import drift_evidence  # noqa: E402
+from core.tool_metadata import normalize_tool_metadata  # noqa: E402
 
 # ── deterministic server surface hashing ─────────────────────────────────────
 
@@ -239,6 +242,100 @@ def _server_state_counts():
 
 
 ACTOR = {"reviewer": "ops (key:lf-test)", "principal_id": "lf-test"}
+
+
+def test_live_reset_script_has_no_direct_protected_table_writes():
+    source_path = Path(__file__).resolve().parents[1] / "scripts" / "reset_live_demo.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    protected_write = re.compile(
+        r"\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\s+"
+        r"(?:mcp_servers|mcp_tool_metadata)\b",
+        re.IGNORECASE,
+    )
+    offenders = [
+        " ".join(node.value.split())
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and protected_write.search(node.value)
+    ]
+    assert offenders == [], (
+        "reset_live_demo.py must route protected writes through locked core.db "
+        f"helpers, found: {offenders}"
+    )
+
+
+def test_locked_metadata_rederivation_returns_changed_then_unchanged():
+    _seed_baseline([TOOL_A])
+    with db.get_conn() as conn:
+        conn.execute(
+            "UPDATE mcp_tool_metadata SET normalized_metadata = '{}' "
+            "WHERE server_id = ? AND tool_name = ?",
+            (SERVER_ID, TOOL_A["name"]),
+        )
+
+    preview = db.rederive_mcp_tool_metadata(SERVER_ID, TOOL_A["name"], dry_run=True)
+    assert preview["outcome"] == "changed"
+    assert preview["changed"] is True
+    assert preview["applied"] is False
+    assert (
+        db.lookup_mcp_tool_metadata(SERVER_ID, TOOL_A["name"])["normalized_metadata"]
+        == {}
+    )
+
+    changed = db.rederive_mcp_tool_metadata(SERVER_ID, TOOL_A["name"])
+    assert changed["ok"] is True
+    assert changed["outcome"] == "changed"
+    assert changed["changed"] is True
+    assert changed["applied"] is True
+    assert changed["new_metadata"] == normalize_tool_metadata(TOOL_A)
+
+    unchanged = db.rederive_mcp_tool_metadata(SERVER_ID, TOOL_A["name"])
+    assert unchanged["ok"] is True
+    assert unchanged["outcome"] == "unchanged"
+    assert unchanged["changed"] is False
+    assert unchanged["applied"] is False
+
+
+@pytest.mark.parametrize(
+    ("column", "bad_value", "expected_error"),
+    [
+        ("raw_tool_definition", "{bad-json", "corrupt_raw_tool_definition"),
+        ("normalized_metadata", "[not-an-object]", "corrupt_normalized_metadata"),
+    ],
+)
+def test_locked_metadata_rederivation_returns_typed_corrupt_result(
+    column, bad_value, expected_error
+):
+    _seed_baseline([TOOL_A])
+    with db.get_conn() as conn:
+        conn.execute(
+            f"UPDATE mcp_tool_metadata SET {column} = ? "
+            "WHERE server_id = ? AND tool_name = ?",
+            (bad_value, SERVER_ID, TOOL_A["name"]),
+        )
+
+    result = db.rederive_mcp_tool_metadata(SERVER_ID, TOOL_A["name"])
+    assert result == {
+        "ok": False,
+        "outcome": "corrupt",
+        "error": expected_error,
+        "server_id": SERVER_ID,
+        "tool_name": TOOL_A["name"],
+    }
+
+
+def test_locked_metadata_rederivation_returns_typed_not_found_results():
+    missing_tool = db.rederive_mcp_tool_metadata(SERVER_ID, "missing_tool")
+    assert missing_tool["ok"] is False
+    assert missing_tool["outcome"] == "not_found"
+    assert missing_tool["error"] == "tool_not_found"
+
+    assert db.unregister_mcp_server(SERVER_ID) is True
+    missing_server = db.rederive_mcp_tool_metadata(SERVER_ID, TOOL_A["name"])
+    assert missing_server["ok"] is False
+    assert missing_server["outcome"] == "not_found"
+    assert missing_server["error"] == "server_not_found"
 
 
 def test_active_baseline_reflects_stored_tool_metadata():
@@ -750,6 +847,66 @@ def test_candidate_staged_after_promotion_is_preserved():
 # ── unregister/promotion share the server lifecycle serialization domain ─────
 
 
+def test_review_snapshot_waits_for_promote_and_returns_wholly_after_state(
+    monkeypatch, admin_key
+):
+    active = _seed_baseline([TOOL_A])
+    candidate = db.save_rebaseline_candidate(SERVER_ID, _validated([TOOL_B]), "ops")
+    before = db.get_rebaseline_review_snapshot(SERVER_ID)
+    assert before["active"]["surface_hash"] == active["surface_hash"]
+    assert (
+        before["candidate"]["candidate_surface_hash"]
+        == candidate["candidate_surface_hash"]
+    )
+    assert before["versions"] == []
+
+    promote_at_seam = threading.Event()
+    release_promote = threading.Event()
+    snapshot_done = threading.Event()
+    real_replace = db._replace_tool_metadata_from_candidate
+    results = {}
+
+    def holding_replace(conn, server_id, candidate_row):
+        promote_at_seam.set()
+        assert release_promote.wait(timeout=10), "promotion was never released"
+        return real_replace(conn, server_id, candidate_row)
+
+    monkeypatch.setattr(db, "_replace_tool_metadata_from_candidate", holding_replace)
+
+    def promote():
+        results["promote"] = db.promote_rebaseline_candidate(
+            SERVER_ID,
+            active["surface_hash"],
+            candidate["candidate_surface_hash"],
+            actor=ACTOR,
+        )
+
+    def read_snapshot():
+        results["snapshot"] = asyncio.run(
+            proxy.mcp_rebaseline_status(SERVER_ID, x_api_key=admin_key)
+        )
+        snapshot_done.set()
+
+    promote_thread = threading.Thread(target=promote)
+    snapshot_thread = threading.Thread(target=read_snapshot)
+    promote_thread.start()
+    assert promote_at_seam.wait(timeout=10), "promotion never reached replace seam"
+    snapshot_thread.start()
+    assert not snapshot_done.wait(timeout=0.2), "snapshot read a mixed in-flight state"
+    release_promote.set()
+    promote_thread.join(timeout=15)
+    snapshot_thread.join(timeout=15)
+
+    assert not promote_thread.is_alive() and not snapshot_thread.is_alive()
+    assert results["promote"]["ok"] is True
+    after = results["snapshot"]
+    assert after["active"]["surface_hash"] == candidate["candidate_surface_hash"]
+    assert after["candidate"] is None
+    assert len(after["versions"]) == 2
+    assert after["versions"][-1]["surface_hash"] == candidate["candidate_surface_hash"]
+    assert after["versions"][-1]["replaced_at"] is None
+
+
 def test_promotion_wins_then_unregister_cascades_state_cleanly_on_sqlite(
     monkeypatch,
 ):
@@ -1226,6 +1383,77 @@ def test_route_discover_creates_candidate_and_reports_both_hashes(admin_key):
     assert db.get_active_baseline(SERVER_ID)["surface_hash"] == active["surface_hash"]
 
 
+def test_route_discover_waits_for_promote_and_returns_one_after_state(
+    admin_key, monkeypatch
+):
+    active = _seed_baseline([TOOL_A])
+    candidate_c = db.save_rebaseline_candidate(SERVER_ID, _validated([TOOL_B]), "ops-c")
+    validated_d = _validated([TOOL_C])
+    fetched = threading.Event()
+    discover_done = threading.Event()
+    promote_at_seam = threading.Event()
+    release_promote = threading.Event()
+    real_replace = db._replace_tool_metadata_from_candidate
+    results = {}
+
+    def holding_replace(conn, server_id, candidate_row):
+        promote_at_seam.set()
+        assert release_promote.wait(timeout=10), "promotion was never released"
+        return real_replace(conn, server_id, candidate_row)
+
+    async def fetched_candidate(*_args, **_kwargs):
+        fetched.set()
+        return {"ok": True, "validated_tools": validated_d}
+
+    monkeypatch.setattr(db, "_replace_tool_metadata_from_candidate", holding_replace)
+    monkeypatch.setattr("routes.mcp.fetch_candidate_tool_surface", fetched_candidate)
+
+    def promote():
+        results["promote"] = db.promote_rebaseline_candidate(
+            SERVER_ID,
+            active["surface_hash"],
+            candidate_c["candidate_surface_hash"],
+            actor=ACTOR,
+        )
+
+    def discover():
+        results["discover"] = asyncio.run(
+            proxy.mcp_rebaseline_discover(SERVER_ID, x_api_key=admin_key)
+        )
+        discover_done.set()
+
+    promote_thread = threading.Thread(target=promote)
+    discover_thread = threading.Thread(target=discover)
+    promote_thread.start()
+    assert promote_at_seam.wait(timeout=10), "promotion never reached replace seam"
+    discover_thread.start()
+    assert fetched.wait(timeout=5), "discovery never completed its pure fetch"
+    assert not discover_done.wait(timeout=0.2), "candidate staged inside promotion"
+    release_promote.set()
+    promote_thread.join(timeout=15)
+    discover_thread.join(timeout=15)
+
+    assert not promote_thread.is_alive() and not discover_thread.is_alive()
+    assert results["promote"]["ok"] is True
+    discover_result = results["discover"]
+    assert (
+        discover_result["active_surface_hash"] == candidate_c["candidate_surface_hash"]
+    )
+    assert discover_result[
+        "candidate_surface_hash"
+    ] == drift_evidence.rebaseline_content_hash(validated_d)
+    snapshot = db.get_rebaseline_review_snapshot(SERVER_ID)
+    assert snapshot["active"]["surface_hash"] == discover_result["active_surface_hash"]
+    assert (
+        snapshot["candidate"]["candidate_surface_hash"]
+        == discover_result["candidate_surface_hash"]
+    )
+    assert (
+        snapshot["versions"][-1]["surface_hash"]
+        == discover_result["active_surface_hash"]
+    )
+
+
 def test_route_discover_failure_reports_reason_and_touches_nothing(admin_key):
     _seed_baseline([TOOL_A])
     db.save_rebaseline_candidate(SERVER_ID, _validated([TOOL_C]), "ops")
@@ -1237,6 +1465,63 @@ def test_route_discover_failure_reports_reason_and_touches_nothing(admin_key):
     assert result["ok"] is False
     assert result["error"] == "MCP server timeout"
     assert _full_state_snapshot() == before
+
+
+def test_failed_route_discovery_uses_one_coherent_after_snapshot(
+    admin_key, monkeypatch
+):
+    active = _seed_baseline([TOOL_A])
+    candidate = db.save_rebaseline_candidate(SERVER_ID, _validated([TOOL_B]), "ops")
+    fetched = threading.Event()
+    failure_done = threading.Event()
+    promote_at_seam = threading.Event()
+    release_promote = threading.Event()
+    real_replace = db._replace_tool_metadata_from_candidate
+    results = {}
+
+    def holding_replace(conn, server_id, candidate_row):
+        promote_at_seam.set()
+        assert release_promote.wait(timeout=10), "promotion was never released"
+        return real_replace(conn, server_id, candidate_row)
+
+    async def failed_fetch(*_args, **_kwargs):
+        fetched.set()
+        return {"ok": False, "error": "MCP server timeout"}
+
+    monkeypatch.setattr(db, "_replace_tool_metadata_from_candidate", holding_replace)
+    monkeypatch.setattr("routes.mcp.fetch_candidate_tool_surface", failed_fetch)
+
+    def promote():
+        results["promote"] = db.promote_rebaseline_candidate(
+            SERVER_ID,
+            active["surface_hash"],
+            candidate["candidate_surface_hash"],
+            actor=ACTOR,
+        )
+
+    def discover_failure():
+        results["failure"] = asyncio.run(
+            proxy.mcp_rebaseline_discover(SERVER_ID, x_api_key=admin_key)
+        )
+        failure_done.set()
+
+    promote_thread = threading.Thread(target=promote)
+    failure_thread = threading.Thread(target=discover_failure)
+    promote_thread.start()
+    assert promote_at_seam.wait(timeout=10), "promotion never reached replace seam"
+    failure_thread.start()
+    assert fetched.wait(timeout=5), "failed discovery never completed its pure fetch"
+    assert not failure_done.wait(timeout=0.2), "failure response read mixed state"
+    release_promote.set()
+    promote_thread.join(timeout=15)
+    failure_thread.join(timeout=15)
+
+    assert not promote_thread.is_alive() and not failure_thread.is_alive()
+    assert results["promote"]["ok"] is True
+    failure = results["failure"]
+    assert failure["ok"] is False
+    assert failure["active_surface_hash"] == candidate["candidate_surface_hash"]
+    assert failure["candidate"] is None
 
 
 def test_route_status_reports_active_candidate_and_history(admin_key):
