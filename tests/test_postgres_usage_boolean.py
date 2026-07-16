@@ -25,7 +25,7 @@ def _column_metadata(db, table: str, column: str):
     with db.get_conn() as conn:
         return conn.execute(
             """
-            SELECT data_type, column_default
+            SELECT data_type, column_default, is_nullable
               FROM information_schema.columns
              WHERE table_schema = current_schema()
                AND table_name = ?
@@ -79,8 +79,10 @@ def test_fresh_postgres_booleans_log_usage_and_persist_scan(empty_pg_db, monkeyp
     scan_column = _column_metadata(db, "scan_history", "is_threat")
     assert usage_column["data_type"] == "boolean"
     assert str(usage_column["column_default"]).lower().startswith("false")
+    assert usage_column["is_nullable"] == "NO"
     assert scan_column["data_type"] == "boolean"
     assert str(scan_column["column_default"]).lower().startswith("false")
+    assert scan_column["is_nullable"] == "NO"
 
     created = db.generate_key("free", label="fresh-postgres-usage")
     key = db.lookup_key(created["raw_key"])
@@ -135,7 +137,7 @@ def test_fresh_postgres_booleans_log_usage_and_persist_scan(empty_pg_db, monkeyp
     assert scan_row["is_threat"] is True
 
 
-def test_integer_persistence_columns_migrate_rows_and_second_init_is_noop(
+def test_nullable_integer_columns_migrate_rows_and_second_init_is_noop(
     empty_pg_db, monkeypatch
 ):
     import psycopg2
@@ -150,22 +152,25 @@ def test_integer_persistence_columns_migrate_rows_and_second_init_is_noop(
                 key_id INTEGER NOT NULL,
                 ts TEXT NOT NULL,
                 endpoint TEXT NOT NULL,
-                threat_blocked INTEGER NOT NULL DEFAULT 0
+                threat_blocked INTEGER DEFAULT 0
             )
             """)
         cursor.execute("""
             INSERT INTO usage_log (key_id, ts, endpoint, threat_blocked)
             VALUES (10, '2026-07-01T00:00:00+00:00', '/zero', 0),
                    (11, '2026-07-01T00:00:00+00:00', '/one', 1),
-                   (12, '2026-07-01T00:00:00+00:00', '/nonzero', -7)
+                   (12, '2026-07-01T00:00:00+00:00', '/nonzero', -7),
+                   (13, '2026-07-01T00:00:00+00:00', '/null', NULL)
             """)
         cursor.execute("""
             CREATE TABLE scan_history (
                 id SERIAL PRIMARY KEY,
-                is_threat INTEGER NOT NULL DEFAULT 0
+                is_threat INTEGER DEFAULT 0
             )
             """)
-        cursor.execute("INSERT INTO scan_history (is_threat) VALUES (0), (1), (9)")
+        cursor.execute(
+            "INSERT INTO scan_history (is_threat) VALUES (0), (1), (9), (NULL)"
+        )
     raw.close()
 
     db.init_db()
@@ -174,8 +179,10 @@ def test_integer_persistence_columns_migrate_rows_and_second_init_is_noop(
     scan_column = _column_metadata(db, "scan_history", "is_threat")
     assert usage_column["data_type"] == "boolean"
     assert str(usage_column["column_default"]).lower().startswith("false")
+    assert usage_column["is_nullable"] == "NO"
     assert scan_column["data_type"] == "boolean"
     assert str(scan_column["column_default"]).lower().startswith("false")
+    assert scan_column["is_nullable"] == "NO"
 
     with db.get_conn() as conn:
         usage_rows = conn.execute(
@@ -190,11 +197,13 @@ def test_integer_persistence_columns_migrate_rows_and_second_init_is_noop(
         (1, 10, False),
         (2, 11, True),
         (3, 12, True),
+        (4, 13, False),
     ]
     assert [(row["id"], row["is_threat"]) for row in scan_rows] == [
         (1, False),
         (2, True),
         (3, True),
+        (4, False),
     ]
 
     migration_calls = []
@@ -213,7 +222,89 @@ def test_integer_persistence_columns_migrate_rows_and_second_init_is_noop(
         ("scan_history", "is_threat", False),
     ]
     with db.get_conn() as conn:
-        assert conn.execute("SELECT COUNT(*) AS n FROM usage_log").fetchone()["n"] == 3
+        assert conn.execute("SELECT COUNT(*) AS n FROM usage_log").fetchone()["n"] == 4
         assert (
-            conn.execute("SELECT COUNT(*) AS n FROM scan_history").fetchone()["n"] == 3
+            conn.execute("SELECT COUNT(*) AS n FROM scan_history").fetchone()["n"] == 4
         )
+
+
+def test_nullable_boolean_columns_backfill_nulls_and_enforce_not_null(
+    empty_pg_db, monkeypatch
+):
+    import psycopg2
+
+    db = empty_pg_db
+    raw = psycopg2.connect(DB_URL)
+    raw.autocommit = True
+    with raw.cursor() as cursor:
+        cursor.execute("""
+            CREATE TABLE usage_log (
+                id SERIAL PRIMARY KEY,
+                key_id INTEGER NOT NULL,
+                ts TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                threat_blocked BOOLEAN DEFAULT FALSE
+            )
+            """)
+        cursor.execute("""
+            INSERT INTO usage_log (key_id, ts, endpoint, threat_blocked)
+            VALUES (20, '2026-07-01T00:00:00+00:00', '/false', FALSE),
+                   (21, '2026-07-01T00:00:00+00:00', '/true', TRUE),
+                   (22, '2026-07-01T00:00:00+00:00', '/null', NULL)
+            """)
+        cursor.execute("""
+            CREATE TABLE scan_history (
+                id SERIAL PRIMARY KEY,
+                is_threat BOOLEAN DEFAULT FALSE
+            )
+            """)
+        cursor.execute(
+            "INSERT INTO scan_history (is_threat) VALUES (FALSE), (TRUE), (NULL)"
+        )
+    raw.close()
+
+    db.init_db()
+
+    usage_column = _column_metadata(db, "usage_log", "threat_blocked")
+    scan_column = _column_metadata(db, "scan_history", "is_threat")
+    assert dict(usage_column) == {
+        "data_type": "boolean",
+        "column_default": "false",
+        "is_nullable": "NO",
+    }
+    assert dict(scan_column) == {
+        "data_type": "boolean",
+        "column_default": "false",
+        "is_nullable": "NO",
+    }
+
+    with db.get_conn() as conn:
+        usage_rows = conn.execute(
+            "SELECT id, key_id, threat_blocked FROM usage_log ORDER BY id"
+        ).fetchall()
+        scan_rows = conn.execute(
+            "SELECT id, is_threat FROM scan_history ORDER BY id"
+        ).fetchall()
+    assert [
+        (row["id"], row["key_id"], row["threat_blocked"]) for row in usage_rows
+    ] == [(1, 20, False), (2, 21, True), (3, 22, False)]
+    assert [(row["id"], row["is_threat"]) for row in scan_rows] == [
+        (1, False),
+        (2, True),
+        (3, False),
+    ]
+
+    migration_calls = []
+    original_migration = db._ensure_postgres_boolean_column
+
+    def record_migration(conn, table, column):
+        changed = original_migration(conn, table, column)
+        migration_calls.append((table, column, changed))
+        return changed
+
+    monkeypatch.setattr(db, "_ensure_postgres_boolean_column", record_migration)
+    db.init_db()
+    assert migration_calls == [
+        ("usage_log", "threat_blocked", False),
+        ("scan_history", "is_threat", False),
+    ]
