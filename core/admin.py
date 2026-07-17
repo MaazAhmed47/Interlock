@@ -272,6 +272,19 @@ def _admin_actor_event_fields(context: AdminContext) -> Dict[str, Any]:
     }
 
 
+def _retention_checkpoint_actor_fields(context: AdminContext) -> Dict[str, Any]:
+    """Minimal authenticated principal projection for durable prune checkpoints."""
+    actor = {
+        "actor_auth_type": context.auth_type,
+        "actor_role": context.role,
+    }
+    if context.auth_type == "scoped_token" and context.token_prefix:
+        actor["actor_token_prefix"] = context.token_prefix
+    elif context.auth_type == "oidc" and context.subject:
+        actor["actor_subject"] = context.subject
+    return actor
+
+
 def _audit_admin_action(
     context: AdminContext,
     action: str,
@@ -280,9 +293,14 @@ def _audit_admin_action(
     result: str = "success",
     reason: str = "",
     details: Optional[Dict[str, Any]] = None,
+    actor_fields: Optional[Dict[str, Any]] = None,
 ) -> None:
     try:
-        event = _admin_actor_event_fields(context)
+        event = (
+            dict(actor_fields)
+            if actor_fields is not None
+            else _admin_actor_event_fields(context)
+        )
         event.update(
             {
                 "action": action,
@@ -700,13 +718,15 @@ def prune_retention(
     context = _require_admin(
         x_admin_token, "retention:write", authorization=authorization
     )
-    result = db.prune_retention()
+    actor = _retention_checkpoint_actor_fields(context)
+    result = db.prune_retention(actor=actor)
     _audit_admin_action(
         context,
         "retention.pruned",
         "retention_policy",
         "default",
         details={k: v for k, v in result.items() if k != "policy"},
+        actor_fields=actor,
     )
     return result
 
