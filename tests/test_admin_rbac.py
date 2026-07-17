@@ -1,7 +1,10 @@
 """Tests for scoped admin tokens and admin RBAC."""
+
+import json
 import os
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -16,8 +19,8 @@ os.environ.pop("DATABASE_URL", None)
 TEST_DB = tempfile.mktemp(suffix="_admin_rbac_test.db")
 os.environ["FIREWALL_DB_PATH"] = TEST_DB
 
-from core import db
-from core import admin
+from core import admin  # noqa: E402
+from core import db  # noqa: E402
 
 ROOT_TOKEN = "root-admin-test-token"
 
@@ -104,6 +107,117 @@ def test_auditor_is_read_only():
     assert exc.value.status_code == 403
 
 
+def test_retention_checkpoint_actor_projection_excludes_email_and_extra_claims():
+    email = "operator@example.test"
+    context = admin.AdminContext(
+        auth_type="oidc",
+        role="operator",
+        label=email,
+        permissions={"retention:write"},
+        subject="oidc-principal-123",
+        email=email,
+    )
+
+    actor = admin._retention_checkpoint_actor_fields(context)
+
+    assert actor == {
+        "actor_auth_type": "oidc",
+        "actor_role": "operator",
+        "actor_subject": "oidc-principal-123",
+    }
+    assert email not in json.dumps(actor)
+
+
+def test_prune_retention_binds_authenticated_actor_to_checkpoint(tmp_path):
+    old_db_path = db.DB_PATH
+    db.DB_PATH = str(tmp_path / "retention_actor.db")
+    try:
+        db.init_db()
+        operator = db.generate_admin_token(label="retention-operator", role="operator")
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
+        current_ts = datetime.now(timezone.utc).isoformat()
+        db.log_mcp_audit_event(
+            {
+                "ts": old_ts,
+                "server_id": "retention-test",
+                "tool_name": "old-tool",
+                "role": "readonly_agent",
+                "action": "allow",
+            }
+        )
+        db.log_mcp_audit_event(
+            {
+                "ts": current_ts,
+                "server_id": "retention-test",
+                "tool_name": "current-tool",
+                "role": "readonly_agent",
+                "action": "allow",
+            }
+        )
+        db.log_admin_audit_event(
+            {
+                "ts": old_ts,
+                "actor_auth_type": "bootstrap",
+                "actor_role": "owner",
+                "action": "old-admin-event",
+            }
+        )
+        db.log_admin_audit_event(
+            {
+                "ts": current_ts,
+                "actor_auth_type": "bootstrap",
+                "actor_role": "owner",
+                "action": "current-admin-event",
+            }
+        )
+        db.set_retention_policy(
+            {
+                "scan_history_days": 30,
+                "mcp_audit_days": 30,
+                "admin_audit_days": 30,
+                "usage_log_days": 30,
+            }
+        )
+
+        result = admin.prune_retention(x_admin_token=operator["raw_token"])
+
+        assert result["mcp_audit_deleted"] == 1
+        assert result["admin_audit_deleted"] == 1
+        expected_actor = {
+            "actor_auth_type": "scoped_token",
+            "actor_role": "operator",
+            "actor_token_prefix": operator["token_prefix"],
+        }
+        with db.get_conn() as conn:
+            checkpoints = conn.execute(
+                "SELECT chain, actor FROM audit_chain_checkpoints ORDER BY chain"
+            ).fetchall()
+            audit_row = conn.execute("""
+                SELECT actor_auth_type, actor_role, actor_label, actor_email,
+                       actor_subject, actor_token_prefix, action
+                  FROM admin_audit_log
+                 WHERE action = 'retention.pruned'
+                 ORDER BY id DESC
+                 LIMIT 1
+                """).fetchone()
+        assert {row["chain"]: json.loads(row["actor"]) for row in checkpoints} == {
+            "admin_audit_log": expected_actor,
+            "mcp_audit_log": expected_actor,
+        }
+        assert all(operator["raw_token"] not in row["actor"] for row in checkpoints)
+        assert dict(audit_row) == {
+            **expected_actor,
+            "actor_label": "",
+            "actor_email": "",
+            "actor_subject": "",
+            "action": "retention.pruned",
+        }
+        assert operator["raw_token"] not in json.dumps(dict(audit_row))
+        assert db.verify_audit_chain()["valid"] is True
+    finally:
+        db.DB_PATH = old_db_path
+
+
 def test_revoked_admin_token_is_rejected():
     token = admin.create_admin_token(
         admin.CreateAdminTokenRequest(label="temporary-operator", role="operator"),
@@ -119,7 +233,9 @@ def test_revoked_admin_token_is_rejected():
 
 def test_scoped_token_still_works_after_bootstrap_token_removed():
     operator = admin.create_admin_token(
-        admin.CreateAdminTokenRequest(label="bootstrap-removed-operator", role="operator"),
+        admin.CreateAdminTokenRequest(
+            label="bootstrap-removed-operator", role="operator"
+        ),
         x_admin_token=ROOT_TOKEN,
     )
     old_admin_token = admin.ADMIN_TOKEN
