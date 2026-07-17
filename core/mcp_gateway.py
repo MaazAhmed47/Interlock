@@ -12,6 +12,7 @@ from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
 from core.tool_inspector import inspect_tool_call
 from core.tool_metadata import normalize_tool_metadata
 from core import db
+from core.ema_context import mark_authority_downstream_attempt
 from core.response_scanner import scan_injection, scan_pii_and_volume
 from core.effect_drift import (
     build_effect_profile,
@@ -1186,6 +1187,10 @@ async def proxy_mcp_tool_call(
                 "method": "tools/call",
                 "params": {"name": tool_name, "arguments": arguments},
             }
+            # The inbound EMA bearer credential never enters this header map.
+            # Mark the separately configured downstream identity only at the
+            # actual forwarding boundary.
+            mark_authority_downstream_attempt()
             resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
             resp.raise_for_status()
             if hasattr(resp, "content") and resp.content == b"":

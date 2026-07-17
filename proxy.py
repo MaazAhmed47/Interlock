@@ -14,6 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from core import db
 from core import rate_limit
 from core.detector import rule_based_scan
+from core.ema_config import load_experimental_ema_settings
 from core.learning import check_learned_patterns, learn_from_result
 from core.llm_judge import llm_judge_scan
 from core.pattern_matcher import pattern_match_scan
@@ -368,6 +369,7 @@ from routes import (  # noqa: E402
     admin_routes,
     audit as audit_routes,
     chat as chat_routes,
+    ema_mcp as ema_mcp_routes,
     mcp as mcp_routes,
     scan as scan_routes,
     system as system_routes,
@@ -380,6 +382,7 @@ app.include_router(scan_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(mcp_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(mcp_routes.control_plane_router)  # type: ignore[attr-defined,has-type]
 app.include_router(audit_routes.router)  # type: ignore[attr-defined,has-type]
+app.include_router(ema_mcp_routes.create_ema_router(load_experimental_ema_settings()))
 app.openapi = custom_openapi  # type: ignore[method-assign]
 
 # Backward-compatible aliases for tests and direct function callers.

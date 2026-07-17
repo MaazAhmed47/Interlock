@@ -220,6 +220,8 @@ def test_nullable_integer_columns_migrate_rows_and_second_init_is_noop(
     assert migration_calls == [
         ("usage_log", "threat_blocked", False),
         ("scan_history", "is_threat", False),
+        ("mcp_audit_log", "inbound_authority_forwarded", False),
+        ("mcp_audit_log", "downstream_authority_evaluated", False),
     ]
     with db.get_conn() as conn:
         assert conn.execute("SELECT COUNT(*) AS n FROM usage_log").fetchone()["n"] == 4
@@ -307,4 +309,6 @@ def test_nullable_boolean_columns_backfill_nulls_and_enforce_not_null(
     assert migration_calls == [
         ("usage_log", "threat_blocked", False),
         ("scan_history", "is_threat", False),
+        ("mcp_audit_log", "inbound_authority_forwarded", False),
+        ("mcp_audit_log", "downstream_authority_evaluated", False),
     ]

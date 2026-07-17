@@ -109,6 +109,24 @@ def _check_receipt_matches_row(
         compare(
             f"receipt_binding.{field}", presented_binding.get(field), recorded_value
         )
+    if row.get("hash_v") == 4:
+        compare("receipt_version", presented_receipt.get("version"), "4")
+        recorded_mcp = receipt_mod.derive_mcp_authority_context(row)
+        presented_mcp = presented_receipt.get("mcp") or {}
+        for field, recorded_value in recorded_mcp.items():
+            compare(
+                f"receipt_mcp.{field}",
+                presented_mcp.get(field),
+                recorded_value,
+            )
+        recorded_authority = receipt_mod.derive_authority_evidence(row)
+        presented_authority = presented_receipt.get("authority") or {}
+        for field, recorded_value in recorded_authority.items():
+            compare(
+                f"receipt_authority.{field}",
+                presented_authority.get(field),
+                recorded_value,
+            )
     return mismatches
 
 

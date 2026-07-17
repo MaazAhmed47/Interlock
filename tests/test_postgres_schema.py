@@ -50,6 +50,8 @@ def test_postgres_schema_conversion_removes_sqlite_only_constructs():
     assert "verified        BOOLEAN NOT NULL DEFAULT FALSE" in converted
     assert "threat_blocked  BOOLEAN NOT NULL DEFAULT FALSE" in converted
     assert "is_threat        BOOLEAN NOT NULL DEFAULT FALSE" in converted
+    assert "inbound_authority_forwarded BOOLEAN NOT NULL DEFAULT FALSE" in converted
+    assert "downstream_authority_evaluated BOOLEAN NOT NULL DEFAULT FALSE" in converted
     assert "threat_blocked  INTEGER NOT NULL DEFAULT 0" in db.SCHEMA
     assert "is_threat        INTEGER NOT NULL DEFAULT 0" in db.SCHEMA
     assert "is_threat   INTEGER NOT NULL DEFAULT 0" in converted

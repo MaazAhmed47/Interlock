@@ -414,12 +414,13 @@ def test_numeric_string_status_code_is_stored_as_integer_and_verifies():
 
 # ── exact hash-version enforcement ────────────────────────────────────────────
 
-INVALID_HASH_VERSIONS = [0, -1, 4, 99, "not-a-version"]
+INVALID_MCP_HASH_VERSIONS = [0, -1, 5, 99, "not-a-version"]
+INVALID_ADMIN_HASH_VERSIONS = [0, -1, 4, 99, "not-a-version"]
 
 
-@pytest.mark.parametrize("bad_version", INVALID_HASH_VERSIONS)
+@pytest.mark.parametrize("bad_version", INVALID_MCP_HASH_VERSIONS)
 def test_invalid_mcp_hash_version_fails_closed(bad_version):
-    """A stored hash_v outside exactly {1, 2, 3} must fail verification with
+    """A stored hash_v outside exactly {1, 2, 3, 4} must fail verification with
     a clean verdict — zero, negative, future, and malformed alike."""
     saved = _log_rich_mcp_event()
     _set_column("mcp_audit_log", "hash_v", bad_version, saved["id"])
@@ -435,7 +436,7 @@ def test_invalid_mcp_hash_version_fails_closed(bad_version):
     assert db.verify_audit_chain()["valid"] is True
 
 
-@pytest.mark.parametrize("bad_version", INVALID_HASH_VERSIONS)
+@pytest.mark.parametrize("bad_version", INVALID_ADMIN_HASH_VERSIONS)
 def test_invalid_admin_hash_version_fails_closed(bad_version):
     saved = _log_rich_admin_event()
     _set_column("admin_audit_log", "hash_v", bad_version, saved["id"])
