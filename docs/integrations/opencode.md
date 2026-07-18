@@ -1,6 +1,6 @@
 # OpenCode Integration
 
-OpenCode is an open-source coding agent that can use local and remote MCP servers. Interlock should not embed OpenCode or replace the Groq-backed LLM judge with it. The right integration is to let OpenCode call Interlock as an MCP tool provider, while Interlock remains the runtime security gateway.
+OpenCode is an open-source coding agent that can use local and remote MCP servers. Interlock should not embed OpenCode or replace the Groq-backed LLM judge with it. The right integration is to let OpenCode call Interlock as an MCP tool provider, while Interlock remains the MCP runtime trust layer.
 
 This gives a clear demo path:
 
@@ -126,4 +126,4 @@ OpenCode makes the Interlock value proposition concrete for developers. The codi
 - Did the response contain prompt injection, PII, secrets, or excessive data?
 - Is there audit evidence for the decision?
 
-That is the right integration boundary: OpenCode remains the agent, Interlock remains the runtime security gateway.
+That is the right integration boundary: OpenCode remains the agent, Interlock remains the MCP runtime trust layer.

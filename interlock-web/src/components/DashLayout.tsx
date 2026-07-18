@@ -388,7 +388,7 @@ export default function DashLayout() {
         <aside className="dash-sidebar">
           <a href="/" className="dash-logo" aria-label="Interlock landing page">
             Interlock
-            <div className="dash-logo-sub">Security Gateway</div>
+            <div className="dash-logo-sub">Runtime Trust</div>
           </a>
           <nav className="dash-nav">
             <div className="dash-nav-section">Dashboard</div>

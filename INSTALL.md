@@ -1,12 +1,28 @@
 # Interlock Deployment Guide
 
-Interlock is design-partner ready as a self-hosted runtime security gateway for AI agents. The safe default deployment is one gateway process, one persistent database volume, and explicit API keys.
+Interlock is an MCP runtime trust layer for AI agents. It detects material MCP tool drift after approval, including effective-permission expansion that static manifest comparison can miss, quarantines changed gateway-mediated calls before continued use, and emits hash-chained evidence.
 
 This guide is intentionally conservative. Do not run multiple workers or multiple replicas with the default SQLite and in-memory rate-limit state.
 
 ---
 
-## 2-Minute Docker Quickstart
+## Offline MCP drift proof
+
+Use the bundled non-production proof before evaluating supporting gateway controls:
+
+```bash
+cd demo/offline
+docker compose up -d --build
+docker compose run --rm demo-runner smoke
+docker compose run --rm demo-runner scenario-a
+docker compose run --rm demo-runner scenario-b
+```
+
+See [demo/offline/README.md](demo/offline/README.md) for the exact proof and its limits.
+
+---
+
+## Additional controls: gateway quickstart
 
 Recommended local path:
 

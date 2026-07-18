@@ -16,6 +16,7 @@ While the product is pre-1.0, breaking changes bump the minor version.
 | `interlock-web/package.json` | `version` |
 | `helm/Chart.yaml` | `version` and `appVersion` |
 | `proxy.py` | `FastAPI(version=...)` (shown in `/docs`) |
+| `routes/system.py` | anonymous root response `version` |
 | `core/siem.py` | `service.version` in the Elastic/ECS event |
 
 ## 3. Update `CHANGELOG.md`

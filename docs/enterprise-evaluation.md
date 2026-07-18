@@ -1,6 +1,6 @@
 # Enterprise Evaluation Guide
 
-This is the buyer-facing checklist for evaluating Interlock as a runtime security gateway for AI agents.
+This is the buyer-facing checklist for evaluating Interlock as an MCP runtime trust layer for AI agents.
 
 ---
 
@@ -83,11 +83,11 @@ A 7-day pilot should prove these outcomes:
 
 Use this order:
 
-1. Show the architecture diagram in the README.
-2. Run `python demo/mcp-drift-quarantine-demo.py`.
-3. Show the dashboard screenshot and audit log shape.
-4. Run the output scan proof with fake PII and prompt injection.
-5. Show `docs/policy-examples.md` for role-based enforcement.
-6. End with `docs/enterprise-evaluation.md` pilot criteria.
+1. Run the [offline MCP drift proof](../demo/offline/README.md#quickstart).
+2. Show capability drift quarantined before continued gateway-mediated use.
+3. Run the behavioral `403 denied -> 200 allowed` scenario with the same manifest.
+4. Inspect the Security Receipt and recompute its hash chain.
+5. State that receipts are not externally signed or independently anchored.
+6. Review output scanning and role policy only as additional controls.
 
 The point is not to claim perfection. The point is to show a control plane that catches real agent-to-tool risks that prompt filters miss.

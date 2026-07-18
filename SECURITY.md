@@ -1,6 +1,6 @@
 # Security Policy
 
-Interlock is a runtime security gateway for AI agents. It is intended to sit in sensitive paths between agents, MCP servers, APIs, databases, file systems, and internal tools, so security reports are treated as high priority.
+Interlock is an MCP runtime trust layer for AI agents. It is intended to sit in sensitive paths between agents, MCP servers, APIs, databases, file systems, and internal tools, so security reports are treated as high priority.
 
 ## Supported Status
 

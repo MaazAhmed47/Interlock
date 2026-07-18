@@ -3,8 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Interlock - Runtime trust for MCP tools after approval</title>
-  <meta name="description" content="Interlock detects when approved MCP tools drift in behavior, permissions, data access, external reach, or side effects, then quarantines risky changes before agents keep using them." />
+  <title>Interlock - MCP runtime trust layer for AI agents</title>
+  <meta name="description" content="Interlock detects material MCP tool drift after approval, including effective-permission expansion that static manifest comparison can miss, quarantines changed gateway-mediated calls before continued use, and emits hash-chained evidence." />
+  <link rel="canonical" href="https://getinterlock.dev/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://getinterlock.dev/" />
+  <meta property="og:title" content="Interlock - MCP runtime trust layer for AI agents" />
+  <meta property="og:description" content="Interlock detects material MCP tool drift after approval, including effective-permission expansion that static manifest comparison can miss, quarantines changed gateway-mediated calls before continued use, and emits hash-chained evidence." />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Interlock - MCP runtime trust layer for AI agents" />
+  <meta name="twitter:description" content="Interlock detects material MCP tool drift after approval, including effective-permission expansion that static manifest comparison can miss, quarantines changed gateway-mediated calls before continued use, and emits hash-chained evidence." />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" href="/favicon.svg" />
@@ -1732,13 +1740,12 @@
       <div class="nav-actions">
         <a class="btn btn-subtle" href="/dashboard/">Dashboard</a>
         <a class="btn btn-subtle" href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">Repo</a>
-        <button class="btn btn-primary" type="button" data-contact="pilot">Book pilot</button>
+        <a class="btn btn-primary" href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline#quickstart">Run the offline proof</a>
       </div>
 
       <button class="menu-toggle" id="menu-toggle" type="button" aria-label="Open menu" aria-controls="mobile-menu" aria-expanded="false">
         <span class="menu-lines" aria-hidden="true"><span></span><span></span><span></span></span>
       </button>
-      <button class="mobile-nav-cta" type="button" data-contact="pilot">Pilot</button>
     </div>
   </nav>
 
@@ -1750,17 +1757,17 @@
     <a href="#receipts">Receipts</a>
     <a href="#limits">Limits</a>
     <a href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">View GitHub repo</a>
-    <button class="btn btn-primary" type="button" data-contact="pilot">Book design partner pilot</button>
+    <a class="btn btn-primary" href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline#quickstart">Run the offline proof</a>
   </div>
 
   <main id="main">
     <header class="hero" id="top">
       <div class="shell hero-inner">
         <h1 class="reveal">Runtime trust for MCP tools after approval.</h1>
-        <p class="hero-lead reveal">Interlock detects when approved MCP tools drift in behavior, permissions, data access, external reach, or side effects &mdash; then quarantines risky changes before agents keep using them.</p>
+        <p class="hero-lead reveal">Interlock detects material MCP tool drift after approval, including effective-permission expansion that static manifest comparison can miss, quarantines changed gateway-mediated calls before continued use, and emits hash-chained evidence.</p>
         <div class="hero-actions reveal">
-          <button class="btn btn-primary" type="button" data-contact="pilot">Book design partner pilot <span class="arrow" aria-hidden="true">&rarr;</span></button>
-          <a class="btn btn-secondary" href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">View GitHub repo <span class="arrow" aria-hidden="true">&rarr;</span></a>
+          <a class="btn btn-primary" href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline#quickstart">Run the offline proof <span class="arrow" aria-hidden="true">&rarr;</span></a>
+          <button class="btn btn-secondary" type="button" data-contact="pilot">Discuss one MCP trust boundary</button>
         </div>
 
         <div class="hero-visual reveal" aria-label="Interlock runtime trust console">
@@ -2087,8 +2094,9 @@
           <article class="limit-panel reveal"><strong>Runtime trust layer</strong><p>Controls MCP tool drift at the agent execution boundary.</p></article>
           <article class="limit-panel reveal"><strong>Not SAST or DAST</strong><p>It does not replace source scanning, dependency scanning, or app testing.</p></article>
           <article class="limit-panel reveal"><strong>Not server hardening</strong><p>MCP servers still need auth, validation, isolation, and logs.</p></article>
-          <article class="limit-panel reveal"><strong>Pilot-stage</strong><p>Best suited for design partner and non-production proof work right now.</p></article>
+          <article class="limit-panel reveal"><strong>Pilot-stage</strong><p>Best suited for design-partner and non-production proof work right now.</p></article>
           <article class="limit-panel reveal"><strong>No certification claims</strong><p>No SOC 2, ISO, HIPAA, or GDPR certification claim is made.</p></article>
+          <article class="limit-panel reveal"><strong>Not externally signed</strong><p>Receipts are hash-chained and tamper-evident; they are not externally signed or independently anchored.</p></article>
         </div>
       </div>
     </section>
@@ -2098,8 +2106,8 @@
         <h2 class="section-title">Run one drift check before trusting many MCP tools.</h2>
         <p class="section-lead">Start with a non-production workflow. Baseline the approved tool, probe the runtime behavior, quarantine drift, and review the Security Receipt.</p>
         <div class="final-actions">
-          <button class="btn btn-primary" type="button" data-contact="drift">Run Drift Check <span class="arrow" aria-hidden="true">&rarr;</span></button>
-          <button class="btn btn-secondary" type="button" data-contact="pilot">Book design partner pilot</button>
+          <a class="btn btn-primary" href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline#quickstart">Run the offline proof <span class="arrow" aria-hidden="true">&rarr;</span></a>
+          <button class="btn btn-secondary" type="button" data-contact="pilot">Discuss one MCP trust boundary</button>
         </div>
       </div>
     </section>
@@ -2129,13 +2137,13 @@
         </div>
         <div>
           <h3>Docs</h3>
-          <a href="https://github.com/MaazAhmed47/Interlock#quick-start" target="_blank" rel="noopener">Quick start</a>
+          <a href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline#quickstart">Offline proof</a>
           <a href="https://interlock.onrender.com/docs" target="_blank" rel="noopener">API reference</a>
           <a href="/dashboard/">Dashboard</a>
         </div>
         <div>
           <h3>Contact</h3>
-          <button class="btn btn-subtle" type="button" data-contact="pilot">Book pilot</button>
+          <button class="btn btn-subtle" type="button" data-contact="pilot">Discuss one MCP trust boundary</button>
           <a href="mailto:maaz@getinterlock.dev">maaz@getinterlock.dev</a>
           <a href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">View GitHub repo</a>
         </div>
@@ -2150,17 +2158,17 @@
   <div class="contact-modal" id="contact-modal" role="dialog" aria-modal="true" aria-labelledby="contact-title" hidden>
     <div class="contact-card">
       <button class="contact-close" type="button" aria-label="Close contact modal">&times;</button>
-      <p class="section-kicker">Pilot request</p>
-      <h2 id="contact-title">Book a focused Interlock pilot.</h2>
-      <p id="contact-copy">Start with one non-production MCP workflow. We baseline the approved tool, run a safe drift probe, review the quarantine decision, and inspect the Security Receipt.</p>
+      <p class="section-kicker">Boundary discussion</p>
+      <h2 id="contact-title">Discuss one MCP trust boundary.</h2>
+      <p id="contact-copy">After the offline proof, bring one non-production MCP workflow. A design-partner evaluation can focus on its approved boundary, drift signal, quarantine decision, and hash-chained evidence.</p>
       <a class="contact-email" href="mailto:maaz@getinterlock.dev">maaz@getinterlock.dev</a>
       <div class="contact-actions">
         <button class="btn btn-secondary" id="copy-email" type="button">Copy email</button>
-        <a class="btn btn-primary" id="open-email" href="mailto:maaz@getinterlock.dev?subject=Interlock%20Design%20Partner%20Pilot">Open email fallback</a>
+        <a class="btn btn-primary" id="open-email" href="mailto:maaz@getinterlock.dev?subject=Interlock%20MCP%20Trust%20Boundary">Open email fallback</a>
       </div>
       <div class="message-box">
         <span>Suggested message</span>
-        <pre id="suggested-message">Hi Maaz, we operate agents against MCP tools we do not fully control. I would like to run a non-production drift check on one workflow.</pre>
+        <pre id="suggested-message">Hi Maaz, we operate agents against MCP tools we do not fully control. I would like to discuss one non-production MCP trust boundary.</pre>
       </div>
     </div>
   </div>
@@ -2182,18 +2190,11 @@
 
       const flows = {
         pilot: {
-          kicker: 'Pilot request',
-          title: 'Book a focused Interlock pilot.',
-          copy: 'Start with one non-production MCP workflow. We baseline the approved tool, run a safe drift probe, review the quarantine decision, and inspect the Security Receipt.',
-          subject: 'Interlock Design Partner Pilot',
-          message: 'Hi Maaz, we operate agents against MCP tools we do not fully control. I would like to run a non-production drift check on one workflow.'
-        },
-        drift: {
-          kicker: 'Drift check',
-          title: 'Run one MCP drift check.',
-          copy: 'Send a candidate non-production MCP workflow. Interlock will show baseline behavior, runtime probe behavior, quarantine decisioning, and receipt evidence.',
-          subject: 'Run Interlock Drift Check',
-          message: 'Hi Maaz, I want to run an Interlock drift check. The MCP workflow I would like to test is:'
+          kicker: 'Boundary discussion',
+          title: 'Discuss one MCP trust boundary.',
+          copy: 'After the offline proof, bring one non-production MCP workflow. A design-partner evaluation can focus on its approved boundary, drift signal, quarantine decision, and hash-chained evidence.',
+          subject: 'Interlock MCP Trust Boundary',
+          message: 'Hi Maaz, we operate agents against MCP tools we do not fully control. I would like to discuss one non-production MCP trust boundary.'
         }
       };
 
