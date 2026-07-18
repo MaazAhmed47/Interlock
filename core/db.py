@@ -63,10 +63,8 @@ KNOWN_UNAPPROVED_EXTERNAL_SERVER_IDS = {"asmi-demo"}
 KNOWN_UNAPPROVED_EXTERNAL_HOSTS = {"broen.tech"}
 DISPOSABLE_FIXTURE_SERVER_RE = re.compile(r"^m\d+$")
 PUBLIC_MOCK_HOST_SUFFIXES = (".web.val.run", ".localhost.run")
-DEFAULT_MCP_REGISTRATION_ALLOWED_HOSTS = {
-    "mcp.acme-corp.internal",
-}
-DEFAULT_MCP_REGISTRATION_ALLOWED_SUFFIXES = PUBLIC_MOCK_HOST_SUFFIXES
+DEFAULT_MCP_REGISTRATION_ALLOWED_HOSTS: set[str] = set()
+DEFAULT_MCP_REGISTRATION_ALLOWED_SUFFIXES: tuple[str, ...] = ()
 PRODUCTION_DATABASE_MARKERS = (
     "supabase.co",
     "supabase.com",
@@ -146,9 +144,6 @@ def validate_mcp_registration_target(server_id: str, url: str) -> None:
             "Supabase/production DATABASE_URL."
         )
     if not host or _is_loopback_host(host):
-        return
-
-    if sid in INTENDED_DEMO_SERVER_IDS:
         return
 
     allowed_hosts = _configured_allowed_mcp_hosts()
@@ -3695,7 +3690,11 @@ def _promote_rebaseline_candidate_locked(
 
 
 def seed_mcp_servers() -> None:
-    """Idempotent seed of the two pre-configured MCP servers. Safe to call on every startup."""
+    """
+    Seed the two bundled demo servers for explicit offline-demo/reset flows.
+
+    This is idempotent, but normal application startup must not call it.
+    """
     seeds = [
         {
             "server_id": "trusted-filesystem",
