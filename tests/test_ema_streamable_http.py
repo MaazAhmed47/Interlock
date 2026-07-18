@@ -8,7 +8,8 @@ import os
 import secrets
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -71,6 +72,9 @@ def _settings():
             }
         }
     )
+    raw["INTERLOCK_EMA_UNAUTHENTICATED_RATE_LIMIT"] = "4"
+    raw["INTERLOCK_EMA_AUTHENTICATED_RATE_LIMIT"] = "12"
+    raw["INTERLOCK_EMA_RATE_LIMIT_MAX_KEYS"] = "32"
     value = load_experimental_ema_settings(raw)
     assert value is not None
     return value
@@ -83,6 +87,9 @@ class EndpointHarness:
     jwks: CountingJWKS
     gateway_calls: list[dict]
     downstream_credential_digest: str
+    sessions: EMASessionStore
+    settings: Any = None
+    authenticated_limiter: Any = None
 
     def token(self, **claims):
         return self.issuer.token(claims=self.issuer.claims(**claims))
@@ -191,6 +198,18 @@ def endpoint(monkeypatch):
         cache=TrustedJWKSCache(settings, transport=jwks.transport()),
     )
     sessions = EMASessionStore(settings)
+    from core.ema_rate_limit import BoundedWindowLimiter
+
+    unauthenticated_limiter = BoundedWindowLimiter(
+        limit=settings.unauthenticated_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+        max_keys=settings.rate_limit_max_keys,
+    )
+    authenticated_limiter = BoundedWindowLimiter(
+        limit=settings.authenticated_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+        max_keys=settings.rate_limit_max_keys,
+    )
     calls: list[dict] = []
 
     async def fake_gateway(**kwargs):
@@ -234,6 +253,8 @@ def endpoint(monkeypatch):
             settings,
             validator=validator,
             sessions=sessions,
+            unauthenticated_limiter=unauthenticated_limiter,
+            authenticated_limiter=authenticated_limiter,
         )
     )
     with TestClient(app) as client:
@@ -243,6 +264,9 @@ def endpoint(monkeypatch):
             jwks,
             calls,
             downstream_credential_digest,
+            sessions,
+            settings,
+            authenticated_limiter,
         )
 
     db.unregister_mcp_server(SERVER_ID)
@@ -265,6 +289,76 @@ def test_disabled_endpoint_registers_no_transport_or_metadata_routes():
         client.get("/.well-known/oauth-protected-resource/experimental/mcp").status_code
         == 404
     )
+
+
+@pytest.mark.parametrize("resource_path", ["/mcp/call", "/scan", "/health"])
+def test_ema_resource_path_cannot_collide_with_existing_routes(resource_path):
+    from core.ema_config import EMAConfigError
+    from proxy import app
+    from routes.ema_mcp import include_experimental_ema_router
+
+    settings = replace(
+        _settings(),
+        resource_uri=f"https://interlock.example{resource_path}",
+        resource_path=resource_path,
+        protected_resource_metadata_path=(
+            f"/.well-known/oauth-protected-resource{resource_path}"
+        ),
+    )
+    with pytest.raises(EMAConfigError, match="route collision"):
+        include_experimental_ema_router(app, settings)
+
+
+def test_ema_metadata_path_cannot_collide_with_existing_get_route():
+    from core.ema_config import EMAConfigError
+    from routes.ema_mcp import include_experimental_ema_router
+
+    app = FastAPI()
+    app.add_api_route(
+        "/.well-known/oauth-protected-resource/experimental/mcp",
+        lambda: {"existing": True},
+        methods=["GET"],
+    )
+    with pytest.raises(EMAConfigError, match="route collision"):
+        include_experimental_ema_router(app, _settings())
+
+
+def test_ema_resource_path_cannot_collide_with_parameterized_existing_route():
+    from core.ema_config import EMAConfigError
+    from routes.ema_mcp import include_experimental_ema_router
+
+    app = FastAPI()
+    app.add_api_route("/mcp/{operation}", lambda: None, methods=["POST"])
+    settings = replace(
+        _settings(),
+        resource_uri="https://interlock.example/mcp/call",
+        resource_path="/mcp/call",
+        protected_resource_metadata_path=(
+            "/.well-known/oauth-protected-resource/mcp/call"
+        ),
+    )
+    with pytest.raises(EMAConfigError, match="route collision"):
+        include_experimental_ema_router(app, settings)
+
+
+def test_non_conflicting_ema_endpoint_registers_transport_and_metadata_routes():
+    from routes.ema_mcp import include_experimental_ema_router
+
+    app = FastAPI()
+    app.add_api_route("/mcp/call", lambda: None, methods=["POST"])
+    include_experimental_ema_router(app, _settings())
+    registered = {
+        (route.path, method)
+        for route in app.routes
+        for method in (getattr(route, "methods", set()) or set())
+    }
+    assert (RESOURCE_PATH, "POST") in registered
+    assert (RESOURCE_PATH, "GET") in registered
+    assert (RESOURCE_PATH, "DELETE") in registered
+    assert (
+        "/.well-known/oauth-protected-resource/experimental/mcp",
+        "GET",
+    ) in registered
 
 
 def test_protected_resource_metadata_is_exact_and_unprotected(endpoint):
@@ -315,6 +409,95 @@ def test_initialize_returns_standard_result_and_server_generated_session(endpoin
             ),
         },
     }
+
+
+@pytest.mark.parametrize(
+    "declared_length",
+    [str((256 * 1024) + 1), "9" * 5000],
+)
+def test_oversized_content_length_is_rejected_before_body_or_session_processing(
+    endpoint,
+    monkeypatch,
+    declared_length,
+):
+    session_lookups = []
+
+    async def unexpected_session_lookup(*args, **kwargs):
+        session_lookups.append((args, kwargs))
+        raise AssertionError("oversized request reached session lookup")
+
+    monkeypatch.setattr(endpoint.sessions, "authorize", unexpected_session_lookup)
+    token = endpoint.token()
+    headers = endpoint.headers(
+        token,
+        session_id="opaque-session-that-must-not-be-read",
+        protocol=True,
+    )
+    headers["Content-Length"] = declared_length
+    response = endpoint.client.post(
+        RESOURCE_PATH,
+        headers=headers,
+        content=b"{}",
+    )
+    assert response.status_code == 413
+    assert response.json() == {"error": "request_body_too_large"}
+    assert session_lookups == []
+    assert endpoint.gateway_calls == []
+    assert db.list_mcp_audit_logs(limit=100) == []
+
+
+def test_chunked_oversized_body_is_rejected_by_streaming_cap(
+    endpoint,
+    monkeypatch,
+):
+    session_lookups = []
+    observed_content_lengths = []
+
+    async def unexpected_session_lookup(*args, **kwargs):
+        session_lookups.append((args, kwargs))
+        raise AssertionError("oversized request reached session lookup")
+
+    monkeypatch.setattr(endpoint.sessions, "authorize", unexpected_session_lookup)
+    from routes import ema_mcp
+
+    original_reader = ema_mcp._read_bounded_json_rpc_body
+
+    async def observing_reader(request, maximum):
+        observed_content_lengths.extend(
+            value
+            for name, value in request.scope["headers"]
+            if name.lower() == b"content-length"
+        )
+        return await original_reader(request, maximum)
+
+    monkeypatch.setattr(
+        ema_mcp,
+        "_read_bounded_json_rpc_body",
+        observing_reader,
+    )
+    token = endpoint.token()
+    headers = endpoint.headers(
+        token,
+        session_id="opaque-session-that-must-not-be-read",
+        protocol=True,
+    )
+    headers["Transfer-Encoding"] = "chunked"
+
+    def oversized_chunks():
+        yield b"{" + (b"x" * (128 * 1024))
+        yield b"x" * (128 * 1024)
+
+    response = endpoint.client.post(
+        RESOURCE_PATH,
+        headers=headers,
+        content=oversized_chunks(),
+    )
+    assert response.status_code == 413
+    assert response.json() == {"error": "request_body_too_large"}
+    assert observed_content_lengths == []
+    assert session_lookups == []
+    assert endpoint.gateway_calls == []
+    assert db.list_mcp_audit_logs(limit=100) == []
 
 
 @pytest.mark.parametrize(
@@ -389,6 +572,163 @@ def test_bearer_validation_precedes_json_parsing_and_session_lookup(endpoint):
     )
     assert malformed.status_code == 401
     assert malformed.json()["error"] == "invalid_token"
+
+
+@pytest.mark.parametrize("same_value", [True, False])
+def test_duplicate_authorization_headers_are_rejected_before_all_trust_work(
+    endpoint,
+    monkeypatch,
+    same_value,
+):
+    session_lookups = []
+
+    async def unexpected_session_lookup(*args, **kwargs):
+        session_lookups.append((args, kwargs))
+        raise AssertionError("duplicate Authorization reached session lookup")
+
+    monkeypatch.setattr(endpoint.sessions, "authorize", unexpected_session_lookup)
+    first = endpoint.token()
+    second = first if same_value else endpoint.token(sub="employee-conflict")
+    headers = [
+        ("Authorization", f"Bearer {first}"),
+        ("Authorization", f"Bearer {second}"),
+        ("Accept", "application/json, text/event-stream"),
+        ("Content-Type", "application/json"),
+        ("MCP-Session-Id", "must-not-be-read"),
+        ("MCP-Protocol-Version", PROTOCOL_VERSION),
+    ]
+    response = endpoint.client.post(
+        RESOURCE_PATH,
+        headers=headers,
+        content=b"{not-json",
+    )
+    assert response.status_code == 401
+    assert response.json() == {"error": "invalid_token"}
+    assert endpoint.jwks.calls == 0
+    assert session_lookups == []
+    assert endpoint.gateway_calls == []
+    assert db.list_mcp_audit_logs(limit=100) == []
+
+
+def test_unauthenticated_denial_rate_limit_bounds_audit_and_jwks_by_client_host(
+    endpoint,
+):
+    assert endpoint.settings is not None
+    limit = endpoint.settings.unauthenticated_rate_limit
+    for index in range(limit):
+        response = endpoint.client.post(
+            RESOURCE_PATH,
+            headers={
+                **endpoint.headers("not-a-jwt"),
+                "X-Forwarded-For": f"198.51.100.{index + 1}",
+            },
+            content=b"{not-json",
+        )
+        assert response.status_code == 401
+        assert response.json() == {"error": "invalid_token"}
+
+    before = len(db.list_mcp_audit_logs(limit=100))
+    assert before == limit
+    assert endpoint.jwks.calls == 0
+
+    response = endpoint.client.post(
+        RESOURCE_PATH,
+        headers={
+            **endpoint.headers(endpoint.token()),
+            "X-Forwarded-For": "203.0.113.250",
+        },
+        content=b"{not-json",
+    )
+    assert response.status_code == 401
+    assert response.json() == {"error": "invalid_token"}
+    assert len(db.list_mcp_audit_logs(limit=100)) == before
+    assert endpoint.jwks.calls == 0
+    assert endpoint.gateway_calls == []
+
+
+def test_authenticated_rate_limit_uses_only_verified_hmac_identity_bindings(
+    endpoint,
+):
+    assert endpoint.settings is not None
+    assert endpoint.authenticated_limiter is not None
+    token = endpoint.token(scope="files:list")
+    _, session_id = endpoint.initialize(token)
+    consumed_by_initialize = 2
+    for request_id in range(
+        endpoint.settings.authenticated_rate_limit - consumed_by_initialize
+    ):
+        response = endpoint.client.post(
+            RESOURCE_PATH,
+            headers=endpoint.headers(
+                token,
+                session_id=session_id,
+                protocol=True,
+            ),
+            json={
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/list",
+                "params": {},
+            },
+        )
+        assert response.status_code == 200
+
+    original_authorize = endpoint.sessions.authorize
+
+    async def unexpected_session_lookup(*args, **kwargs):
+        raise AssertionError("rate-limited request reached session lookup")
+
+    endpoint.sessions.authorize = unexpected_session_lookup
+    audit_rows_before = len(db.list_mcp_audit_logs(limit=100))
+    try:
+        denied = endpoint.client.post(
+            RESOURCE_PATH,
+            headers=endpoint.headers(
+                endpoint.token(scope="files:list"),
+                session_id=session_id,
+                protocol=True,
+            ),
+            json={
+                "jsonrpc": "2.0",
+                "id": "rate-limited",
+                "method": "tools/list",
+                "params": {},
+            },
+        )
+    finally:
+        endpoint.sessions.authorize = original_authorize
+    assert denied.status_code == 429
+    assert denied.json() == {"error": "rate_limit_exceeded"}
+    assert endpoint.gateway_calls == []
+    assert len(db.list_mcp_audit_logs(limit=100)) == audit_rows_before
+
+    other_subject = "employee-other"
+    alternative_tokens = [
+        endpoint.token(
+            client_id=CLIENT_ONE,
+            sub=other_subject,
+            scope="files:list",
+        ),
+        endpoint.token(
+            client_id=CLIENT_TWO,
+            sub=endpoint.issuer.subject,
+            scope="files:list",
+        ),
+    ]
+    for alternative_token in alternative_tokens:
+        initialized, _other_session = endpoint.initialize(alternative_token)
+        assert initialized == alternative_token
+
+    limiter_state = json.dumps(
+        endpoint.authenticated_limiter.safe_keys(),
+        sort_keys=True,
+    )
+    assert token not in limiter_state
+    assert all(value not in limiter_state for value in alternative_tokens)
+    assert CLIENT_ONE not in limiter_state
+    assert CLIENT_TWO not in limiter_state
+    assert endpoint.issuer.subject not in limiter_state
+    assert other_subject not in limiter_state
 
 
 def test_missing_bearer_is_401_with_metadata_challenge(endpoint):

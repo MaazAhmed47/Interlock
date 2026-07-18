@@ -57,7 +57,17 @@ an unlisted `Origin` are rejected.
 
 The optional `nbf` and `iat` requirements, maximum token age, session lifetime,
 JWKS refresh cooldown, negative-cache lifetime, and negative-cache capacity
-are deployment-level settings. There is no tenant configuration model.
+are deployment-level settings. `INTERLOCK_EMA_JSON_RPC_BODY_MAX_BYTES`
+defaults to 256 KiB and is accepted only from 1 KiB through 1 MiB. The
+unauthenticated and authenticated request budgets, fixed-window duration, and
+bounded limiter-key capacity are also validated deployment-level settings.
+There is no tenant configuration model.
+
+Before registration, startup checks the configured resource path for POST,
+GET, and DELETE collisions and the protected-resource metadata path for GET
+collisions against the already-registered route table. Any exact or
+parameterized route match fails startup. Router ordering is not used to resolve
+a collision.
 
 ## Access-token profile
 
@@ -78,11 +88,42 @@ and individual JWKs are bounded before expensive processing. Unknown key IDs
 share a single-flight refresh, cooldown, bounded negative cache, and rate
 limit.
 
-Every protected POST, GET, and DELETE validates `Authorization: Bearer` before
-body parsing, session lookup, discovery, policy evaluation, or downstream
-work. GET returns 405 because server-to-client SSE is not implemented. The
-existing proprietary `POST /mcp/call` remains API-key-only and cannot create
-EMA authority evidence.
+Every protected POST, GET, and DELETE requires exactly one raw ASGI
+`Authorization` header and validates `Authorization: Bearer` before body
+parsing, session lookup, discovery, policy evaluation, or downstream work.
+Duplicate or conflicting Authorization headers are denied before JWKS work
+and do not create authority audit evidence. GET returns 405 because
+server-to-client SSE is not implemented. The existing proprietary
+`POST /mcp/call` remains API-key-only and cannot create EMA authority
+evidence.
+
+POST rejects an excessive `Content-Length` before consuming the body and also
+uses a streaming capped reader, so chunked framing cannot bypass the JSON-RPC
+body limit. An oversized request receives a constant 413 response without
+JSON parsing, session lookup, downstream execution, or any audit claim derived
+from request-body data.
+
+## Pilot availability boundary
+
+The experiment uses two bounded, fail-closed in-process fixed-window limiters:
+
+- Unauthenticated validation attempts are keyed only by
+  `request.client.host`. `Forwarded` and `X-Forwarded-For` are not trusted.
+  Successful validation refunds its provisional attempt. Once a host exhausts
+  the denial budget, further requests receive the same bounded 401 without
+  another JWKS operation or unverified-authority audit row.
+- Authenticated requests are keyed only by the verified OAuth-client and
+  delegated-subject HMAC bindings and their key IDs. Raw tokens, client IDs,
+  subjects, email, and claims never enter limiter state. Excess verified
+  requests receive a bounded 429 before session, discovery, policy, audit, or
+  downstream work.
+
+Both limiter maps have a configured maximum key count. New keys fail closed
+when that capacity is full; keys are not evicted to admit attacker-controlled
+cardinality. These budgets are per process and suitable only for a bounded
+pilot. Multi-replica or production use still requires trusted edge rate
+limits, coordinated storage, and an explicit trusted-proxy design before any
+forwarded client-address header can be used.
 
 ## Identity and session boundary
 
@@ -105,9 +146,8 @@ still referenced by a live session cannot be retired unless those sessions are
 explicitly terminated.
 
 Expired in-memory sessions are purged during lookup, authorization, rotation,
-and new session creation. Deployments still need edge request/rate limits
-appropriate to their pilot size; the experimental in-memory session store is
-single-process and is not a multi-replica session service.
+and new session creation. The experimental in-memory session store and
+request limiters are single-process and are not multi-replica services.
 
 Tool discovery filters out tools whose exact configured scopes are not
 present. Calls repeat the same exact mapping check. There are no wildcard,

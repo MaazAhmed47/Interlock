@@ -11,8 +11,9 @@ import uuid
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from starlette.routing import Match
 
 from core import db
 from core.ema_auth import (
@@ -24,8 +25,9 @@ from core.ema_auth import (
     bind_oauth_client,
     extract_bearer_token,
 )
-from core.ema_config import EMASettings
+from core.ema_config import EMAConfigError, EMASettings
 from core.ema_context import authority_audit_scope
+from core.ema_rate_limit import BoundedWindowLimiter
 from core.ema_sessions import EMASessionError, EMASessionStore
 from core.mcp_gateway import proxy_mcp_tool_call
 from core import drift_evidence
@@ -91,15 +93,60 @@ def _challenge(settings: EMASettings, *, error: Optional[str] = None) -> str:
     return "Bearer " + ", ".join(parts)
 
 
+def _authorization_denial(
+    settings: EMASettings,
+    *,
+    code: str = "invalid_token",
+    status_code: int = 401,
+) -> Response:
+    return _error(
+        code,
+        status_code,
+        {
+            "WWW-Authenticate": _challenge(
+                settings,
+                error="invalid_token",
+            )
+        },
+    )
+
+
 async def _authenticate(
     request: Request,
     settings: EMASettings,
     validator: EMAAccessTokenValidator,
-) -> tuple[Optional[str], Optional[VerifiedAuthority], Optional[Response]]:
+    unauthenticated_limiter: BoundedWindowLimiter,
+) -> tuple[
+    Optional[str],
+    Optional[VerifiedAuthority],
+    Optional[Response],
+    Optional[str],
+    bool,
+]:
     """Validate bearer credentials before any body or session processing."""
+    client_host = request.client.host if request.client is not None else ""
+    if not await unauthenticated_limiter.allow(client_host):
+        return None, None, _authorization_denial(settings), None, False
+
+    authorization_values = [
+        value
+        for name, value in request.scope.get("headers", [])
+        if name.lower() == b"authorization"
+    ]
+    if len(authorization_values) > 1:
+        return (
+            None,
+            None,
+            _authorization_denial(settings),
+            "invalid_authorization_header_count",
+            False,
+        )
+    authorization = (
+        authorization_values[0].decode("latin-1") if authorization_values else None
+    )
     try:
         token = extract_bearer_token(
-            request.headers.get("authorization"),
+            authorization,
             settings,
         )
         authority = await validator.validate_token(token)
@@ -107,18 +154,48 @@ async def _authenticate(
         return (
             None,
             None,
-            _error(
-                exc.code,
-                exc.status_code,
-                {
-                    "WWW-Authenticate": _challenge(
-                        settings,
-                        error="invalid_token",
-                    )
-                },
+            _authorization_denial(
+                settings,
+                code=exc.code,
+                status_code=exc.status_code,
             ),
+            exc.code,
+            True,
         )
-    return token, authority, None
+    await unauthenticated_limiter.refund(client_host)
+    return token, authority, None, None, False
+
+
+async def _authenticated_rate_error(
+    settings: EMASettings,
+    authority: VerifiedAuthority,
+    limiter: BoundedWindowLimiter,
+) -> Optional[Response]:
+    client = bind_oauth_client(
+        settings,
+        authority.issuer,
+        authority.client_id,
+    )
+    subject = bind_delegated_subject(
+        settings,
+        authority.issuer,
+        authority.subject,
+    )
+    key = (
+        client.algorithm,
+        client.key_id,
+        client.value,
+        subject.algorithm,
+        subject.key_id,
+        subject.value,
+    )
+    if await limiter.allow(key):
+        return None
+    return _error(
+        "rate_limit_exceeded",
+        429,
+        {"Retry-After": str(settings.rate_limit_window_seconds)},
+    )
 
 
 def _origin_error(request: Request, settings: EMASettings) -> Optional[Response]:
@@ -141,6 +218,41 @@ def _transport_headers_error(request: Request) -> Optional[Response]:
     if content_type.strip().lower() != "application/json":
         return _error("invalid_content_type", 415)
     return None
+
+
+async def _read_bounded_json_rpc_body(
+    request: Request,
+    maximum: int,
+) -> tuple[Optional[bytes], Optional[Response]]:
+    """Read at most ``maximum`` bytes without trusting transfer framing."""
+    content_lengths = [
+        value
+        for name, value in request.scope.get("headers", [])
+        if name.lower() == b"content-length"
+    ]
+    if len(content_lengths) > 1:
+        return None, _error("invalid_content_length", 400)
+    if content_lengths:
+        try:
+            raw_length = content_lengths[0].decode("ascii")
+        except UnicodeDecodeError:
+            return None, _error("invalid_content_length", 400)
+        if not raw_length.isdigit():
+            return None, _error("invalid_content_length", 400)
+        normalized_length = raw_length.lstrip("0") or "0"
+        maximum_text = str(maximum)
+        if len(normalized_length) > len(maximum_text) or (
+            len(normalized_length) == len(maximum_text)
+            and normalized_length > maximum_text
+        ):
+            return None, _error("request_body_too_large", 413)
+
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(chunk) > maximum - len(body):
+            return None, _error("request_body_too_large", 413)
+        body.extend(chunk)
+    return bytes(body), None
 
 
 async def _authorized_session(
@@ -366,6 +478,8 @@ def create_ema_router(
     *,
     validator: Optional[EMAAccessTokenValidator] = None,
     sessions: Optional[EMASessionStore] = None,
+    unauthenticated_limiter: Optional[BoundedWindowLimiter] = None,
+    authenticated_limiter: Optional[BoundedWindowLimiter] = None,
 ) -> APIRouter:
     """Build no routes unless the complete experimental profile is enabled."""
     router = APIRouter()
@@ -374,6 +488,16 @@ def create_ema_router(
 
     validator = validator or EMAAccessTokenValidator(settings)
     sessions = sessions or EMASessionStore(settings)
+    unauthenticated_limiter = unauthenticated_limiter or BoundedWindowLimiter(
+        limit=settings.unauthenticated_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+        max_keys=settings.rate_limit_max_keys,
+    )
+    authenticated_limiter = authenticated_limiter or BoundedWindowLimiter(
+        limit=settings.authenticated_rate_limit,
+        window_seconds=settings.rate_limit_window_seconds,
+        max_keys=settings.rate_limit_max_keys,
+    )
 
     @router.get(
         settings.protected_resource_metadata_path,
@@ -399,23 +523,44 @@ def create_ema_router(
         if origin_error is not None:
             return origin_error
 
-        raw_token, authority, auth_error = await _authenticate(
+        (
+            raw_token,
+            authority,
+            auth_error,
+            auth_failure_code,
+            audit_auth_failure,
+        ) = await _authenticate(
             request,
             settings,
             validator,
+            unauthenticated_limiter,
         )
         if auth_error is not None:
-            failure = _response_error_code(auth_error, "invalid_token")
-            _audit_unverified_denial(settings, failure)
+            if audit_auth_failure and auth_failure_code is not None:
+                _audit_unverified_denial(settings, auth_failure_code)
             return auth_error
         assert raw_token is not None and authority is not None
+        rate_error = await _authenticated_rate_error(
+            settings,
+            authority,
+            authenticated_limiter,
+        )
+        if rate_error is not None:
+            return rate_error
 
         header_error = _transport_headers_error(request)
         if header_error is not None:
             return header_error
 
-        # The body is deliberately first touched only after credential validation.
-        body = await request.body()
+        # The body is deliberately first touched only after credential validation,
+        # and never materialized beyond the configured cap.
+        body, body_error = await _read_bounded_json_rpc_body(
+            request,
+            settings.json_rpc_body_max_bytes,
+        )
+        if body_error is not None:
+            return body_error
+        assert body is not None
         try:
             message = json.loads(body)
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -674,18 +819,30 @@ def create_ema_router(
         origin_error = _origin_error(request, settings)
         if origin_error is not None:
             return origin_error
-        raw_token, authority, auth_error = await _authenticate(
+        (
+            raw_token,
+            authority,
+            auth_error,
+            auth_failure_code,
+            audit_auth_failure,
+        ) = await _authenticate(
             request,
             settings,
             validator,
+            unauthenticated_limiter,
         )
         if auth_error is not None:
-            _audit_unverified_denial(
-                settings,
-                _response_error_code(auth_error, "invalid_token"),
-            )
+            if audit_auth_failure and auth_failure_code is not None:
+                _audit_unverified_denial(settings, auth_failure_code)
             return auth_error
         assert raw_token is not None and authority is not None
+        rate_error = await _authenticated_rate_error(
+            settings,
+            authority,
+            authenticated_limiter,
+        )
+        if rate_error is not None:
+            return rate_error
         _, session_error = await _authorized_session(
             request,
             settings,
@@ -712,18 +869,30 @@ def create_ema_router(
         origin_error = _origin_error(request, settings)
         if origin_error is not None:
             return origin_error
-        raw_token, authority, auth_error = await _authenticate(
+        (
+            raw_token,
+            authority,
+            auth_error,
+            auth_failure_code,
+            audit_auth_failure,
+        ) = await _authenticate(
             request,
             settings,
             validator,
+            unauthenticated_limiter,
         )
         if auth_error is not None:
-            _audit_unverified_denial(
-                settings,
-                _response_error_code(auth_error, "invalid_token"),
-            )
+            if audit_auth_failure and auth_failure_code is not None:
+                _audit_unverified_denial(settings, auth_failure_code)
             return auth_error
         assert raw_token is not None and authority is not None
+        rate_error = await _authenticated_rate_error(
+            settings,
+            authority,
+            authenticated_limiter,
+        )
+        if rate_error is not None:
+            return rate_error
         session, session_error = await _authorized_session(
             request,
             settings,
@@ -744,3 +913,42 @@ def create_ema_router(
         return Response(status_code=204)
 
     return router
+
+
+def include_experimental_ema_router(
+    app: FastAPI,
+    settings: Optional[EMASettings],
+) -> None:
+    """Register EMA routes only after proving they cannot shadow existing routes."""
+    if settings is None:
+        return
+    candidates = (
+        (
+            settings.resource_path,
+            ("POST", "GET", "DELETE"),
+        ),
+        (
+            settings.protected_resource_metadata_path,
+            ("GET",),
+        ),
+    )
+    for path, methods in candidates:
+        for method in methods:
+            scope = {
+                "type": "http",
+                "path": path,
+                "raw_path": path.encode("ascii"),
+                "root_path": "",
+                "method": method,
+                "scheme": "https",
+                "query_string": b"",
+                "headers": [],
+                "app": app,
+            }
+            for route in app.routes:
+                match, _child_scope = route.matches(scope)
+                if match is Match.FULL:
+                    raise EMAConfigError(
+                        "Experimental EMA route collision for " f"{method} {path}."
+                    )
+    app.include_router(create_ema_router(settings))

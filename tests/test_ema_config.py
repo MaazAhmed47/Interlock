@@ -219,6 +219,53 @@ def test_valid_settings_pin_the_only_profile_and_algorithm():
     )
     assert settings.session_lifetime_seconds > 0
     assert settings.authorization_header_max_bytes == 16 * 1024
+    assert settings.json_rpc_body_max_bytes == 256 * 1024
+    assert settings.unauthenticated_rate_limit == 20
+    assert settings.authenticated_rate_limit == 120
+    assert settings.rate_limit_window_seconds == 60
+    assert settings.rate_limit_max_keys == 4096
+
+
+@pytest.mark.parametrize("value", ["0", "1023", "1048577", "not-an-integer"])
+def test_json_rpc_body_limit_override_is_bounded(value):
+    from core.ema_config import EMAConfigError, load_experimental_ema_settings
+
+    raw = valid_raw_config()
+    raw["INTERLOCK_EMA_JSON_RPC_BODY_MAX_BYTES"] = value
+    with pytest.raises(EMAConfigError):
+        load_experimental_ema_settings(raw)
+
+
+def test_json_rpc_body_limit_accepts_conservative_bounded_override():
+    from core.ema_config import load_experimental_ema_settings
+
+    raw = valid_raw_config()
+    raw["INTERLOCK_EMA_JSON_RPC_BODY_MAX_BYTES"] = str(64 * 1024)
+    settings = load_experimental_ema_settings(raw)
+    assert settings is not None
+    assert settings.json_rpc_body_max_bytes == 64 * 1024
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("INTERLOCK_EMA_UNAUTHENTICATED_RATE_LIMIT", "0"),
+        ("INTERLOCK_EMA_UNAUTHENTICATED_RATE_LIMIT", "1001"),
+        ("INTERLOCK_EMA_AUTHENTICATED_RATE_LIMIT", "0"),
+        ("INTERLOCK_EMA_AUTHENTICATED_RATE_LIMIT", "10001"),
+        ("INTERLOCK_EMA_RATE_LIMIT_WINDOW_SECONDS", "0"),
+        ("INTERLOCK_EMA_RATE_LIMIT_WINDOW_SECONDS", "3601"),
+        ("INTERLOCK_EMA_RATE_LIMIT_MAX_KEYS", "15"),
+        ("INTERLOCK_EMA_RATE_LIMIT_MAX_KEYS", "65537"),
+    ],
+)
+def test_rate_limit_configuration_is_bounded(field, value):
+    from core.ema_config import EMAConfigError, load_experimental_ema_settings
+
+    raw = valid_raw_config()
+    raw[field] = value
+    with pytest.raises(EMAConfigError):
+        load_experimental_ema_settings(raw)
 
 
 def test_optional_time_validation_controls_are_bounded_and_consistent():

@@ -80,6 +80,11 @@ class EMASettings:
     session_lifetime_seconds: int
     clock_skew_seconds: int
     authorization_header_max_bytes: int
+    json_rpc_body_max_bytes: int
+    unauthenticated_rate_limit: int
+    authenticated_rate_limit: int
+    rate_limit_window_seconds: int
+    rate_limit_max_keys: int
     compact_jwt_max_bytes: int
     jwt_header_segment_max_bytes: int
     jwt_payload_segment_max_bytes: int
@@ -422,6 +427,41 @@ def load_experimental_ema_settings(
         ),
         clock_skew_seconds=60,
         authorization_header_max_bytes=16 * 1024,
+        json_rpc_body_max_bytes=_bounded_int(
+            values,
+            "INTERLOCK_EMA_JSON_RPC_BODY_MAX_BYTES",
+            256 * 1024,
+            minimum=1024,
+            maximum=1024 * 1024,
+        ),
+        unauthenticated_rate_limit=_bounded_int(
+            values,
+            "INTERLOCK_EMA_UNAUTHENTICATED_RATE_LIMIT",
+            20,
+            minimum=1,
+            maximum=1000,
+        ),
+        authenticated_rate_limit=_bounded_int(
+            values,
+            "INTERLOCK_EMA_AUTHENTICATED_RATE_LIMIT",
+            120,
+            minimum=1,
+            maximum=10_000,
+        ),
+        rate_limit_window_seconds=_bounded_int(
+            values,
+            "INTERLOCK_EMA_RATE_LIMIT_WINDOW_SECONDS",
+            60,
+            minimum=1,
+            maximum=3600,
+        ),
+        rate_limit_max_keys=_bounded_int(
+            values,
+            "INTERLOCK_EMA_RATE_LIMIT_MAX_KEYS",
+            4096,
+            minimum=16,
+            maximum=65_536,
+        ),
         compact_jwt_max_bytes=12 * 1024,
         jwt_header_segment_max_bytes=2 * 1024,
         jwt_payload_segment_max_bytes=8 * 1024,

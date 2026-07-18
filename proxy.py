@@ -382,7 +382,10 @@ app.include_router(scan_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(mcp_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(mcp_routes.control_plane_router)  # type: ignore[attr-defined,has-type]
 app.include_router(audit_routes.router)  # type: ignore[attr-defined,has-type]
-app.include_router(ema_mcp_routes.create_ema_router(load_experimental_ema_settings()))
+ema_mcp_routes.include_experimental_ema_router(
+    app,
+    load_experimental_ema_settings(),
+)
 app.openapi = custom_openapi  # type: ignore[method-assign]
 
 # Backward-compatible aliases for tests and direct function callers.
