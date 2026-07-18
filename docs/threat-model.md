@@ -1,6 +1,6 @@
 # Interlock Threat Model
 
-Interlock is a runtime security gateway for AI agents. It sits between agents and MCP servers or tool APIs and makes an allow, deny, monitor, or quarantine decision before or after tool execution depending on the control.
+Interlock is an MCP runtime trust layer for AI agents. It sits between agents and MCP servers or tool APIs and makes an allow, deny, monitor, or quarantine decision before or after tool execution depending on the control.
 
 ---
 

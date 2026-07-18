@@ -1,6 +1,6 @@
 apiVersion: v2
 name: interlock
-description: Runtime security gateway for AI agents — stop prompt injections, jailbreaks, PII leaks, and tool-call abuse before they reach your LLM
+description: MCP runtime trust layer for AI agents
 type: application
 version: 0.2.0-alpha.1
 appVersion: "0.2.0-alpha.1"

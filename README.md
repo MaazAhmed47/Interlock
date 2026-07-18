@@ -4,60 +4,47 @@
 
 [![CI](https://github.com/MaazAhmed47/Interlock/actions/workflows/tests.yml/badge.svg)](https://github.com/MaazAhmed47/Interlock/actions)
 [![Quality](https://img.shields.io/badge/quality-ruff%20%7C%20black%20%7C%20mypy%20%7C%20tests-green)](https://github.com/MaazAhmed47/Interlock/actions)
-[![Version](https://img.shields.io/badge/version-0.1.0-blue)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
-Interlock is a self-hosted MCP runtime trust layer for AI agents.
+**MCP runtime trust layer for AI agents.**
 
-It detects when approved MCP tools change their schema, data access, external reach, side effects, auth scope, or behavior after approval, then can hold or quarantine risky changes before execution and preserve audit evidence.
+Interlock detects material MCP tool drift after approval, including effective-permission expansion that static manifest comparison can miss, quarantines changed gateway-mediated calls before continued use, and emits hash-chained evidence.
 
-**Live proof:** behavioral drift caught and quarantined: same tool, same manifest, expected `403 denied` → observed `200 allowed`, with hash-chain verified receipt evidence.
+Current source metadata is `0.2.0-alpha.1`. This identifies the source tree; it is not a published GitHub release. See [GitHub Releases](https://github.com/MaazAhmed47/Interlock/releases) for published artifacts.
 
-_Pre-release, design-partner stage — self-hosted, for trying drift detection on one non-production MCP workflow. [Quick start ↓](#quick-start)_
-
-[![Interlock Demo](./docs/assets/proof/interlock_thumbnail.png)](https://youtu.be/zYDgD8Eo7uc)
-
-### Stop MCP tools from doing what they were never approved to do.
-
-Interlock focuses on post-approval tool and capability drift: the changes that happen after an MCP tool has already been trusted. It can still enforce policy, scan responses, and record audit evidence, but the core question is whether the tool is still inside the approved trust boundary.
-
-**Live at: https://getinterlock.dev**
-
-[![GitHub](https://img.shields.io/badge/GitHub-Interlock-181717?logo=github)](https://github.com/MaazAhmed47/Interlock)
-[![Status](https://img.shields.io/badge/status-pre--release-blue)](#current-state)
-[![MCP](https://img.shields.io/badge/MCP-security%20gateway-00b894)](#mcp-security-controls)
-[![Pilot](https://img.shields.io/badge/design%20partners-open-7c3aed)](https://calendly.com/maazahmed1856/interlock-demo-15-min)
-
-[Product Brief](https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664) ·
-[2-Minute Integration](#2-minute-chat-proxy-integration) ·
-[10-Minute Evaluation](docs/evaluator-quickstart.md) ·
-[Live-Proven Behavioral Drift](#live-proven-behavioral-drift) ·
-[Local Control-Plane Evaluation](docs/local-agent-control-plane-drift-evaluation.md) ·
-[Watch 2-min Demo](https://youtu.be/zYDgD8Eo7uc) ·
-[Drift Decision Object](docs/drift-decision-object.md) ·
-[Runtime Governance](docs/agentic-runtime-governance.md) ·
-[MCP Runtime Security Threat Model](docs/mcp-runtime-security-threat-model.md) ·
-[OWASP MCP Coverage](docs/interlock-owasp-mcp-coverage.md) ·
-[MCP Threat Map](docs/mcp-threat-map.md) ·
-[Enterprise Evaluation](docs/enterprise-evaluation.md) ·
-[Production Readiness](docs/production-readiness.md) ·
-[Compliance Posture](docs/compliance-posture.md) ·
-[Security Policy](SECURITY.md) ·
-[Book Pilot Call](https://calendly.com/maazahmed1856/interlock-demo-15-min)
+**Public origin:** https://getinterlock.dev
 
 </div>
 
----
+## Run the offline proof
 
-## Verified Status
-| Check | Status |
-|-------|--------|
-| Backend tests | CI suite passing |
-| Code quality | ruff · black · mypy (core/routes) |
-| Docker build | passing |
-| Live demo | getinterlock.dev |
-| Behavioral drift proof | expected 403 denied → observed 200 allowed; quarantined with receipt evidence |
-| Last verified | June 2026 |
+The first proof is the bundled MCP drift demo, not the separate prompt-scan path:
+
+```bash
+git clone https://github.com/MaazAhmed47/Interlock.git
+cd Interlock/demo/offline
+docker compose up -d --build
+docker compose run --rm demo-runner smoke
+docker compose run --rm demo-runner scenario-a
+docker compose run --rm demo-runner scenario-b
+```
+
+This runs the real proof sequence: approved tool → material capability drift → quarantine before a changed gateway-mediated call continues → Security Receipt → hash-chain verification. `scenario-b` adds the behavioral case that static manifest comparison misses: the same tool and schema move from expected `403 denied` to observed `200 allowed`.
+
+See the [offline demo instructions](demo/offline/README.md#quickstart) for the command reference, fixed ports, reset procedure, and exact proof limits.
+
+## Current limits
+
+- The proof uses a bundled mock MCP server. Everything after discovery/probing uses the real drift, quarantine, audit, and verification paths.
+- Enforcement and execution claims cover calls mediated by the Interlock gateway. Bypassing the gateway is outside its evidence boundary.
+- Security Receipts are tamper-evident and hash-chained. They are not externally signed or independently anchored.
+- This is pre-release software for self-hosted or isolated non-production evaluation, not a production-readiness or compliance claim.
+
+## Evaluate one non-production boundary
+
+Run the offline proof first. If it matches a real risk, [discuss one MCP trust boundary](mailto:maaz@getinterlock.dev?subject=Interlock%20MCP%20Trust%20Boundary). A design-partner evaluation is secondary and stays scoped to one non-production workflow.
+
+[![Interlock Demo](./docs/assets/proof/interlock_thumbnail.png)](https://youtu.be/zYDgD8Eo7uc)
 
 ---
 
@@ -110,23 +97,7 @@ Example: you approved a read-only MCP tool for internal documents. Later, the sa
 
 ---
 
-## Quick start
-
-After cloning the repo, run the local gateway quick start:
-
-```bash
-./scripts/quickstart.sh
-```
-
-Windows PowerShell:
-
-```powershell
-.\scripts\quickstart.ps1
-```
-
-The script creates `.env` if needed, starts the gateway, waits for `/health`, and runs a blocked-prompt smoke test. For the full evaluation path, use the [10-minute evaluator quickstart](docs/evaluator-quickstart.md).
-
-### Testing an authenticated hosted MCP safely
+## Testing an authenticated hosted MCP safely
 
 For any hosted MCP endpoint that requires bearer or API-key auth, store the token in your local `.env`; do not paste raw tokens into Interlock server config, tickets, screenshots, or public docs:
 
@@ -156,9 +127,9 @@ Use a non-production workflow only. Baseline a safe read-only tool, then make or
 
 ---
 
-## Design Partner Pilot
+## Evaluation fit
 
-I'm looking for 2-3 AI-agent teams, MCP gateway/platform builders, internal platform teams, or security engineers this week to test Interlock on one real non-production MCP workflow.
+After the offline proof, a design-partner evaluation can test Interlock on one real non-production MCP workflow.
 
 Best fit:
 
@@ -170,8 +141,7 @@ Best fit:
 Pilot mode:
 Self-hosted, local, or isolated demo environment only.
 
-Interested?
-Email: `maaz@getinterlock.dev`
+To discuss one boundary, email `maaz@getinterlock.dev`.
 
 ---
 
@@ -184,7 +154,6 @@ Interlock is built around that runtime control gap for MCP agents:
 * baseline approved MCP tools
 * detect post-approval tool/schema drift
 * enforce quarantine before execution
-* scan prompts and responses
 * produce audit evidence for runtime decisions
 
 Interlock is not affiliated with or endorsed by OWASP. The mapping above describes alignment with public agentic security guidance.
@@ -269,7 +238,7 @@ Interlock/
 ├── models/
 │   └── schemas.py            # Shared Pydantic schemas — ScanResult, ThreatLevel, ResponseScanResult
 ├── interlock-web/            # React dashboard — Vite + TypeScript, drift review and operational views
-├── tests/                    # 297 test cases covering drift, MCP gateway, RBAC, provenance, response scan, and more
+├── tests/                    # Regression suites for drift, MCP gateway, RBAC, provenance, response scan, and more
 ├── helm/                     # Kubernetes Helm chart — HPA, PDB, NetworkPolicy, ServiceMonitor
 ├── demo/                     # Runnable demos (mcp-drift-quarantine-demo.py requires no LLM keys)
 ├── docs/                     # Architecture docs, OWASP MCP coverage, threat model, and evaluation guides
@@ -317,9 +286,9 @@ Now an agent calling `refund_user(amount=99999)` is denied before execution — 
 
 ---
 
-## Latest Release
+## Version and releases
 
-[v0.1.0 — First Pilot-Ready Release](https://github.com/MaazAhmed47/Interlock/releases/tag/v0.1.0)
+The current source metadata is `0.2.0-alpha.1` in `pyproject.toml`, `interlock-web/package.json`, and `helm/Chart.yaml`. That alpha identifier is not a formal GitHub release. Published artifacts, when available, are listed on [GitHub Releases](https://github.com/MaazAhmed47/Interlock/releases).
 
 ---
 
@@ -343,7 +312,11 @@ Interlock gives teams one place to inspect agent tool calls, MCP drift, runtime 
 
 ---
 
-## 2-Minute Chat Proxy Integration
+## Additional controls
+
+Prompt scanning, output scanning, RBAC, and the OpenAI-compatible chat proxy are supporting controls. They are separate from the MCP drift proof above.
+
+### Chat proxy quickstart
 
 For OpenAI-compatible apps, Interlock can be evaluated with one local command after cloning the repo:
 
@@ -377,11 +350,11 @@ and audit policy. A `role` sent in an `/mcp/call` body is ignored.
 
 ---
 
-## 10-Minute Integration Quickstart
+### Full gateway setup
 
 This path proves the two things a CTO or developer usually cares about first: Interlock can sit inline with minimal code changes, and every decision is explainable.
 
-### 1. Run the gateway
+#### 1. Run the gateway
 
 ```bash
 git clone https://github.com/MaazAhmed47/Interlock
@@ -398,7 +371,7 @@ curl http://localhost:8001/health
 
 For a real chat-completion forward, add your upstream provider key to `.env` before starting, for example `OPENAI_API_KEY=...`. Without an upstream key, Interlock still scans and returns a safe placeholder response instead of forwarding to the provider.
 
-### 2. Verify a blocked prompt
+#### 2. Verify a blocked prompt
 
 Local evaluation should use a key you generate or a local key printed by your setup flow. Do not reuse public demo keys.
 
@@ -411,7 +384,7 @@ curl -X POST http://localhost:8001/scan \
 
 Expected: `is_threat: true`, `safe_to_proceed: false`, a threat type, a layer, a reason, scan time, and risk score.
 
-### 3. Use the OpenAI SDK through Interlock
+#### 3. Use the OpenAI SDK through Interlock
 
 ```python
 import os
@@ -430,7 +403,7 @@ response = client.chat.completions.create(
 
 Set `INTERLOCK_KEY=<YOUR_INTERLOCK_API_KEY>` locally after generating your own key with the admin endpoint. The application keeps using an OpenAI-compatible client; Interlock becomes the gateway.
 
-### 4. Create a real evaluation key
+#### 4. Create a real evaluation key
 
 Set `ADMIN_TOKEN` in `.env`, restart the gateway, then use it once to issue a scoped admin token. Use that scoped token for day-to-day key management. Raw tokens and customer keys are returned once; only hashes are stored.
 
@@ -470,7 +443,7 @@ second. Runtime keys intentionally receive HTTP 403 on MCP control-plane
 routes: register, verify, rebaseline, approve, quarantine, unregister, and
 global audit listing.
 
-### 5. Try the MCP gateway path
+#### 5. Try the MCP gateway path
 
 Register a server policy and inspect the inventory:
 
@@ -493,7 +466,7 @@ curl -X POST http://localhost:8001/mcp/validate-tool \
   -d '{"tool_definition":{"name":"export_ledger","description":"Export finance rows to an external email address","inputSchema":{"type":"object","properties":{"email":{"type":"string"},"include_private":{"type":"boolean"}}}}}'
 ```
 
-### 6. Open the dashboard
+#### 6. Open the dashboard
 
 ```bash
 cd interlock-web
@@ -526,7 +499,7 @@ Open an issue, start a discussion, or reach out from the links above.
 
 ---
 
-## Why Teams Pilot Interlock
+## What to evaluate
 
 Interlock is strongest when agents are close to real systems: databases, Slack, files, ticketing, deployment tools, finance data, or internal APIs. A buyer should be able to prove value quickly by seeing:
 
@@ -591,9 +564,9 @@ What to verify before production:
 
 ---
 
-## What Interlock Is
+## What Interlock is
 
-Interlock is a self-hosted runtime security gateway for teams deploying AI agents across MCP servers, APIs, databases, file systems, and business tools.
+Interlock detects material MCP tool drift after approval, including effective-permission expansion that static manifest comparison can miss, quarantines changed gateway-mediated calls before continued use, and emits hash-chained evidence.
 
 It is built for the agent path, not just prompt filtering. The main security surface is `POST /mcp/call`, where Interlock checks server trust, tool whitelist rules, tool metadata, schema drift, provenance, RBAC, tool-call arguments, and MCP responses before returning anything to the agent.
 
@@ -981,7 +954,7 @@ Do not reuse a key copied from public docs.
 
 ---
 
-## Quick Proofs
+## Additional control proofs
 
 ### Prompt scan
 
@@ -1076,7 +1049,7 @@ proxy.py           FastAPI entrypoint and OpenAI-compatible proxy routes
 
 ## Test Suite
 
-Current passing suites:
+Run focused suites:
 
 ```bash
 pytest tests/test_response_scanner.py
@@ -1088,25 +1061,9 @@ pytest tests/test_provenance.py
 pytest tests/test_shadow_scanner.py
 ```
 
-Verified in the latest local run:
+Run the complete current suite with `python3 -m pytest tests -q -s`. Use the [CI workflow](https://github.com/MaazAhmed47/Interlock/actions/workflows/tests.yml) for the current pass/fail result instead of a hard-coded test total.
 
-| Command | Result |
-|---|---:|
-| `python3 -m pytest tests -q -s` | 297 test cases |
-
-Selected suite counts from the current project state:
-
-| Suite | Count |
-|---|---:|
-| `tests/test_response_scanner.py` | 14 |
-| `tests/test_mcp_gateway.py` | 31 |
-| `tests/test_mcp_registry_audit.py` | 9 |
-| `tests/test_mcp_review_api.py` | 6 |
-| `tests/test_new_routes.py` | 23 |
-| `tests/test_provenance.py` | 14 |
-| `tests/test_shadow_scanner.py` | 13 |
-
-Additional legacy/regression tests exist for DB behavior, judge fail modes, webhooks, metadata policy, MCP DB helpers, metadata normalization, and drift.
+Additional regression tests cover DB behavior, judge fail modes, webhooks, metadata policy, MCP DB helpers, metadata normalization, and drift.
 
 ---
 
@@ -1192,7 +1149,7 @@ Common variables:
 
 ## Current State
 
-Interlock is pre-release and design-partner ready.
+Interlock is pre-release and intended for self-hosted or isolated non-production evaluation.
 
 Working now:
 
@@ -1216,7 +1173,7 @@ For active roadmap work, see GitHub issues and discussions.
 ## Project Links
 
 - GitHub: https://github.com/MaazAhmed47/Interlock
-- Product brief: https://interlock-security.notion.site/Interlock-Runtime-Security-Gateway-for-AI-Agents-35a82dc0e7c380efb499dbef25046664
+- Offline proof: [demo/offline/README.md](demo/offline/README.md)
 - Founder email: maaz@getinterlock.dev
 
 ---

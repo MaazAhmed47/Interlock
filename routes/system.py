@@ -13,7 +13,7 @@ router = APIRouter()
 def root():
     return {
         "status": "Interlock gateway running",
-        "version": "0.1.0",
+        "version": "0.2.0-alpha.1",
         "endpoints": {
             "openai_proxy": "POST /v1/chat/completions",
             "direct_scan": "POST /scan",
