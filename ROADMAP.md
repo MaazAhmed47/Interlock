@@ -2,9 +2,9 @@
 
 Interlock is an MCP runtime trust layer for AI agents, currently at
 `0.2.0-alpha.1`. This document states plainly what works today, what the
-known limitations are, and what is planned. It exists so that anyone
+known limitations are, and what is deferred. It exists so that anyone
 evaluating Interlock knows exactly where the boundaries are without having
-to discover them. No dates are attached to planned work; items ship when
+to discover them. No dates are attached to deferred work; items ship when
 they are actually done.
 
 ## What's proven today
@@ -31,8 +31,11 @@ whole directory in CI), and reproducible end-to-end in the offline demo:
   argument set, or tool surface.
 - **Self-serve offline demo.** A docker-compose stack (gateway, mock MCP
   server, dashboard) that reproduces the full loop — approve, drift,
-  quarantine, receipt, offline receipt verification — with no network access
-  and no account.
+  quarantine, receipt, offline receipt verification — with no hosted
+  dependency at runtime after initial provisioning and no account. Demo
+  fixtures and credentials are explicit opt-in, all published ports are
+  loopback-bound, only the bundled `mcp-mock` host is allowlisted, and
+  production/hosted startup fails closed if offline-demo mode is enabled.
 
 ## Known limitations (acknowledged)
 
@@ -72,27 +75,86 @@ than find them in a pilot.
   backed by the test suite and demo, not yet by published precision/recall
   and latency numbers on a stated corpus.
 
-## Planned
+## Deferred work
 
-In rough priority order; each item closes a limitation above.
+This is a finite, staged backlog, not a claim that these capabilities are
+already shipped. It does not block a controlled non-production evaluation
+unless an item is directly relevant to that evaluation's scope.
 
-- **Official MCP SDK adoption and transport completeness.** Build the
-  gateway's MCP surface on the official SDK; support Streamable HTTP and
-  stdio transports and correct session lifecycle handling, verified against
-  SDK-based reference servers.
-- **Signed and externally anchored receipts.** Key-based signatures over
-  receipt content and periodic anchoring of the chain head outside the
-  primary database, so verification does not depend on trusting the
-  database.
-- **Identity-bound authorization hardening.** Bind tool approvals and
-  probes to the acting principal (agent identity, scopes) rather than the
-  API key alone, and tighten the control-plane authorization model.
-- **Tenant isolation.** A real multi-tenant story for the hosted path:
-  isolated storage, per-tenant limits, and per-tenant audit chains.
-- **Published detection benchmarks.** Precision/recall on a published
-  drift/injection corpus and latency distributions per scan layer, updated
-  per release, so "it detects drift" is a measured claim.
-- **Pre-execution effect controls.** Narrow the first-call effect-drift
-  window (e.g. enforced dry-run modes, effect-class argument gating) so
-  outcome drift can be held before the upstream call, not only after
-  observation.
+### 1. Before a production pilot
+
+- **DNS-aware outbound SSRF containment.** Resolve hostnames before
+  connecting; deny private, loopback, link-local, multicast, and cloud
+  metadata addresses; bound and revalidate redirects; and defend against
+  DNS rebinding.
+- **Streaming upstream response limits.** Enforce byte and time budgets
+  while reading upstream responses, before decompression, JSON parsing, or
+  inspection can consume an unbounded payload.
+- **Learning-mode decision.** Either remove learned patterns from
+  enforcement or make learning mode explicit, disabled by default,
+  auditable, and operator-approved.
+- **Idempotency and retry semantics.** Define safe duplicate and retry
+  behavior for registration, approval, rebaseline, quarantine, and every
+  audit-producing write.
+- **Operational health surface.** Add a non-secret build/version endpoint,
+  readiness checks for required dependencies, and bounded security metrics
+  that do not expose credentials, prompts, tool arguments, or responses.
+- **Controlled single-tenant pilot threat model.** Document and validate
+  gateway-only routing, egress, credential storage, trusted administrators,
+  backup/restore, incident handling, and explicit non-goals.
+- **Official MCP SDK and transport completeness where required.** Adopt
+  and verify official SDK transports, sessions, and lifecycle behavior only
+  to the extent required by a real pilot, using SDK-based reference servers.
+
+### 2. Authority and receipt evidence
+
+- **Externally signed and anchored receipts.** Define signatures, external
+  anchoring, key rotation, verifier trust roots, and compromise handling so
+  verification does not depend on trusting the primary database.
+- **Principal-bound authority evidence.** Bind approvals, probes, and
+  receipts to authenticated principals and their scopes. Caller-supplied
+  identity must never be accepted as authority evidence.
+- **Real enterprise-managed authorization integration.** Claim ID-JAG or
+  enterprise-managed authorization only after integration with a real
+  issuer, audience, client, and resource server. Mock-only paths must remain
+  disabled by default and must not be described as interoperable support.
+- **Evidence lifecycle guarantees.** Specify and test retention, deletion,
+  export, restore, and historical-verification behavior.
+
+### 3. Detection and enforcement quality
+
+- **Published detection benchmarks.** Publish precision, recall, and
+  latency results on a stated, versioned corpus so detection claims are
+  measurable and reproducible.
+- **Principled closure of adversarial gaps.** Resolve the documented
+  `xfail` cases for description exfiltration, indirect authorization
+  widening, egress verbs, and safety-positive schema changes without
+  replacing them with brittle keyword exceptions.
+- **Pre-execution effect controls.** Narrow the first-call outcome-drift
+  window with enforceable dry-run or effect-class controls that can hold a
+  risky call before upstream execution.
+- **Distributed abuse controls.** Add shared rate limiting and abuse
+  controls before any multi-replica hosted deployment.
+
+### 4. Hosting and operational scale
+
+- **Tenant isolation when required.** Add isolated storage, encryption,
+  limits, and audit boundaries before hosting mutually distrusting
+  customers; do not imply that current per-key separation provides this.
+- **Managed secret lifecycle.** Define least-privilege access, secure
+  storage, rotation, revocation, and end-to-end redaction coverage.
+- **Production-like data operations.** Test database migrations, rollback,
+  backup, restore, and lock budgets under representative production-style
+  conditions.
+- **Supply-chain release controls.** Establish dependency policy,
+  SBOM/provenance generation, vulnerability triage, image verification, and
+  reproducible release evidence.
+
+### 5. Demo and claim hygiene
+
+- **Preserve the shipped offline-demo boundary.** Offline fixtures,
+  credentials, and mock hosts must remain explicit opt-in and
+  loopback-bound; hosted/production startup must continue to fail closed if
+  demo mode is enabled, and normal startup must not seed demo data.
+- **Claim-to-proof matrix.** Maintain a versioned mapping that distinguishes
+  mock-only, offline-only, pilot-only, and production-verified evidence.
