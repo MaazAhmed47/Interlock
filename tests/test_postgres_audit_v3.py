@@ -231,6 +231,26 @@ def _count(pg_db, table):
     return int(dict(row)["n"])
 
 
+def _pg_v4_context():
+    from tests.test_ema_audit_v4 import _verified_context
+
+    return _verified_context()
+
+
+def _log_mcp_v4(pg_db, days_ago=0, seq=0):
+    from core.ema_context import authority_audit_scope
+
+    call_id = f"pg-v4-call-{days_ago}-{seq}"
+    with authority_audit_scope(_pg_v4_context(), call_id=call_id):
+        return _log_mcp(
+            pg_db,
+            days_ago,
+            seq,
+            principal_id="",
+            call_id=call_id,
+        )
+
+
 # ── schema migration ──────────────────────────────────────────────────────────
 
 
@@ -251,6 +271,58 @@ def test_new_schema_creates_audit_floats_as_double_precision(pg_db):
     converted = pg_db._postgres_schema_sql(pg_db.SCHEMA)
     assert " REAL" not in converted
     assert "scan_time_ms        DOUBLE PRECISION" in converted
+
+
+def test_v4_authority_columns_migrate_and_verify_on_postgres(pg_db):
+    assert (
+        _column_type(
+            pg_db,
+            "mcp_audit_log",
+            "inbound_authority_forwarded",
+        )
+        == "boolean"
+    )
+    assert (
+        _column_type(
+            pg_db,
+            "mcp_audit_log",
+            "downstream_authority_evaluated",
+        )
+        == "boolean"
+    )
+    saved = _log_mcp_v4(pg_db)
+    row = pg_db.get_mcp_audit_log(saved["id"])
+    assert row["hash_v"] == 4
+    assert row["principal_id"] == ""
+    assert row["oauth_client_binding_key_id"] == "client-2026-07"
+    assert row["delegated_subject_binding_key_id"] == "subject-2026-07"
+    assert row["inbound_authority_forwarded"] is False
+    assert pg_db.verify_mcp_audit_record(saved["id"])["chain_verified"] is True
+    assert pg_db.verify_audit_chain()["valid"] is True
+
+
+def test_v4_identity_key_tamper_fails_closed_on_postgres(pg_db):
+    saved = _log_mcp_v4(pg_db)
+    _set_column(
+        pg_db,
+        "mcp_audit_log",
+        "delegated_subject_binding_key_id",
+        "attacker-key",
+        saved["id"],
+    )
+    assert pg_db.verify_mcp_audit_record(saved["id"])["chain_verified"] is False
+    assert pg_db.verify_audit_chain()["valid"] is False
+
+
+def test_v4_retained_row_verifies_through_v3_checkpoint_on_postgres(pg_db):
+    old = _log_mcp_v4(pg_db, days_ago=40)
+    kept = _log_mcp_v4(pg_db, days_ago=1)
+    result = pg_db.prune_retention(POLICY, actor=ACTOR)
+    assert result["mcp_audit_deleted"] == 1
+    assert pg_db.get_mcp_audit_log(old["id"]) is None
+    assert pg_db.get_mcp_audit_log(kept["id"])["hash_v"] == 4
+    assert pg_db.verify_mcp_audit_record(kept["id"])["chain_verified"] is True
+    assert pg_db.verify_audit_chain()["valid"] is True
 
 
 # ── v3 rows round-trip and verify on Postgres ────────────────────────────────
@@ -293,7 +365,7 @@ MCP_PG_MUTATIONS = [
     ("scan_time_ms", 999.75),
     ("prev_hash", "e" * 64),
     ("hash_v", 1),
-    ("hash_v", 4),  # future version must not be reinterpreted as v3
+    ("hash_v", 5),  # future version must not be reinterpreted as v3/v4
 ]
 
 
@@ -429,7 +501,7 @@ def test_writer_rejects_non_integer_status_code_on_postgres(pg_db):
 # ── exact hash-version enforcement on Postgres ────────────────────────────────
 
 
-@pytest.mark.parametrize("bad_version", [0, -1, 4, 99])
+@pytest.mark.parametrize("bad_version", [0, -1, 5, 99])
 def test_invalid_mcp_hash_version_fails_closed_on_postgres(pg_db, bad_version):
     saved = _log_mcp(pg_db)
     _set_column(pg_db, "mcp_audit_log", "hash_v", bad_version, saved["id"])

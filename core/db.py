@@ -29,6 +29,10 @@ from typing import Optional, List, Dict, Any
 from urllib.parse import urlparse
 from core import audit_envelope
 from core import drift_evidence
+from core.ema_context import (
+    current_authority_audit_context,
+    current_authority_call_id,
+)
 from core.mcp_drift import classify_tool_drift
 from core.tool_metadata import normalize_tool_metadata
 
@@ -216,6 +220,8 @@ _POSTGRES_BOOLEAN_COLUMNS = (
     "verified",
     "probes_enabled",
     "threat_blocked",
+    "inbound_authority_forwarded",
+    "downstream_authority_evaluated",
 )
 
 
@@ -454,6 +460,40 @@ CREATE TABLE IF NOT EXISTS mcp_audit_log (
     hash_v              INTEGER NOT NULL DEFAULT 1,
     prev_hash           TEXT    NOT NULL DEFAULT '',
     integrity_hash      TEXT    NOT NULL DEFAULT ''
+    ,transport          TEXT
+    ,mcp_resource_uri   TEXT
+    ,mcp_protocol_version TEXT
+    ,mcp_method         TEXT
+    ,authority_mode     TEXT
+    ,authority_status   TEXT
+    ,authority_profile  TEXT
+    ,authority_artifact_type TEXT
+    ,authority_signature_algorithm TEXT
+    ,authority_token_type TEXT
+    ,authority_validation_boundary TEXT
+    ,authority_verified_at INTEGER
+    ,authority_issuer   TEXT
+    ,authority_audiences TEXT
+    ,authority_resource TEXT
+    ,authority_scopes  TEXT
+    ,authority_expires_at INTEGER
+    ,authority_not_before INTEGER
+    ,authority_issued_at INTEGER
+    ,oauth_client_binding TEXT
+    ,oauth_client_binding_alg TEXT
+    ,oauth_client_binding_key_id TEXT
+    ,delegated_subject_binding TEXT
+    ,delegated_subject_binding_alg TEXT
+    ,delegated_subject_binding_key_id TEXT
+    ,interlock_service_principal_id TEXT
+    ,downstream_service_principal_id TEXT
+    ,token_binding TEXT
+    ,token_binding_alg TEXT
+    ,token_binding_key_id TEXT
+    ,downstream_auth_mode TEXT
+    ,inbound_authority_forwarded INTEGER NOT NULL DEFAULT 0
+    ,downstream_authority_evaluated INTEGER NOT NULL DEFAULT 0
+    ,authority_failure_code TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_mcp_audit_ts ON mcp_audit_log(ts);
@@ -816,6 +856,49 @@ def init_db() -> None:
         )
         _ensure_column(conn, "mcp_audit_log", "call_id", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "mcp_audit_log", "hash_v", "INTEGER NOT NULL DEFAULT 1")
+        for column, definition in (
+            ("transport", "TEXT"),
+            ("mcp_resource_uri", "TEXT"),
+            ("mcp_protocol_version", "TEXT"),
+            ("mcp_method", "TEXT"),
+            ("authority_mode", "TEXT"),
+            ("authority_status", "TEXT"),
+            ("authority_profile", "TEXT"),
+            ("authority_artifact_type", "TEXT"),
+            ("authority_signature_algorithm", "TEXT"),
+            ("authority_token_type", "TEXT"),
+            ("authority_validation_boundary", "TEXT"),
+            ("authority_verified_at", "INTEGER"),
+            ("authority_issuer", "TEXT"),
+            ("authority_audiences", "TEXT"),
+            ("authority_resource", "TEXT"),
+            ("authority_scopes", "TEXT"),
+            ("authority_expires_at", "INTEGER"),
+            ("authority_not_before", "INTEGER"),
+            ("authority_issued_at", "INTEGER"),
+            ("oauth_client_binding", "TEXT"),
+            ("oauth_client_binding_alg", "TEXT"),
+            ("oauth_client_binding_key_id", "TEXT"),
+            ("delegated_subject_binding", "TEXT"),
+            ("delegated_subject_binding_alg", "TEXT"),
+            ("delegated_subject_binding_key_id", "TEXT"),
+            ("interlock_service_principal_id", "TEXT"),
+            ("downstream_service_principal_id", "TEXT"),
+            ("token_binding", "TEXT"),
+            ("token_binding_alg", "TEXT"),
+            ("token_binding_key_id", "TEXT"),
+            ("downstream_auth_mode", "TEXT"),
+            (
+                "inbound_authority_forwarded",
+                "INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "downstream_authority_evaluated",
+                "INTEGER NOT NULL DEFAULT 0",
+            ),
+            ("authority_failure_code", "TEXT"),
+        ):
+            _ensure_column(conn, "mcp_audit_log", column, definition)
         _ensure_column(conn, "admin_audit_log", "prev_hash", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(
             conn, "admin_audit_log", "integrity_hash", "TEXT NOT NULL DEFAULT ''"
@@ -827,6 +910,16 @@ def init_db() -> None:
         _ensure_double_precision(conn, "mcp_audit_log", ("confidence", "scan_time_ms"))
         _ensure_postgres_boolean_column(conn, "usage_log", "threat_blocked")
         _ensure_postgres_boolean_column(conn, "scan_history", "is_threat")
+        _ensure_postgres_boolean_column(
+            conn,
+            "mcp_audit_log",
+            "inbound_authority_forwarded",
+        )
+        _ensure_postgres_boolean_column(
+            conn,
+            "mcp_audit_log",
+            "downstream_authority_evaluated",
+        )
         _run_schema_statements(conn, indexes=True)
     logger.info(
         "%s DB initialized", "Postgres" if USE_POSTGRES else f"SQLite at {DB_PATH}"
@@ -942,7 +1035,12 @@ def _compute_audit_hash_v2(
 # The exact hash versions each chain has ever written. Verification rejects
 # anything outside these sets (audit_envelope.require_hash_version): a v3 row
 # relabeled hash_v=4 must fail, not be reinterpreted under the v3 rule.
-_MCP_HASH_VERSIONS = (1, 2, audit_envelope.HASH_V3)
+_MCP_HASH_VERSIONS = (
+    1,
+    2,
+    audit_envelope.HASH_V3,
+    audit_envelope.HASH_V4,
+)
 _ADMIN_HASH_VERSIONS = (1, audit_envelope.HASH_V3)
 
 
@@ -953,6 +1051,12 @@ def _recompute_mcp_audit_hash(row: Dict[str, Any]) -> str:
     exactly {1, 2, 3}; callers turn that into a failed verification.
     """
     version = audit_envelope.require_hash_version(row.get("hash_v"), _MCP_HASH_VERSIONS)
+    if version == audit_envelope.HASH_V4:
+        return audit_envelope.compute_mcp_hash_v4(
+            row,
+            row.get("prev_hash") or "",
+            strict=False,
+        )
     if version == audit_envelope.HASH_V3:
         # v3: full-field canonical envelope — every stored security-
         # significant column is committed (core/audit_envelope.py).
@@ -2876,6 +2980,22 @@ def _mcp_audit_row_to_dict(row) -> Dict[str, Any]:
             d[col] = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             d[col] = []
+    for col in ("authority_audiences", "authority_scopes"):
+        raw = d.get(col)
+        if raw is None:
+            continue
+        if isinstance(raw, list):
+            continue
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        d[col] = parsed if isinstance(parsed, list) else None
+    for col in (
+        "inbound_authority_forwarded",
+        "downstream_authority_evaluated",
+    ):
+        d[col] = bool(d.get(col, False))
     return d
 
 
@@ -5028,7 +5148,11 @@ def _append_mcp_audit_event(conn, event: dict) -> Dict[str, Any]:
     """
     event = event or {}
     ts = event.get("ts") or datetime.now(timezone.utc).isoformat()
-    call_id = str(event.get("call_id") or "") or uuid.uuid4().hex
+    call_id = (
+        current_authority_call_id()
+        or str(event.get("call_id") or "")
+        or uuid.uuid4().hex
+    )
     # The exact values inserted below, keyed by column, so the v3 envelope
     # hashes precisely what a verifier will read back from either backend.
     record = {
@@ -5078,6 +5202,82 @@ def _append_mcp_audit_event(conn, event: dict) -> Dict[str, Any]:
         ),
         "call_id": call_id,
     }
+    authority_context = current_authority_audit_context()
+    hash_version = audit_envelope.HASH_V3
+    if authority_context is not None:
+        if record["principal_id"]:
+            raise ValueError(
+                "Authority-aware v4 records must not overload principal_id."
+            )
+        expected = {
+            name for name, _kind in audit_envelope.MCP_AUDIT_V4_AUTHORITY_FIELDS
+        }
+        if set(authority_context) != expected:
+            raise ValueError("Authority audit context has missing or unknown fields.")
+        if authority_context.get("inbound_authority_forwarded") is not False:
+            raise ValueError("Inbound authority forwarding must remain false.")
+        if authority_context.get("downstream_authority_evaluated") is not False:
+            raise ValueError("Downstream authority evaluation must remain false.")
+        if authority_context.get("authority_status") == "verified":
+            required_verified = (
+                "authority_verified_at",
+                "authority_signature_algorithm",
+                "authority_token_type",
+                "authority_issuer",
+                "authority_audiences",
+                "authority_resource",
+                "authority_scopes",
+                "authority_expires_at",
+                "oauth_client_binding",
+                "oauth_client_binding_alg",
+                "oauth_client_binding_key_id",
+                "delegated_subject_binding",
+                "delegated_subject_binding_alg",
+                "delegated_subject_binding_key_id",
+                "token_binding",
+                "token_binding_alg",
+                "token_binding_key_id",
+            )
+            if any(authority_context.get(name) is None for name in required_verified):
+                raise ValueError("Verified authority context is incomplete.")
+        elif authority_context.get("authority_status") == "denied":
+            unverified_only = (
+                "authority_verified_at",
+                "authority_signature_algorithm",
+                "authority_token_type",
+                "authority_issuer",
+                "authority_audiences",
+                "authority_resource",
+                "authority_scopes",
+                "authority_expires_at",
+                "authority_not_before",
+                "authority_issued_at",
+                "oauth_client_binding",
+                "oauth_client_binding_alg",
+                "oauth_client_binding_key_id",
+                "delegated_subject_binding",
+                "delegated_subject_binding_alg",
+                "delegated_subject_binding_key_id",
+                "downstream_service_principal_id",
+                "token_binding",
+                "token_binding_alg",
+                "token_binding_key_id",
+            )
+            if any(authority_context.get(name) is not None for name in unverified_only):
+                raise ValueError("Denied unverified authority fields must be null.")
+        else:
+            raise ValueError("Unknown authority status.")
+
+        for name, kind in audit_envelope.MCP_AUDIT_V4_AUTHORITY_FIELDS:
+            value = authority_context[name]
+            if kind == audit_envelope.JSON_LIST:
+                value = None if value is None else json.dumps(value)
+            elif kind == audit_envelope.INT:
+                value = audit_envelope.normalize_stored_int(value)
+            elif kind == audit_envelope.BOOL:
+                value = bool(value)
+            record[name] = value
+        hash_version = audit_envelope.HASH_V4
     row = conn.execute(
         "SELECT integrity_hash FROM mcp_audit_log ORDER BY id DESC LIMIT 1"
     ).fetchone()
@@ -5088,66 +5288,34 @@ def _append_mcp_audit_event(conn, event: dict) -> Dict[str, Any]:
         # (if the chain was pruned away entirely) instead of GENESIS.
         latest = _latest_chain_checkpoint(conn, "mcp_audit_log")
         prev_hash = (latest or {}).get("last_deleted_hash") or "GENESIS"
-    integrity_hash = audit_envelope.compute_hash_v3("mcp_audit_log", record, prev_hash)
+    if hash_version == audit_envelope.HASH_V4:
+        integrity_hash = audit_envelope.compute_mcp_hash_v4(record, prev_hash)
+    else:
+        integrity_hash = audit_envelope.compute_hash_v3(
+            "mcp_audit_log",
+            record,
+            prev_hash,
+        )
+    columns = [name for name, _kind in audit_envelope.MCP_AUDIT_V3_FIELDS]
+    if hash_version == audit_envelope.HASH_V4:
+        columns.extend(
+            name for name, _kind in audit_envelope.MCP_AUDIT_V4_AUTHORITY_FIELDS
+        )
+    columns.extend(("hash_v", "prev_hash", "integrity_hash"))
+    values = [record[name] for name in columns[:-3]]
+    values.extend((hash_version, prev_hash, integrity_hash))
+    placeholders = ", ".join("?" for _ in columns)
     event_id = _insert_returning_id(
         conn,
-        """
-        INSERT INTO mcp_audit_log
-          (ts, server_id, tool_name, principal_id, role, action, matched_rule, reason,
-           effects, side_effect, data_classes, externality, verification_level,
-           confidence, warnings, argument_keys, blocked_by, probe_id,
-           argument_hash, expected_outcome, expected_status_code,
-           observed_outcome, observed_status_code, observed_error_class,
-           drift_status, drift_severity, drift_action, drift_types, drift_reasons,
-           drift_baseline_hash, drift_current_hash,
-           scan_time_ms, call_id, hash_v, prev_hash, integrity_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            record["ts"],
-            record["server_id"],
-            record["tool_name"],
-            record["principal_id"],
-            record["role"],
-            record["action"],
-            record["matched_rule"],
-            record["reason"],
-            record["effects"],
-            record["side_effect"],
-            record["data_classes"],
-            record["externality"],
-            record["verification_level"],
-            record["confidence"],
-            record["warnings"],
-            record["argument_keys"],
-            record["blocked_by"],
-            record["probe_id"],
-            record["argument_hash"],
-            record["expected_outcome"],
-            record["expected_status_code"],
-            record["observed_outcome"],
-            record["observed_status_code"],
-            record["observed_error_class"],
-            record["drift_status"],
-            record["drift_severity"],
-            record["drift_action"],
-            record["drift_types"],
-            record["drift_reasons"],
-            record["drift_baseline_hash"],
-            record["drift_current_hash"],
-            record["scan_time_ms"],
-            record["call_id"],
-            audit_envelope.HASH_V3,
-            prev_hash,
-            integrity_hash,
-        ),
+        f"INSERT INTO mcp_audit_log ({', '.join(columns)}) " f"VALUES ({placeholders})",
+        tuple(values),
     )
 
     saved = dict(event)
     saved["id"] = event_id
     saved["ts"] = ts
     saved["call_id"] = call_id
-    saved["hash_v"] = audit_envelope.HASH_V3
+    saved["hash_v"] = hash_version
     return saved
 
 

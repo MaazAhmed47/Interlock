@@ -309,6 +309,71 @@ def derive_binding(row: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def derive_mcp_authority_context(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "transport": row.get("transport"),
+        "resource_uri": row.get("mcp_resource_uri"),
+        "protocol_version": row.get("mcp_protocol_version"),
+        "method": row.get("mcp_method"),
+    }
+
+
+def derive_authority_evidence(row: Dict[str, Any]) -> Dict[str, Any]:
+    authority = {
+        "mode": row.get("authority_mode"),
+        "status": row.get("authority_status"),
+        "profile": row.get("authority_profile"),
+        "artifact_type": row.get("authority_artifact_type"),
+        "signature_algorithm": row.get("authority_signature_algorithm"),
+        "token_type": row.get("authority_token_type"),
+        "validation_boundary": row.get("authority_validation_boundary"),
+        "verified_at": row.get("authority_verified_at"),
+        "issuer": row.get("authority_issuer"),
+        "audiences": row.get("authority_audiences"),
+        "resource": row.get("authority_resource"),
+        "scopes": row.get("authority_scopes"),
+        "expires_at": row.get("authority_expires_at"),
+        "not_before": row.get("authority_not_before"),
+        "issued_at": row.get("authority_issued_at"),
+        "oauth_client_binding": row.get("oauth_client_binding"),
+        "oauth_client_binding_alg": row.get("oauth_client_binding_alg"),
+        "oauth_client_binding_key_id": row.get("oauth_client_binding_key_id"),
+        "delegated_subject_binding": row.get("delegated_subject_binding"),
+        "delegated_subject_binding_alg": row.get("delegated_subject_binding_alg"),
+        "delegated_subject_binding_key_id": row.get("delegated_subject_binding_key_id"),
+        "interlock_service_principal_id": row.get("interlock_service_principal_id"),
+        "downstream_service_principal_id": row.get("downstream_service_principal_id"),
+        "token_binding": row.get("token_binding"),
+        "token_binding_alg": row.get("token_binding_alg"),
+        "token_binding_key_id": row.get("token_binding_key_id"),
+        "downstream_auth_mode": row.get("downstream_auth_mode"),
+        "inbound_authority_forwarded": bool(row.get("inbound_authority_forwarded")),
+        "downstream_authority_evaluated": bool(
+            row.get("downstream_authority_evaluated")
+        ),
+        "failure_code": row.get("authority_failure_code"),
+    }
+    if authority["status"] != "verified":
+        statement = (
+            "Interlock did not verify delegated authority; the request was "
+            "denied at its gateway."
+        )
+    elif authority["downstream_service_principal_id"]:
+        statement = (
+            "Interlock validated delegated authority at its gateway. "
+            "Interlock attempted the downstream call with a separately configured "
+            "service identity; this receipt does not prove that the downstream "
+            "server evaluated the employee's delegated scopes."
+        )
+    else:
+        statement = (
+            "Interlock validated delegated authority at its gateway. "
+            "No downstream tool call was made."
+        )
+    authority["statement"] = statement
+    return authority
+
+
 def build_receipt(row: Dict[str, Any], chain_verified: bool = False) -> Dict[str, Any]:
     """Map a single mcp_audit_log row to a Security Receipt."""
     ts = row.get("ts") or ""
@@ -316,7 +381,7 @@ def build_receipt(row: Dict[str, Any], chain_verified: bool = False) -> Dict[str
     detections = derive_detections(row)
     redactions = derive_redactions(_as_list(row.get("data_classes")))
     rule_fired = row.get("matched_rule") or row.get("blocked_by") or "none"
-    return {
+    receipt = {
         "receipt_id": receipt_id(row),
         "audit_id": row.get("id"),
         "timestamp": _format_utc(ts),
@@ -338,6 +403,12 @@ def build_receipt(row: Dict[str, Any], chain_verified: bool = False) -> Dict[str
         "prev_hash": row.get("prev_hash") or "",
         "chain_verified": bool(chain_verified),
     }
+    if row.get("hash_v") == 4:
+        receipt.pop("principal_id", None)
+        receipt["version"] = "4"
+        receipt["mcp"] = derive_mcp_authority_context(row)
+        receipt["authority"] = derive_authority_evidence(row)
+    return receipt
 
 
 def build_batch(

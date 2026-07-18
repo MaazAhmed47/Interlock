@@ -69,6 +69,7 @@ import math
 from typing import Any, Mapping, Optional, Tuple
 
 HASH_V3 = 3
+HASH_V4 = 4
 
 GENESIS = "GENESIS"
 
@@ -99,6 +100,7 @@ INT = "int"
 FLOAT = "float"
 JSON_LIST = "json_list"
 JSON_OBJECT = "json_object"
+BOOL = "bool"
 
 # Every stored security-significant column of mcp_audit_log, in explicit
 # envelope order. Excluded on purpose: ``id`` (unknown before insert; row
@@ -139,6 +141,47 @@ MCP_AUDIT_V3_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("scan_time_ms", FLOAT),
     ("call_id", STR),
 )
+
+# Authority-bearing rows use a separate envelope.  It commits to all legacy
+# runtime evidence plus every explicit authority identity, algorithm/key ID,
+# validation boundary, token-binding, and downstream-boundary field.
+MCP_AUDIT_V4_AUTHORITY_FIELDS: Tuple[Tuple[str, str], ...] = (
+    ("transport", STR),
+    ("mcp_resource_uri", STR),
+    ("mcp_protocol_version", STR),
+    ("mcp_method", STR),
+    ("authority_mode", STR),
+    ("authority_status", STR),
+    ("authority_profile", STR),
+    ("authority_artifact_type", STR),
+    ("authority_signature_algorithm", STR),
+    ("authority_token_type", STR),
+    ("authority_validation_boundary", STR),
+    ("authority_verified_at", INT),
+    ("authority_issuer", STR),
+    ("authority_audiences", JSON_LIST),
+    ("authority_resource", STR),
+    ("authority_scopes", JSON_LIST),
+    ("authority_expires_at", INT),
+    ("authority_not_before", INT),
+    ("authority_issued_at", INT),
+    ("oauth_client_binding", STR),
+    ("oauth_client_binding_alg", STR),
+    ("oauth_client_binding_key_id", STR),
+    ("delegated_subject_binding", STR),
+    ("delegated_subject_binding_alg", STR),
+    ("delegated_subject_binding_key_id", STR),
+    ("interlock_service_principal_id", STR),
+    ("downstream_service_principal_id", STR),
+    ("token_binding", STR),
+    ("token_binding_alg", STR),
+    ("token_binding_key_id", STR),
+    ("downstream_auth_mode", STR),
+    ("inbound_authority_forwarded", BOOL),
+    ("downstream_authority_evaluated", BOOL),
+    ("authority_failure_code", STR),
+)
+MCP_AUDIT_V4_FIELDS = MCP_AUDIT_V3_FIELDS + MCP_AUDIT_V4_AUTHORITY_FIELDS
 
 # Every stored security-significant column of admin_audit_log.
 ADMIN_AUDIT_V3_FIELDS: Tuple[Tuple[str, str], ...] = (
@@ -239,6 +282,18 @@ def _canonical_float(value: Any, *, strict: bool = True) -> str:
     return number.hex()
 
 
+def _canonical_bool(value: Any, *, strict: bool = True) -> str:
+    if value is None:
+        return ""
+    if value is True or value == 1:
+        return "true"
+    if value is False or value == 0:
+        return "false"
+    if strict:
+        raise ValueError(f"non-boolean value in audit bool column: {value!r}")
+    return "raw:" + str(value)
+
+
 def normalize_stored_int(value: Any, default: Optional[int] = None) -> Optional[int]:
     """
     Sanitize an integer destined for an audit column BEFORE hashing/storing.
@@ -325,6 +380,8 @@ def _canonical_value(kind: str, value: Any, *, strict: bool = True) -> str:
         return _canonical_int(value, strict=strict)
     if kind == FLOAT:
         return _canonical_float(value, strict=strict)
+    if kind == BOOL:
+        return _canonical_bool(value, strict=strict)
     return _canonical_json(value)
 
 
@@ -353,4 +410,24 @@ def compute_hash_v3(
 ) -> str:
     """SHA-256 over the canonical v3 envelope of one record."""
     envelope = canonical_envelope(chain, row, prev_hash, strict=strict)
+    return hashlib.sha256(envelope.encode("utf-8")).hexdigest()
+
+
+def canonical_mcp_envelope_v4(
+    row: Mapping[str, Any], prev_hash: str, *, strict: bool = True
+) -> str:
+    pairs = [
+        ["hash_v", str(HASH_V4)],
+        ["chain", "mcp_audit_log"],
+        ["prev_hash", _canonical_str(prev_hash)],
+    ]
+    for name, kind in MCP_AUDIT_V4_FIELDS:
+        pairs.append([name, _canonical_value(kind, row.get(name), strict=strict)])
+    return json.dumps(pairs, separators=(",", ":"), ensure_ascii=True)
+
+
+def compute_mcp_hash_v4(
+    row: Mapping[str, Any], prev_hash: str, *, strict: bool = True
+) -> str:
+    envelope = canonical_mcp_envelope_v4(row, prev_hash, strict=strict)
     return hashlib.sha256(envelope.encode("utf-8")).hexdigest()
