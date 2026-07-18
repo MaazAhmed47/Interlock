@@ -10,9 +10,7 @@ GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY") or "").strip() or None
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 MCP_REGISTRY_ALLOWED_HOSTS = os.getenv("MCP_REGISTRY_ALLOWED_HOSTS", "")
-MCP_REGISTRY_ALLOWED_HOST_SUFFIXES = os.getenv(
-    "MCP_REGISTRY_ALLOWED_HOST_SUFFIXES", ".web.val.run,.localhost.run"
-)
+MCP_REGISTRY_ALLOWED_HOST_SUFFIXES = os.getenv("MCP_REGISTRY_ALLOWED_HOST_SUFFIXES", "")
 
 
 def mcp_upstream_auth_allowed_env_vars() -> set[str]:
@@ -50,13 +48,8 @@ def interlock_env() -> str:
     )
 
 
-def is_production() -> bool:
-    """Best-effort production detection while keeping local dev convenient."""
-    env = interlock_env()
-    if env in {"prod", "production"}:
-        return True
-    if env in {"dev", "development", "local", "test", "testing"}:
-        return False
+def is_hosted() -> bool:
+    """Return True when a supported hosting platform marker is present."""
     return any(
         os.getenv(name)
         for name in (
@@ -67,6 +60,16 @@ def is_production() -> bool:
             "K_SERVICE",
         )
     )
+
+
+def is_production() -> bool:
+    """Best-effort production detection while keeping local dev convenient."""
+    env = interlock_env()
+    if env in {"prod", "production"}:
+        return True
+    if env in {"dev", "development", "local", "test", "testing"}:
+        return False
+    return is_hosted()
 
 
 def api_docs_enabled() -> bool:
@@ -117,6 +120,15 @@ def offline_demo_enabled() -> bool:
     production deployments.
     """
     return _truthy(os.getenv("INTERLOCK_OFFLINE_DEMO"))
+
+
+def assert_offline_demo_startup_safe() -> None:
+    """Refuse the fixed-key offline demo on production or hosted deployments."""
+    if offline_demo_enabled() and (is_production() or is_hosted()):
+        raise RuntimeError(
+            "INTERLOCK_OFFLINE_DEMO cannot be enabled in production or hosted "
+            "deployments."
+        )
 
 
 def siem_include_content() -> bool:

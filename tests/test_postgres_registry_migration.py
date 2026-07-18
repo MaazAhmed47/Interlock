@@ -12,6 +12,7 @@ Skipped when the env var is absent (same convention as the audit-chain race
 test).
 """
 
+import asyncio
 import importlib
 import os
 import sys
@@ -81,7 +82,13 @@ def pg_db(monkeypatch):
     db.init_db()
     yield db
 
-    for server_id in (LEGACY_SERVER, "_pg_probe_enabled", "_pg_env_update"):
+    cleanup_server_ids = {
+        LEGACY_SERVER,
+        "_pg_probe_enabled",
+        "_pg_env_update",
+        *db.SEEDED_DEMO_SERVER_IDS,
+    }
+    for server_id in cleanup_server_ids:
         try:
             db.unregister_mcp_server(server_id)
         except Exception:
@@ -110,6 +117,24 @@ def test_migration_backfills_existing_server_to_production_probes_disabled(pg_db
     assert server is not None
     assert server["environment"] == "production"
     assert server["probes_enabled"] is False
+
+
+def test_normal_startup_does_not_seed_demo_registry_on_postgres(pg_db, monkeypatch):
+    import proxy
+
+    monkeypatch.setenv("INTERLOCK_ENV", "production")
+    monkeypatch.delenv("INTERLOCK_OFFLINE_DEMO", raising=False)
+    monkeypatch.delenv("SHADOW_SCAN_ENABLED", raising=False)
+
+    async def run_lifespan():
+        async with proxy.lifespan(proxy.app):
+            pass
+
+    asyncio.run(run_lifespan())
+
+    server_ids = {server["server_id"] for server in pg_db.list_mcp_servers()}
+    assert server_ids == {LEGACY_SERVER}
+    assert server_ids.isdisjoint(pg_db.SEEDED_DEMO_SERVER_IDS)
 
 
 def test_register_and_lookup_round_trip_probe_state_on_postgres(pg_db):

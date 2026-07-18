@@ -2,6 +2,7 @@
 """Hosted-mode safety hardening tests."""
 
 import asyncio
+import logging
 import os
 import sys
 import tempfile
@@ -47,6 +48,143 @@ def seeded_db():
 
 def run(coro):
     return asyncio.run(coro)
+
+
+async def run_lifespan():
+    async with proxy.lifespan(proxy.app):
+        pass
+
+
+PRODUCTION_ENV_VARS = (
+    "INTERLOCK_ENV",
+    "APP_ENV",
+    "ENVIRONMENT",
+    "ENV",
+    "RENDER",
+    "VERCEL",
+    "RAILWAY_ENVIRONMENT",
+    "FLY_APP_NAME",
+    "K_SERVICE",
+)
+
+
+def clear_production_environment(monkeypatch):
+    for name in PRODUCTION_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
+def registry_row_counts():
+    with db.get_conn() as conn:
+        server_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM mcp_servers"
+        ).fetchone()["count"]
+        tool_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM mcp_tool_metadata"
+        ).fetchone()["count"]
+    return server_count, tool_count
+
+
+@pytest.mark.parametrize(
+    "deployment_posture",
+    ("explicit-production", "hosted-render-with-local-override"),
+    ids=("explicit-production", "hosted-render"),
+)
+def test_offline_demo_fails_before_database_seeding_in_production(
+    monkeypatch, caplog, deployment_posture
+):
+    clear_production_environment(monkeypatch)
+    if deployment_posture == "explicit-production":
+        monkeypatch.setenv("INTERLOCK_ENV", "production")
+    else:
+        monkeypatch.setenv("INTERLOCK_ENV", "local")
+        monkeypatch.setenv("RENDER", "true")
+    monkeypatch.setenv("INTERLOCK_OFFLINE_DEMO", "true")
+    caplog.set_level(logging.DEBUG)
+    startup_db_calls = []
+
+    for function_name in (
+        "init_db",
+        "seed_legacy_keys",
+        "seed_mcp_servers",
+        "seed_default_policies",
+        "seed_offline_demo_key",
+    ):
+        monkeypatch.setattr(
+            db,
+            function_name,
+            lambda *args, _name=function_name, **kwargs: startup_db_calls.append(_name),
+        )
+
+    with pytest.raises(RuntimeError) as exc:
+        run(run_lifespan())
+
+    assert startup_db_calls == []
+    emitted_text = f"{exc.value}\n{caplog.text}"
+    assert "production or hosted" in emitted_text
+    assert db.OFFLINE_DEMO_KEY not in emitted_text
+
+
+@pytest.mark.parametrize(
+    "deployment_posture",
+    ("normal-local", "explicit-production", "hosted-render"),
+)
+def test_non_demo_startup_seeds_no_demo_credentials_or_registry_data(
+    monkeypatch, tmp_path, deployment_posture
+):
+    clear_production_environment(monkeypatch)
+    if deployment_posture == "normal-local":
+        monkeypatch.setenv("INTERLOCK_ENV", "local")
+    elif deployment_posture == "explicit-production":
+        monkeypatch.setenv("INTERLOCK_ENV", "production")
+    else:
+        monkeypatch.setenv("RENDER", "true")
+    monkeypatch.delenv("INTERLOCK_OFFLINE_DEMO", raising=False)
+    monkeypatch.setattr(
+        db, "DB_PATH", str(tmp_path / f"{deployment_posture}-startup.db")
+    )
+
+    run(run_lifespan())
+
+    assert db.lookup_key(db.OFFLINE_DEMO_KEY) is None
+    assert db.list_mcp_servers() == []
+    assert registry_row_counts() == (0, 0)
+
+
+def test_local_offline_demo_startup_seeds_fixed_demo_key(monkeypatch, tmp_path):
+    clear_production_environment(monkeypatch)
+    monkeypatch.setenv("INTERLOCK_ENV", "local")
+    monkeypatch.setenv("INTERLOCK_OFFLINE_DEMO", "true")
+    monkeypatch.setattr(db, "DB_PATH", str(tmp_path / "local-offline-demo.db"))
+
+    run(run_lifespan())
+
+    record = db.lookup_key(db.OFFLINE_DEMO_KEY)
+    assert record is not None
+    assert record["role"] == "readonly_agent"
+    assert record["scopes"] == db.OFFLINE_DEMO_KEY_SCOPES
+    assert {server["server_id"] for server in db.list_mcp_servers()} == (
+        db.SEEDED_DEMO_SERVER_IDS
+    )
+    assert registry_row_counts() == (len(db.SEEDED_DEMO_SERVER_IDS), 0)
+
+
+def test_registry_allowlists_default_empty_and_external_fixtures_rejected(
+    monkeypatch,
+):
+    monkeypatch.delenv("MCP_REGISTRY_ALLOWED_HOSTS", raising=False)
+    monkeypatch.delenv("MCP_REGISTRY_ALLOWED_HOST_SUFFIXES", raising=False)
+
+    assert db._configured_allowed_mcp_hosts() == set()
+    assert db._configured_allowed_mcp_suffixes() == ()
+
+    rejected_targets = (
+        ("_fixture_public_mock", "https://fixture.web.val.run/mcp"),
+        ("trusted-filesystem", "https://mcp.acme-corp.internal/filesystem"),
+        ("clean-proof-docs", "https://demo.web.val.run/mcp"),
+    )
+    for server_id, url in rejected_targets:
+        with pytest.raises(ValueError, match="explicit allowlist"):
+            db.validate_mcp_registration_target(server_id, url)
 
 
 def test_production_rejects_wildcard_cors(monkeypatch):

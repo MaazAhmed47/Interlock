@@ -39,6 +39,7 @@ def test_compose_gateway_explicitly_allowlists_the_bundled_mock_host():
     gateway_environment = compose["services"]["gateway"]["environment"]
 
     assert gateway_environment["MCP_REGISTRY_ALLOWED_HOSTS"] == "mcp-mock"
+    assert not gateway_environment.get("MCP_REGISTRY_ALLOWED_HOST_SUFFIXES")
 
 
 def test_compose_publishes_demo_ports_on_loopback_only():

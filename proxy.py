@@ -22,7 +22,12 @@ from core.policy import policy_scan, ROLE_POLICIES
 from core.shadow_mode import calculate_risk_score
 from core.siem import trigger_siem_dispatch
 from core.webhook import trigger_webhook
-from config import api_docs_enabled, cors_allowed_origins, offline_demo_enabled
+from config import (
+    api_docs_enabled,
+    assert_offline_demo_startup_safe,
+    cors_allowed_origins,
+    offline_demo_enabled,
+)
 from models.schemas import (  # noqa: F401
     ChatMessage,
     ChatRequest,
@@ -51,11 +56,12 @@ _START_TIME = time.time()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    assert_offline_demo_startup_safe()
     db.init_db()
     db.seed_legacy_keys()
-    db.seed_mcp_servers()
     db.seed_default_policies(ROLE_POLICIES, policy_type="role")
     if offline_demo_enabled():
+        db.seed_mcp_servers()
         db.seed_offline_demo_key()
     if not os.getenv("REDIS_URL"):
         logger.warning(
