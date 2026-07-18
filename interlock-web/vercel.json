@@ -9,8 +9,7 @@
         { "type": "host", "value": "www.getinterlock.dev" }
       ],
       "destination": "https://getinterlock.dev/:path*",
-      "statusCode": 301,
-      "preserveQueryParams": true
+      "statusCode": 301
     }
   ],
   "rewrites": [
