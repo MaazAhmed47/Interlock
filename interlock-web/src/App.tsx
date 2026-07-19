@@ -2,6 +2,7 @@ import { Component, type ReactNode } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import DashLayout from './components/DashLayout'
 import Dashboard from './pages/Dashboard'
+import DriftProof from './pages/DriftProof'
 import Scan from './pages/Scan'
 import MCPGateway from './pages/MCPGateway'
 import Audit from './pages/Audit'
@@ -55,6 +56,7 @@ export default function App() {
       <Routes>
         <Route path="/dashboard" element={<DashLayout />}>
           <Route index element={<Dashboard />} />
+          <Route path="proof" element={<DriftProof />} />
           <Route path="scan" element={<Scan />} />
           <Route path="mcp" element={<MCPGateway />} />
           <Route path="audit" element={<Audit />} />
