@@ -4,6 +4,14 @@
   "outputDirectory": "dist",
   "redirects": [
     {
+      "source": "/",
+      "has": [
+        { "type": "host", "value": "www.getinterlock.dev" }
+      ],
+      "destination": "https://getinterlock.dev/",
+      "statusCode": 301
+    },
+    {
       "source": "/:path*",
       "has": [
         { "type": "host", "value": "www.getinterlock.dev" }
