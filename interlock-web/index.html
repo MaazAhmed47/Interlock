@@ -1927,7 +1927,7 @@
         <h1 class="reveal">Runtime trust for MCP tools after approval.</h1>
         <p class="hero-lead reveal">Interlock detects when approved MCP tools drift in behavior, permissions, data access, external reach, or side effects &mdash; then quarantines risky changes before agents keep using them.</p>
         <div class="hero-actions reveal">
-          <button class="btn btn-primary" type="button" data-contact="pilot">Book design partner pilot <span class="arrow" aria-hidden="true">&rarr;</span></button>
+          <a class="btn btn-primary" href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline" target="_blank" rel="noopener">Run the offline proof <span class="arrow" aria-hidden="true">&rarr;</span></a>
           <a class="btn btn-secondary" href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">View GitHub repo <span class="arrow" aria-hidden="true">&rarr;</span></a>
         </div>
 
@@ -1967,7 +1967,7 @@
               <div class="editor-console" aria-label="Runtime console content">
                 <div class="code-line"><span class="line-no">01</span><span class="line-code"><span class="code-head">approved_baseline:</span></span></div>
                 <div class="code-line"><span class="line-no">02</span><span class="line-code">  <span class="code-key">tool:</span> <span class="code-value">query_customers</span></span></div>
-                <div class="code-line"><span class="line-no">03</span><span class="line-code">  <span class="code-key">expected:</span> <span class="status-pill red">403 denied</span></span></div>
+                <div class="code-line"><span class="line-no">03</span><span class="line-code">  <span class="code-key">expected:</span> <span class="status-pill neutral">403 denied</span></span></div>
                 <div class="code-line"><span class="line-no">04</span><span class="line-code"></span></div>
                 <div class="code-line"><span class="line-no">05</span><span class="line-code"><span class="code-head">runtime_probe:</span></span></div>
                 <div class="code-line"><span class="line-no">06</span><span class="line-code">  <span class="code-key">tool:</span> <span class="code-value">query_customers</span></span></div>
@@ -1975,7 +1975,7 @@
                 <div class="code-line"><span class="line-no">08</span><span class="line-code"></span></div>
                 <div class="code-line"><span class="line-no">09</span><span class="line-code"><span class="code-head">interlock_decision:</span></span></div>
                 <div class="code-line"><span class="line-no">10</span><span class="line-code">  <span class="code-key">drift:</span> <span class="code-value">effective_permission_expansion</span></span></div>
-                <div class="code-line"><span class="line-no">11</span><span class="line-code">  <span class="code-key">severity:</span> <span class="status-pill red">critical</span>  <span class="code-key">action:</span> <span class="status-pill red">quarantine</span>  <span class="code-key">receipt:</span> <span class="status-pill green">chain_verified</span></span></div>
+                <div class="code-line"><span class="line-no">11</span><span class="line-code">  <span class="code-key">severity:</span> <span class="status-pill neutral">critical</span>  <span class="code-key">action:</span> <span class="status-pill red">quarantine</span>  <span class="code-key">receipt:</span> <span class="status-pill green">chain_verified</span></span></div>
               </div>
             </div>
           </div>
@@ -1998,7 +1998,7 @@
           <article class="problem-panel reveal">
             <h3>Post-approval MCP drift is the gap between a trusted name and an unsafe runtime boundary.</h3>
             <div class="side-stack" aria-hidden="true">
-              <div class="side-row"><span class="side-key">baseline</span><span class="status-pill red">403 denied</span></div>
+              <div class="side-row"><span class="side-key">baseline</span><span class="status-pill neutral">403 denied</span></div>
               <div class="side-row"><span class="side-key">runtime</span><span class="status-pill warn">200 allowed</span></div>
               <div class="side-row"><span class="side-key">action</span><span class="status-pill warn">hold tool</span></div>
             </div>
@@ -2103,7 +2103,7 @@
                   <tr><th>tool_name</th><th>server_id</th><th>expected</th><th>observed</th><th>decision</th><th>severity</th><th>receipt</th></tr>
                 </thead>
                 <tbody>
-                  <tr><td>query_customers</td><td>crm-mcp</td><td><span class="status-pill red">403 denied</span></td><td><span class="status-pill warn">200 allowed</span></td><td><span class="status-pill red">quarantine</span></td><td><span class="status-pill red">critical</span></td><td class="hash">rcpt_8f3a9c2e</td></tr>
+                  <tr><td>query_customers</td><td>crm-mcp</td><td><span class="status-pill neutral">403 denied</span></td><td><span class="status-pill warn">200 allowed</span></td><td><span class="status-pill red">quarantine</span></td><td><span class="status-pill neutral">critical</span></td><td class="hash">rcpt_8f3a9c2e</td></tr>
                   <tr><td>list_tables</td><td>postgres-mcp</td><td><span class="status-pill green">allowed</span></td><td><span class="status-pill green">allowed</span></td><td><span class="status-pill green">allow</span></td><td><span class="status-pill neutral">none</span></td><td class="hash">rcpt_1aa45d90</td></tr>
                   <tr><td>send_update</td><td>slack-mcp</td><td><span class="status-pill blue">known shape</span></td><td><span class="status-pill blue">new field</span></td><td><span class="status-pill blue">monitor</span></td><td><span class="status-pill warn">medium</span></td><td class="hash">rcpt_cc82f10b</td></tr>
                 </tbody>
@@ -2132,7 +2132,7 @@
                   <tr><th>server_id</th><th>tool_count</th><th>owner</th><th>external reach</th><th>last baseline</th><th>trust state</th></tr>
                 </thead>
                 <tbody>
-                  <tr><td>crm-mcp</td><td>18</td><td>revops-platform</td><td><span class="status-pill red">customer data</span></td><td>21:01:02</td><td><span class="status-pill warn">held</span></td></tr>
+                  <tr><td>crm-mcp</td><td>18</td><td>revops-platform</td><td><span class="status-pill blue">customer data</span></td><td>21:01:02</td><td><span class="status-pill warn">held</span></td></tr>
                   <tr><td>postgres-mcp</td><td>12</td><td>data-platform</td><td><span class="status-pill blue">internal db</span></td><td>20:57:40</td><td><span class="status-pill green">trusted</span></td></tr>
                 </tbody>
               </table>
@@ -2146,7 +2146,7 @@
                   <tr><th>agent_role</th><th>tool</th><th>policy result</th><th>rbac</th><th>response scan</th><th>next action</th></tr>
                 </thead>
                 <tbody>
-                  <tr><td>support_agent</td><td>query_customers</td><td><span class="status-pill warn">requires review</span></td><td><span class="status-pill red">expanded</span></td><td><span class="status-pill green">clean</span></td><td>quarantine</td></tr>
+                  <tr><td>support_agent</td><td>query_customers</td><td><span class="status-pill warn">requires review</span></td><td><span class="status-pill warn">expanded</span></td><td><span class="status-pill green">clean</span></td><td>quarantine</td></tr>
                   <tr><td>readonly_agent</td><td>list_tables</td><td><span class="status-pill green">allow</span></td><td><span class="status-pill green">within role</span></td><td><span class="status-pill green">clean</span></td><td>continue</td></tr>
                 </tbody>
               </table>
@@ -2170,7 +2170,7 @@
           <article class="drift-panel reveal">
             <div class="drift-head">
               <h3>Approved baseline</h3>
-              <span class="status-pill red">expected denied</span>
+              <span class="status-pill neutral">expected denied</span>
             </div>
             <div class="drift-body">
               <div class="kv-row"><span>tool</span><span>query_customers</span></div>
@@ -2262,6 +2262,7 @@
           <article class="limit-panel reveal"><strong>Not server hardening</strong><p>MCP servers still need auth, validation, isolation, and logs.</p></article>
           <article class="limit-panel reveal"><strong>Pilot-stage</strong><p>Best suited for design partner and non-production proof work right now.</p></article>
           <article class="limit-panel reveal"><strong>No certification claims</strong><p>No SOC 2, ISO, HIPAA, or GDPR certification claim is made.</p></article>
+          <article class="limit-panel reveal"><strong>Receipt boundary</strong><p>Hash-chained receipts are tamper-evident operational evidence, not externally signed or independently anchored proof.</p></article>
         </div>
       </div>
     </section>
@@ -2304,7 +2305,7 @@
         <h2 class="section-title">Run one drift check before trusting many MCP tools.</h2>
         <p class="section-lead">Start with a non-production workflow. Baseline the approved tool, probe the runtime behavior, quarantine drift, and review the Security Receipt.</p>
         <div class="final-actions">
-          <button class="btn btn-primary" type="button" data-contact="drift">Run Drift Check <span class="arrow" aria-hidden="true">&rarr;</span></button>
+          <a class="btn btn-primary" href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline" target="_blank" rel="noopener">Read the offline proof walkthrough <span class="arrow" aria-hidden="true">&rarr;</span></a>
           <button class="btn btn-secondary" type="button" data-contact="pilot">Book design partner pilot</button>
         </div>
       </div>
@@ -2336,7 +2337,6 @@
         <div>
           <h3>Docs</h3>
           <a href="https://github.com/MaazAhmed47/Interlock#quick-start" target="_blank" rel="noopener">Quick start</a>
-          <a href="https://interlock.onrender.com/docs" target="_blank" rel="noopener">API reference</a>
         </div>
         <div>
           <h3>Contact</h3>
