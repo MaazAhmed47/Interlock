@@ -30,6 +30,7 @@ from core.response_drift import (
     response_profile_hash,
 )
 from core.mcp_drift import classify_server_drift
+from core.mcp_tool_eligibility import evaluate_streamable_tool
 from core import drift_evidence
 
 # Per-operation start time for gateway-path latency. Set at the top of each
@@ -785,6 +786,7 @@ async def proxy_mcp_tool_call(
     role: Optional[str] = None,
     principal_id: str = "",
     api_key: Optional[str] = None,
+    require_streamable_eligibility: bool = False,
 ) -> Dict[str, Any]:
     """
     Proxy an MCP tool call through the firewall.
@@ -876,6 +878,29 @@ async def proxy_mcp_tool_call(
             "audit": _audit_ref(saved),
         }
 
+    strict_stored_tool = None
+    if require_streamable_eligibility:
+        eligibility = evaluate_streamable_tool(server_id, tool_name)
+        if not eligibility.eligible:
+            saved = _log_mcp_gateway_audit(
+                server_id=server_id,
+                tool_name=tool_name,
+                role=role,
+                principal_id=principal_id,
+                action="deny",
+                matched_rule=eligibility.reason,
+                reason="Tool is not eligible for Streamable HTTP execution.",
+                arguments=arguments,
+                blocked_by=eligibility.reason,
+            )
+            return {
+                "ok": False,
+                "error": eligibility.reason,
+                "message": "Tool is not eligible for Streamable HTTP execution.",
+                "audit": _audit_ref(saved),
+            }
+        strict_stored_tool = eligibility.stored_tool
+
     # 3. Normalize runtime metadata and apply metadata-aware policy.
     runtime_tool = {
         "name": tool_name,
@@ -889,7 +914,9 @@ async def proxy_mcp_tool_call(
         },
     }
     runtime_metadata = normalize_tool_metadata(runtime_tool)
-    stored_tool = db.lookup_mcp_tool_metadata(server_id, tool_name)
+    stored_tool = strict_stored_tool or db.lookup_mcp_tool_metadata(
+        server_id, tool_name
+    )
     stored_metadata = (stored_tool or {}).get("normalized_metadata")
     tool_metadata = db.merge_stored_and_runtime_metadata(
         stored_metadata or {}, runtime_metadata

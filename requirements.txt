@@ -33,6 +33,7 @@ python-dotenv==1.2.2
 # Tests
 pytest==8.4.2
 jsonschema==4.26.0
+mcp==1.28.1
 
 # Transitive deps
 annotated-doc==0.0.4

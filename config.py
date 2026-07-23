@@ -100,6 +100,28 @@ def cors_allowed_origins() -> list[str]:
     return origins or ["*"]
 
 
+def streamable_mcp_session_ttl_seconds() -> float:
+    """Short process-local MCP session lifetime, bounded to 24 hours."""
+    try:
+        value = float(os.getenv("INTERLOCK_MCP_SESSION_TTL_SECONDS", "900"))
+    except ValueError as exc:
+        raise RuntimeError("INTERLOCK_MCP_SESSION_TTL_SECONDS must be numeric") from exc
+    if not 1 <= value <= 86_400:
+        raise RuntimeError("INTERLOCK_MCP_SESSION_TTL_SECONDS must be 1..86400")
+    return value
+
+
+def streamable_mcp_max_sessions() -> int:
+    """Hard bound for process-local MCP lifecycle state."""
+    try:
+        value = int(os.getenv("INTERLOCK_MCP_MAX_SESSIONS", "10000"))
+    except ValueError as exc:
+        raise RuntimeError("INTERLOCK_MCP_MAX_SESSIONS must be an integer") from exc
+    if not 1 <= value <= 100_000:
+        raise RuntimeError("INTERLOCK_MCP_MAX_SESSIONS must be 1..100000")
+    return value
+
+
 def protect_outbound_urls() -> bool:
     """Enable SSRF-oriented outbound URL validation."""
     raw = os.getenv("INTERLOCK_PROTECT_OUTBOUND_URLS")

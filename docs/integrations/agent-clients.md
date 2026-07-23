@@ -67,7 +67,71 @@ curl -X POST http://localhost:8001/mcp/call \
 
 ---
 
-## Claude Desktop / Cursor MCP Clients
+## MCP Streamable HTTP Clients
+
+Clients that support MCP Streamable HTTP can connect directly to one verified
+Interlock registry server at:
+
+```text
+http://localhost:8001/mcp/stream/<server_id>
+```
+
+Authenticate every POST with either `X-API-Key: <runtime-key>` or
+`Authorization: Bearer <runtime-key>`. The key must have `mcp.call`; its stored
+role and key identity are used for enforcement and audit evidence. Interlock
+supports the `2025-11-25` protocol version and the `initialize`,
+`notifications/initialized`, `ping`, `tools/list`, and `tools/call` methods.
+The visible tool list contains only active, allowlisted, non-blocked,
+non-quarantined tools with a trusted stored metadata baseline. The identical
+eligibility check runs at the gateway boundary before a Streamable HTTP tool
+call; eligible calls then continue through the same trust, drift, inspection,
+RBAC, response-scan, quarantine, and audit pipeline as `/mcp/call`.
+
+Successful initialization issues an opaque `MCP-Session-Id`. Subsequent POSTs
+must send that ID and `MCP-Protocol-Version: 2025-11-25`; the client must send
+`notifications/initialized` before normal requests. Sessions are stored only
+in bounded, expiring process memory and are bound to the authenticated API-key
+record and target registry server. They contain no raw credential, tool
+arguments, or customer data. Unknown, expired, malformed, cross-key, and
+cross-server session IDs fail closed. Configure the lifetime with
+`INTERLOCK_MCP_SESSION_TTL_SECONDS` (default 900 seconds, maximum 86400) and the
+process-local bound with `INTERLOCK_MCP_MAX_SESSIONS` (default 10000, maximum
+100000). In a multi-replica deployment, requests for one session must remain on
+the replica that issued it; an unknown replica fails closed.
+
+This profile does not initiate server-to-client requests or offer an SSE
+stream. GET and DELETE return `405 Method Not Allowed`; session records expire
+automatically rather than relying on DELETE termination. A client must support
+Streamable HTTP JSON responses rather than requiring SSE.
+
+An initialization request looks like:
+
+```bash
+curl -X POST http://localhost:8001/mcp/stream/internal-slack \
+  -H "Authorization: Bearer <YOUR_RUNTIME_INTERLOCK_API_KEY>" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2025-11-25",
+      "capabilities": {},
+      "clientInfo": {"name": "pilot-client", "version": "1.0.0"}
+    }
+  }'
+```
+
+The initialization response includes `MCP-Session-Id`. Subsequent POSTs must
+include that value and `MCP-Protocol-Version: 2025-11-25`.
+
+Browser-originated requests are accepted only when the complete Origin is
+listed explicitly in `ALLOWED_ORIGINS`. The wildcard value does not authorize
+an Origin for this endpoint. Requests from non-browser MCP clients may omit the
+Origin header.
+
+## Local Adapter For Other MCP Clients
 
 For desktop MCP clients, use a small local adapter that exposes an MCP server to the client and forwards tool calls to Interlock. The adapter should:
 
@@ -117,7 +181,8 @@ For MCP servers, prefer `/mcp/call` because it adds server trust, whitelist, dri
 ## Integration Checklist
 
 - Pick the role for each agent and bind it to that agent's runtime key.
-- Route MCP tool calls through `/mcp/call` where possible.
+- Prefer the native `/mcp/stream/<server_id>` endpoint for compatible
+  Streamable HTTP clients; otherwise route MCP tool calls through `/mcp/call`.
 - Use `/inspect/tool-call` for non-MCP tools.
 - Use `/scan/output` for model/tool outputs that may be reused by an agent.
 - Store one API key per environment or pilot team.

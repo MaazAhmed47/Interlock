@@ -378,6 +378,7 @@ from routes import (  # noqa: E402
     ema_mcp as ema_mcp_routes,
     mcp as mcp_routes,
     scan as scan_routes,
+    streamable_mcp as streamable_mcp_routes,
     system as system_routes,
 )
 
@@ -387,6 +388,7 @@ app.include_router(chat_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(scan_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(mcp_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(mcp_routes.control_plane_router)  # type: ignore[attr-defined,has-type]
+app.include_router(streamable_mcp_routes.router)  # type: ignore[attr-defined,has-type]
 app.include_router(audit_routes.router)  # type: ignore[attr-defined,has-type]
 ema_mcp_routes.include_experimental_ema_router(
     app,
