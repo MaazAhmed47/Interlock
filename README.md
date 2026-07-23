@@ -232,6 +232,7 @@ Interlock/
 ├── routes/                   # FastAPI route handlers
 │   ├── scan.py               # POST /scan and /scan/output — prompt and output scanning
 │   ├── mcp.py                # MCP gateway routes — /mcp/call, /mcp/validate-tool, /mcp/servers, drift review
+│   ├── streamable_mcp.py     # Standard MCP Streamable HTTP JSON transport
 │   ├── chat.py               # OpenAI-compatible /v1/chat/completions proxy
 │   ├── system.py             # Health check, WebSocket, SIEM test, and utility endpoints
 │   └── admin_routes.py       # Admin router (re-exports core/admin.py)
@@ -797,6 +798,13 @@ For planned multi-step workflows, `POST /mcp/chains/analyze` runs a separate pre
 
 Prompt scanning still exists at `POST /scan`, but the product moat is the MCP gateway and agent RBAC path.
 
+Compatible MCP clients can use the same enforcement path through the
+Streamable HTTP endpoint at `POST /mcp/stream/{server_id}`. This transport
+profile supports MCP protocol `2025-11-25` initialization, bounded server-side
+session lifecycle, ping, tool discovery, and tool calls using JSON responses.
+It does not provide SSE or server-initiated messaging. See
+[Agent Client Integration Patterns](docs/integrations/agent-clients.md#mcp-streamable-http-clients).
+
 ---
 
 ## Drift evidence records
@@ -1020,6 +1028,7 @@ Expected: risky metadata/effect warnings and a validation decision.
 | `GET /audit/receipt/export` | Export Security Receipts (`audit.export`). |
 | `GET /admin/audit/verify` | Verify audit-log hash-chain integrity (admin token). |
 | `POST /mcp/call` | Proxy an MCP tool call through Interlock (`mcp.call`). |
+| `POST /mcp/stream/{server_id}` | MCP Streamable HTTP JSON transport for one verified registry server (`mcp.call`). |
 | `GET /admin/mcp/provenance-policy` | Read provenance policy. |
 | `PUT /admin/mcp/provenance-policy` | Update provenance policy. |
 | `POST /admin/shadow/targets` | Add shadow MCP probe targets. |
