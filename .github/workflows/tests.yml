@@ -26,10 +26,10 @@ jobs:
           pip install -r requirements.txt
 
       - name: Install code quality tools
-        run: pip install ruff black==26.3.1 mypy
+        run: pip install pre-commit black==26.3.1 mypy
 
       - name: Run ruff
-        run: ruff check core/ routes/ proxy.py
+        run: pre-commit run ruff --all-files
 
       - name: Run black
         run: black --check --target-version py312 core/ routes/ proxy.py
