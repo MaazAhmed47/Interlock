@@ -96,3 +96,31 @@ In rough priority order; each item closes a limitation above.
   window (e.g. enforced dry-run modes, effect-class argument gating) so
   outcome drift can be held before the upstream call, not only after
   observation.
+- **Close the documented detection gaps (deferred).** Seven gaps are checked
+  in as documented-gap assertions in `tests/test_drift_adversarial.py`:
+  false negatives FN-1 (undeclared server-side behavior change is invisible
+  to surface diffing), FN-5 (description-level exfiltration instruction
+  scored only by character diff), FN-7 (indirect auth-scope widening via an
+  added delegation parameter), FN-10 (export verbs outside the heuristic
+  keyword set); and false positives FP-2 (optional annotation-hint loss
+  downgrades verification level and denies), HM-1 (added required safety
+  field denied like any required-field addition), HM-3 (optional-to-required
+  tightening scored high/deny). Each closure requires an adversarial
+  regression case that fails before the fix, and corpus evidence
+  regenerated at the fixed revision.
+- **Cautious evidence-corpus sanitizer expansion (deferred).** Extend the
+  evidence-corpus input sanitizer with further unambiguous credential
+  formats, such as AWS access-key identifiers, where the format is
+  high-confidence. The limitation stands and is not removed by this work:
+  arbitrary base64 or high-entropy text cannot be reliably classified as
+  sensitive, so the sanitizer remains a defined set of high-risk patterns
+  rather than general secret detection.
+- **Larger versioned evaluation corpora (deferred).** Build domain-specific,
+  versioned corpora and accept operator-supplied sanitized cases. This is a
+  prerequisite for the published benchmarks item above: corpus-bound results
+  on a small synthetic corpus do not generalize and must not be restated as
+  a broader detection-quality claim.
+- **Pilot evaluation evidence (deferred).** Collect evaluation evidence from
+  real deployments only under explicit operator approval, with sanitized
+  inputs and a written scope. Synthetic corpus-bound metrics must not be
+  republished as a production false-positive rate.
