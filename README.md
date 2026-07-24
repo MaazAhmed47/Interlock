@@ -68,6 +68,9 @@ Proof artifacts:
 - [Behavioral drift proof image](docs/assets/proof/behavioral-drift-proof-403-to-200.png)
 - [Proof suite run summary](docs/interlock-proof-suite-run.md)
 - [Effective-permission evidence schema](interlock-web/public/schemas/effective-permission-drift-record.v1.json)
+- [Detection Quality Evidence v1](docs/detection-quality-evidence.md) — offline,
+  corpus-bound synthetic results; not a production false-positive rate and not
+  representative of all MCP deployments.
 
 Reproduce the live-style proof locally:
 
