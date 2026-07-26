@@ -183,7 +183,7 @@ MCP_AUDIT_V4_AUTHORITY_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("authority_failure_code", STR),
 )
 MCP_AUDIT_V4_FIELDS = MCP_AUDIT_V3_FIELDS + MCP_AUDIT_V4_AUTHORITY_FIELDS
-MCP_AUDIT_V5_FIELDS = MCP_AUDIT_V3_FIELDS + (("boundary_review_metadata", JSON_OBJECT),)
+MCP_AUDIT_V5_FIELDS = MCP_AUDIT_V4_FIELDS + (("boundary_review_metadata", JSON_OBJECT),)
 
 # Every stored security-significant column of admin_audit_log.
 ADMIN_AUDIT_V3_FIELDS: Tuple[Tuple[str, str], ...] = (

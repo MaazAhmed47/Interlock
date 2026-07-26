@@ -5522,13 +5522,11 @@ def _append_mcp_audit_event(conn, event: dict) -> Dict[str, Any]:
         ),
         "call_id": call_id,
     }
+    for name, kind in audit_envelope.MCP_AUDIT_V4_AUTHORITY_FIELDS:
+        record[name] = False if kind == audit_envelope.BOOL else None
     authority_context = current_authority_audit_context()
     hash_version = audit_envelope.HASH_V3
     if authority_context is not None:
-        if event.get("boundary_review_metadata") is not None:
-            raise ValueError(
-                "Boundary-review metadata cannot be combined with authority context."
-            )
         if record["principal_id"]:
             raise ValueError(
                 "Authority-aware v4 records must not overload principal_id."
@@ -5602,7 +5600,7 @@ def _append_mcp_audit_event(conn, event: dict) -> Dict[str, Any]:
                 value = bool(value)
             record[name] = value
         hash_version = audit_envelope.HASH_V4
-    elif event.get("boundary_review_metadata") is not None:
+    if event.get("boundary_review_metadata") is not None:
         hash_version = audit_envelope.HASH_V5
     row = conn.execute(
         "SELECT integrity_hash FROM mcp_audit_log ORDER BY id DESC LIMIT 1"
