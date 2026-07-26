@@ -124,7 +124,7 @@ def test_legacy_writer_stays_v3_and_v1_v2_v3_verification_is_unchanged():
     saved = db.log_mcp_audit_event(_event())
     assert db.get_mcp_audit_log(saved["id"])["hash_v"] == 3
     assert db.verify_mcp_audit_record(saved["id"])["chain_verified"] is True
-    assert db._MCP_HASH_VERSIONS == (1, 2, 3, 4)
+    assert db._MCP_HASH_VERSIONS == (1, 2, 3, 4, 5)
 
 
 def test_denied_unverified_authority_has_exact_null_defaults():

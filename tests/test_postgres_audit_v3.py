@@ -365,7 +365,7 @@ MCP_PG_MUTATIONS = [
     ("scan_time_ms", 999.75),
     ("prev_hash", "e" * 64),
     ("hash_v", 1),
-    ("hash_v", 5),  # future version must not be reinterpreted as v3/v4
+    ("hash_v", 5),  # supported v5 must recompute under v5 and mismatch a v3 row
 ]
 
 
@@ -501,7 +501,7 @@ def test_writer_rejects_non_integer_status_code_on_postgres(pg_db):
 # ── exact hash-version enforcement on Postgres ────────────────────────────────
 
 
-@pytest.mark.parametrize("bad_version", [0, -1, 5, 99])
+@pytest.mark.parametrize("bad_version", [0, -1, 6, 99])
 def test_invalid_mcp_hash_version_fails_closed_on_postgres(pg_db, bad_version):
     saved = _log_mcp(pg_db)
     _set_column(pg_db, "mcp_audit_log", "hash_v", bad_version, saved["id"])
@@ -510,6 +510,19 @@ def test_invalid_mcp_hash_version_fails_closed_on_postgres(pg_db, bad_version):
     chain = pg_db.verify_audit_chain()
     assert chain["valid"] is False
     assert chain["reason"] == "unsupported hash version"
+
+
+def test_v3_row_relabelled_as_supported_v5_is_a_hash_mismatch(pg_db):
+    saved = _log_mcp(pg_db)
+    assert saved["hash_v"] == 3
+    _set_column(pg_db, "mcp_audit_log", "hash_v", 5, saved["id"])
+
+    record = pg_db.verify_mcp_audit_record(saved["id"])
+    assert record["chain_verified"] is False
+    assert record["reason"] == "hash mismatch"
+    chain = pg_db.verify_audit_chain()
+    assert chain["valid"] is False
+    assert chain["reason"] == "hash mismatch"
 
 
 def test_admin_future_hash_version_fails_closed_on_postgres(pg_db):

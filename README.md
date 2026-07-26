@@ -436,6 +436,7 @@ MCP and receipt API-key scopes are independent least-privilege capabilities:
 |---|---|
 | `mcp.call` | Proxy MCP tool calls and analyze planned tool chains. |
 | `mcp.read` | Read the registered-server inventory, persisted tools, and drift queue. |
+| `mcp.review` | Read-only approved-vs-observed boundary review for one already-registered server. Used by the optional CI gate; cannot approve, rebaseline, register, or call tools. |
 | `mcp.discover` | Discover and validate MCP tool definitions. |
 | `mcp.probe` | Run explicitly enabled non-production effective-permission and readback probes. |
 | `audit.read` | Read, verify, and resolve individual Security Receipts and their surface evidence. |
@@ -779,8 +780,8 @@ MCP authorization is bound to the API-key record. Each key has explicit
 `scopes` and a server-side `role`; a `role` still sent in the request body is
 ignored for backward compatibility and has no effect on enforcement. Audit
 rows and Security Receipts identify the resolved key prefix and effective role.
-The scopes are `mcp.call`, `mcp.read`, `mcp.discover`, `mcp.probe`,
-`audit.read`, and `audit.export`. `admin` is a deliberate super-scope that
+The scopes are `mcp.call`, `mcp.read`, `mcp.review`, `mcp.discover`,
+`mcp.probe`, `audit.read`, and `audit.export`. `admin` is a deliberate super-scope that
 satisfies each API-key scope; ordinary scopes never imply one another or
 grant `admin`.
 
@@ -885,6 +886,40 @@ POST /mcp/chains/analyze
 Operators or orchestrators provide a planned sequence of tool calls with evidence-safe metadata (`effects`, `data_classes`, `externality`) and a safety note. Interlock hashes all arguments, analyzes the sequence, writes an audit decision, and emits a chain-drift receipt for material chain findings. It does not execute the chain.
 
 Chain evidence schema: [`chain-drift-record.v1.json`](interlock-web/public/schemas/chain-drift-record.v1.json).
+
+### CI boundary-review gate (optional, self-hosted)
+
+An optional self-hosted CI boundary-review gate lets a release pipeline check
+one registered MCP server without a reviewer opening the dashboard:
+
+```bash
+export INTERLOCK_BASE_URL=https://interlock.internal.example
+export INTERLOCK_CI_API_KEY=...          # environment ONLY
+
+python scripts/interlock_ci_gate.py \
+  --server-id billing-mcp --output-dir ./artifacts --fail-policy material
+```
+
+The gate calls `POST /mcp/servers/{server_id}/boundary-review` with a key
+holding only `mcp.review`, writes a sanitized JSON + Markdown artifact, and
+exits `0` clean/advisory, `20` review-required, `21` quarantined/held, `22`
+inconclusive, and `2`/`3`/`4` for configuration, authentication, and protocol
+failures. The review is read-only — it never rebaselines, approves,
+quarantines, or changes policy. An unobservable boundary, a breached cap, a
+concurrent registry change, and an unverified evidence chain are all reported
+nonzero and never as clean. The client never follows redirects, ignores
+environment proxies, verifies TLS, and requires HTTPS outside loopback.
+
+The CLI is stdlib-only, so it runs in a pipeline that does not check this
+repository out. A GitHub Actions template ships at
+[`docs/integrations/github-actions/interlock-boundary-gate.yml`](docs/integrations/github-actions/interlock-boundary-gate.yml)
+and is deliberately stored outside `.github/workflows/` so it is not active
+here. Full operator documentation:
+[`docs/integrations/ci-boundary-review-gate.md`](docs/integrations/ci-boundary-review-gate.md).
+
+This is an optional gate, not policy-as-code and not a full CI/CD integration.
+Agents that connect to an MCP server directly bypass Interlock, so routing and
+egress enforcement stay the operator's responsibility.
 
 ---
 
@@ -1015,6 +1050,7 @@ Expected: risky metadata/effect warnings and a validation decision.
 | `POST /mcp/discover` | Discover and validate tools from an MCP server (`mcp.discover`). |
 | `GET /mcp/tools` | List persisted MCP tool metadata (`mcp.read`). |
 | `GET /mcp/tools/drifted` | List changed or quarantined MCP tools (`mcp.read`). |
+| `POST /mcp/servers/{server_id}/boundary-review` | Read-only approved-vs-observed boundary review for the CI gate (`mcp.review`); side-effecting, `no-store`, idempotency-key aware. |
 | `POST /mcp/servers/{server_id}/verify` | Verify a registered server (`admin` API-key scope). |
 | `POST /mcp/servers/{server_id}/environment` | Store non-production/probe-enabled state (`admin` API-key scope). |
 | `POST /mcp/servers/{server_id}/rebaseline` | Clear and rediscover a baseline (`admin` API-key scope). |
@@ -1050,6 +1086,7 @@ models/            Shared request/response schemas
 tests/             Backend test suites
 docs/              Security docs, OWASP MCP coverage, metadata docs, and design notes
 demo/              Demo scripts and sample assets
+scripts/           Operator CLIs: independent evidence verifier, CI boundary-review gate
 examples/          Integration adapters and sample client configs
 helm/              Kubernetes deployment chart
 monitoring/        Prometheus configuration

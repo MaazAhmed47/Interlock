@@ -1,13 +1,23 @@
+import re
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 import proxy
+from config import (
+    boundary_review_idempotency_ttl_seconds,
+    ci_boundary_review_max_request_bytes,
+)
 from core import db
+from core.http_body import TOO_LARGE, discard_bounded_body
+from core.http_cache_headers import NO_STORE_HEADERS as _NO_STORE_HEADERS
 from core.chain_drift import run_chain_analysis
+from core.ci_boundary_review import run_boundary_review
 from core.effective_permission import run_effective_permission_probe
 from core.effect_readback import run_effect_readback_observer
+from core.http_credentials import single_api_credential
 from core.limits import clamp_limit
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
 from core.mcp_gateway import (
@@ -389,6 +399,204 @@ async def mcp_rebaseline_server(
             },
         )
     return result
+
+
+_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._~-]{32,128}$")
+
+# A boundary review performs an outbound observation and appends evidence, so
+# it is neither safe nor cacheable. `_NO_STORE_HEADERS` is the same dict the
+# ASGI middleware applies; setting it here too keeps the route's own responses
+# correct even if the middleware is ever detached, and the middleware
+# de-duplicates rather than appending a second copy.
+
+
+def _principal_binding(key_info: dict) -> Optional[str]:
+    """Stable identity an idempotency key is bound to. Mirrors the Streamable
+    HTTP transport's binding so a key cannot be replayed across identities."""
+    key_id = key_info.get("id")
+    key_hash = key_info.get("key_hash")
+    if key_id is None or not isinstance(key_hash, str) or not key_hash:
+        return None
+    return f"{key_id}:{key_hash}"
+
+
+def _idempotency_key(request: Request) -> tuple[Optional[str], bool]:
+    """Resolve at most one well-formed Idempotency-Key. Returns
+    ``(raw_key_or_None, malformed)``; duplicates fail closed."""
+    values = request.headers.getlist("idempotency-key")
+    if not values:
+        return None, False
+    if len(values) != 1 or not _IDEMPOTENCY_KEY_RE.fullmatch(values[0].strip()):
+        return None, True
+    return values[0].strip(), False
+
+
+@router.post("/mcp/servers/{server_id}/boundary-review")
+async def mcp_boundary_review(server_id: str, request: Request):
+    """Read-only approved-vs-observed boundary review for one registered server.
+
+    POST, not GET: the review performs an outbound observation and appends a
+    hash-chained audit row, so it is neither safe nor idempotent at the HTTP
+    level and must not be cached, prefetched, or silently retried by an
+    intermediary.
+
+    This is the endpoint the optional self-hosted CI boundary-review gate
+    calls (`scripts/interlock_ci_gate.py`). It requires the narrow
+    `mcp.review` scope and deliberately IGNORES any request body: the target
+    URL, the approved baseline, the enforced review queue, and the recorded
+    reviewer identity all come from server-side state. It never rebaselines,
+    approves, quarantines, or changes policy.
+
+    A caller may send `Idempotency-Key`. The raw key is never stored — only a
+    digest, bound to the verified principal and this server id. A repeat with
+    the same binding replays the original sanitized result without appending
+    another audit row or snapshot set; a repeat under another identity or
+    server fails closed with 409.
+
+    Authentication is resolved from the raw header lists so duplicated or
+    conflicting credentials fail closed rather than silently binding to
+    whichever header arrived first.
+    """
+    credential = single_api_credential(request)
+    if credential is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or ambiguous API key.",
+            headers=_NO_STORE_HEADERS,
+        )
+    key_info, raw_key = proxy.require_scope(credential, "mcp.review")
+    proxy.check_rate(raw_key, key_info["rate_per_min"])
+
+    # Authenticated first, then bounded: the body is drained and discarded, so
+    # it can never influence the server, baseline, reviewer, decision, or
+    # evidence. Rejecting here happens before any review, audit, snapshot, or
+    # idempotency write.
+    body_error = await discard_bounded_body(
+        request, ci_boundary_review_max_request_bytes()
+    )
+    if body_error is not None:
+        raise HTTPException(
+            status_code=413 if body_error == TOO_LARGE else 400,
+            detail={
+                "error": (
+                    "request_body_too_large"
+                    if body_error == TOO_LARGE
+                    else "malformed_request_body"
+                ),
+                "message": (
+                    "This endpoint ignores the request body; it is bounded by "
+                    "INTERLOCK_CI_BOUNDARY_REVIEW_MAX_REQUEST_BYTES."
+                ),
+            },
+            headers=_NO_STORE_HEADERS,
+        )
+
+    raw_idempotency, malformed = _idempotency_key(request)
+    if malformed:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_idempotency_key",
+                "message": (
+                    "Idempotency-Key must be a single 32-128 character token "
+                    "of [A-Za-z0-9._~-]."
+                ),
+            },
+            headers=_NO_STORE_HEADERS,
+        )
+
+    binding = _principal_binding(key_info)
+    if raw_idempotency and binding is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Credential cannot be bound to an idempotency key.",
+            headers=_NO_STORE_HEADERS,
+        )
+
+    key_digest = ""
+    if raw_idempotency and binding:
+        key_digest = db.hash_idempotency_key(raw_idempotency)
+        reservation = db.reserve_ci_review_idempotency(
+            key_digest,
+            binding,
+            server_id,
+            boundary_review_idempotency_ttl_seconds(),
+        )
+        outcome = reservation.get("outcome")
+        if outcome == "replay":
+            return JSONResponse(
+                content=reservation["response"],
+                headers={**_NO_STORE_HEADERS, "Idempotent-Replay": "true"},
+            )
+        if outcome == "conflict":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "idempotency_key_conflict",
+                    "message": (
+                        "This Idempotency-Key is already bound to a different "
+                        "principal or server."
+                    ),
+                },
+                headers=_NO_STORE_HEADERS,
+            )
+        if outcome == "in_progress":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "review_in_progress",
+                    "message": "A review for this Idempotency-Key is already running.",
+                },
+                headers=_NO_STORE_HEADERS,
+            )
+
+    try:
+        result = await run_boundary_review(
+            server_id, principal=_derived_identity(key_info)
+        )
+    except BaseException:
+        if key_digest:
+            db.release_ci_review_idempotency(key_digest)
+        raise
+
+    if not result.get("ok"):
+        if key_digest:
+            db.release_ci_review_idempotency(key_digest)
+        raise HTTPException(
+            status_code=404,
+            detail="MCP server not found.",
+            headers=_NO_STORE_HEADERS,
+        )
+
+    if key_digest:
+        receipt = (result.get("evidence") or {}).get("receipt") or {}
+        audit_id = receipt.get("audit_id")
+        receipt_valid = (
+            isinstance(audit_id, int)
+            and not isinstance(audit_id, bool)
+            and audit_id > 0
+            and receipt.get("hash_chained") is True
+            and receipt.get("chain_verified") is True
+            and receipt.get("tamper_evident") is True
+            and receipt.get("receipt_verification_state") == "verified"
+        )
+        if not receipt_valid:
+            db.release_ci_review_idempotency(key_digest)
+        else:
+            try:
+                completed = db.complete_ci_review_idempotency(
+                    key_digest,
+                    result,
+                    audit_id,
+                    boundary_review_idempotency_ttl_seconds(),
+                )
+                if not completed:
+                    db.release_ci_review_idempotency(key_digest)
+            except Exception:
+                proxy.logger.exception("Failed to persist boundary-review idempotency")
+                db.release_ci_review_idempotency(key_digest)
+
+    return JSONResponse(content=result, headers=_NO_STORE_HEADERS)
 
 
 @router.get("/mcp/tools")

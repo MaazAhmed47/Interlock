@@ -331,7 +331,7 @@ class CreateKeyRequest(BaseModel):
     scopes: Optional[List[str]] = Field(
         None,
         description=(
-            "mcp.call | mcp.read | mcp.discover | mcp.probe | "
+            "mcp.call | mcp.read | mcp.review | mcp.discover | mcp.probe | "
             "audit.read | audit.export | admin"
         ),
     )

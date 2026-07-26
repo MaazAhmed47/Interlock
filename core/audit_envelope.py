@@ -70,6 +70,7 @@ from typing import Any, Mapping, Optional, Tuple
 
 HASH_V3 = 3
 HASH_V4 = 4
+HASH_V5 = 5
 
 GENESIS = "GENESIS"
 
@@ -182,6 +183,7 @@ MCP_AUDIT_V4_AUTHORITY_FIELDS: Tuple[Tuple[str, str], ...] = (
     ("authority_failure_code", STR),
 )
 MCP_AUDIT_V4_FIELDS = MCP_AUDIT_V3_FIELDS + MCP_AUDIT_V4_AUTHORITY_FIELDS
+MCP_AUDIT_V5_FIELDS = MCP_AUDIT_V3_FIELDS + (("boundary_review_metadata", JSON_OBJECT),)
 
 # Every stored security-significant column of admin_audit_log.
 ADMIN_AUDIT_V3_FIELDS: Tuple[Tuple[str, str], ...] = (
@@ -430,4 +432,25 @@ def compute_mcp_hash_v4(
     row: Mapping[str, Any], prev_hash: str, *, strict: bool = True
 ) -> str:
     envelope = canonical_mcp_envelope_v4(row, prev_hash, strict=strict)
+    return hashlib.sha256(envelope.encode("utf-8")).hexdigest()
+
+
+def canonical_mcp_envelope_v5(
+    row: Mapping[str, Any], prev_hash: str, *, strict: bool = True
+) -> str:
+    """Canonical boundary-review envelope with explicit receipt metadata."""
+    pairs = [
+        ["hash_v", str(HASH_V5)],
+        ["chain", "mcp_audit_log"],
+        ["prev_hash", _canonical_str(prev_hash)],
+    ]
+    for name, kind in MCP_AUDIT_V5_FIELDS:
+        pairs.append([name, _canonical_value(kind, row.get(name), strict=strict)])
+    return json.dumps(pairs, separators=(",", ":"), ensure_ascii=True)
+
+
+def compute_mcp_hash_v5(
+    row: Mapping[str, Any], prev_hash: str, *, strict: bool = True
+) -> str:
+    envelope = canonical_mcp_envelope_v5(row, prev_hash, strict=strict)
     return hashlib.sha256(envelope.encode("utf-8")).hexdigest()

@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional self-hosted CI boundary-review gate: a read-only
+  `POST /mcp/servers/{server_id}/boundary-review` endpoint plus a stdlib-only
+  CLI (`scripts/interlock_ci_gate.py`) that lets a release pipeline check one
+  registered MCP server's approved-vs-observed boundary without the dashboard.
+  It writes a sanitized JSON + Markdown artifact and exits with stable codes
+  (0 clean/advisory, 20 review-required, 21 quarantined, 22 inconclusive,
+  2/3/4 for configuration, authentication, and protocol failures). The review
+  never rebaselines, approves, quarantines, or changes policy; its only writes
+  are append-only evidence. Documentation and a non-active GitHub Actions
+  template ship in `docs/integrations/`.
+- New least-privilege `mcp.review` API-key scope, granted to no key by
+  default, authorizing only the boundary-review route.
+- Validated, clamped limits for the boundary review:
+  `INTERLOCK_BOUNDARY_REVIEW_TIMEOUT_S` (10s), `..._MAX_RESPONSE_BYTES` (2 MiB),
+  `..._MAX_TOOLS` (200), `..._MAX_FINDINGS` (100), and
+  `..._IDEMPOTENCY_TTL_S` (24h). Caps are enforced before any surface snapshot
+  is retained, and a breach is reported inconclusive rather than clean.
+- Idempotency for boundary reviews: the CLI sends a random `Idempotency-Key`,
+  the deployment stores only its digest bound to the verified principal and
+  server, and a repeat replays the original result without appending evidence.
+  The route sends `Cache-Control: no-store`, `Pragma: no-cache`, `Expires: 0`,
+  and `Vary`, and the CLI never follows redirects, ignores environment
+  proxies, verifies TLS, and requires HTTPS outside loopback.
+- Stricter shared credential parsing: `Authorization` must be exactly one
+  `Bearer <token>`. `Bearer Bearer <key>`, `Basic`, empty, duplicate, and
+  conflicting forms now fail closed on every route that uses the shared
+  resolver.
+- Boundary-review responses carry `Cache-Control: no-store`, `Pragma: no-cache`,
+  `Expires: 0`, and `Vary: Authorization, X-API-Key, Idempotency-Key` on every
+  status — including the router-generated 405 and the default 500 — applied by
+  ASGI middleware plus a server-error handler rather than only inside the route.
+- The boundary-review POST body is bounded by
+  `INTERLOCK_CI_BOUNDARY_REVIEW_MAX_REQUEST_BYTES` (default 8 KiB, ceiling
+  1 MiB) using the shared bounded reader now also used by the Streamable HTTP
+  transport. The body is still ignored; oversized declared or chunked bodies
+  are refused with 413 after authentication and before any write.
+- The CI gate unwraps urllib's exception chain so a TLS/certificate failure is
+  `protocol_error` (exit 4) instead of being mistaken for a transient outage,
+  and validates the base-URL path prefix (percent-encoding, backslashes,
+  control characters, doubled slashes, and `.`/`..` segments are refused;
+  `https://host/interlock` is supported for reverse-proxy deployments).
+
+### Changed
+
+- Boundary-review limits now fail closed: an explicitly set but unparsable or
+  out-of-range value raises `config.ConfigurationError` at startup, before any
+  database or network work, instead of silently substituting the default.
+  Unset or empty still selects the documented default.
+
 ## [0.2.0-alpha.1] - 2026-07-12
 
 Pre-release covering work since v0.1.0 (2026-05-30). Alpha status is

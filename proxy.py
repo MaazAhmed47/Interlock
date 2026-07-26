@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, WebSocketDisconnect  # noqa: F401
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.security import APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -24,9 +25,15 @@ from core.siem import trigger_siem_dispatch
 from core.webhook import trigger_webhook
 from config import (
     api_docs_enabled,
+    assert_boundary_review_config_valid,
     assert_offline_demo_startup_safe,
     cors_allowed_origins,
     offline_demo_enabled,
+)
+from core.http_cache_headers import (
+    NO_STORE_HEADERS,
+    BoundaryReviewNoStoreMiddleware,
+    is_boundary_review_scope,
 )
 from models.schemas import (  # noqa: F401
     ChatMessage,
@@ -57,6 +64,10 @@ _START_TIME = time.time()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     assert_offline_demo_startup_safe()
+    # Config validation runs before any database or network work: an
+    # explicitly configured but unusable limit must stop startup, never be
+    # silently replaced by a different one mid-review.
+    assert_boundary_review_config_valid()
     db.init_db()
     db.seed_legacy_keys()
     db.seed_default_policies(ROLE_POLICIES, policy_type="role")
@@ -122,7 +133,80 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class ReviewCredentialIsolationMiddleware:
+    """Deny an exact ``mcp.review`` key everywhere except its one POST.
+
+    This runs before body parsing and route code, so malformed bodies cannot
+    bypass the 403 invariant and routes such as ``/siem/test`` cannot perform
+    outbound work. Other credentials retain their legacy behavior.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = scope.get("headers") or []
+        api_keys = [
+            value.decode("latin-1").strip()
+            for name, value in headers
+            if name.lower() == b"x-api-key"
+        ]
+        authorizations = [
+            value.decode("latin-1").strip()
+            for name, value in headers
+            if name.lower() == b"authorization"
+        ]
+        credential = None
+        if len(api_keys) == 1 and not authorizations:
+            credential = api_keys[0] or None
+        elif len(authorizations) == 1 and not api_keys:
+            parts = authorizations[0].split()
+            if len(parts) == 2 and parts[0].lower() == "bearer":
+                credential = parts[1]
+
+        record = _cached_lookup_key(credential) if credential else None
+        isolated = record and set(record.get("scopes") or []) == {"mcp.review"}
+        allowed = scope.get("method") == "POST" and is_boundary_review_scope(scope)
+        if isolated and not allowed:
+            response = JSONResponse(
+                {
+                    "detail": (
+                        "Review-only API keys are isolated to POST "
+                        "/mcp/servers/{id}/boundary-review."
+                    )
+                },
+                status_code=403,
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(ReviewCredentialIsolationMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+# Pure-ASGI, so it also stamps responses the router and exception middleware
+# generate (405, 403, 429, 409, 413) — not only those the route builds.
+app.add_middleware(BoundaryReviewNoStoreMiddleware)
+
+
+async def _server_error_handler(request, exc):
+    """Starlette builds the default 500 above every user middleware, on the raw
+    send, so the anti-cache contract has to be re-applied here for the
+    boundary-review path. Every other path keeps the stock response verbatim."""
+    if is_boundary_review_scope(request.scope):
+        return JSONResponse(
+            {"detail": "Internal Server Error"},
+            status_code=500,
+            headers=dict(NO_STORE_HEADERS),
+        )
+    return PlainTextResponse("Internal Server Error", status_code=500)
+
+
+app.add_exception_handler(Exception, _server_error_handler)
 
 # API keys, rate limits, plan info, SIEM configs, and fail modes live in SQLite.
 # See core/db.py for the schema. Use /admin/keys endpoints to manage keys.
@@ -174,7 +258,7 @@ def _bump_usage_cache(key_id: int, delta: int = 1) -> None:
         _usage_cache[key_id] = (time.time(), cached[1] + delta)
 
 
-def verify_key(api_key: Optional[str]):
+def verify_key(api_key: Optional[str], *, allow_review_only: bool = False):
     """
     Look the key up in the DB. Returns (key_record_dict, raw_key) on success.
     Raises 401/403 on bad input.
@@ -186,6 +270,11 @@ def verify_key(api_key: Optional[str]):
     record = _cached_lookup_key(raw)
     if not record:
         raise HTTPException(status_code=403, detail="Invalid or revoked API key.")
+    if set(record.get("scopes") or []) == {"mcp.review"} and not allow_review_only:
+        raise HTTPException(
+            status_code=403,
+            detail="Review-only API keys are isolated to the boundary-review endpoint.",
+        )
 
     if record["monthly_limit"] > 0:
         used = _cached_usage_this_month(record["id"])
@@ -207,7 +296,9 @@ def require_scope(x_api_key: Optional[str], required_scope: str):
     never holds — ordinary runtime/read scopes do not grant each other and
     never grant `admin`.
     """
-    record, raw = verify_key(x_api_key)
+    record, raw = verify_key(
+        x_api_key, allow_review_only=required_scope == "mcp.review"
+    )
     scopes = set(record.get("scopes") or [])
     if required_scope not in scopes and not (
         required_scope != "admin" and "admin" in scopes
@@ -424,6 +515,7 @@ mcp_discover = mcp_routes.mcp_discover  # type: ignore[has-type]
 mcp_rebaseline_server = mcp_routes.mcp_rebaseline_server  # type: ignore[has-type]
 mcp_rebaseline_discover = mcp_routes.mcp_rebaseline_discover  # type: ignore[has-type]
 mcp_rebaseline_status = mcp_routes.mcp_rebaseline_status  # type: ignore[has-type]
+mcp_boundary_review = mcp_routes.mcp_boundary_review  # type: ignore[has-type]
 mcp_tools = mcp_routes.mcp_tools  # type: ignore[has-type]
 mcp_drifted_tools = mcp_routes.mcp_drifted_tools  # type: ignore[has-type]
 mcp_approve_tool_baseline = mcp_routes.mcp_approve_tool_baseline  # type: ignore[has-type]

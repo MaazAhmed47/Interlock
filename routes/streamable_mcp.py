@@ -12,6 +12,8 @@ from fastapi.responses import JSONResponse, Response
 import proxy
 from config import cors_allowed_origins
 from core import db
+from core.http_body import TOO_LARGE, read_bounded_body
+from core.http_credentials import single_api_credential
 from core.mcp_gateway import proxy_mcp_tool_call
 from core.mcp_tool_eligibility import list_streamable_tools
 from core.streamable_sessions import session_store
@@ -88,19 +90,7 @@ def _normalize_origin(value: str) -> Optional[str]:
 
 def _credential(request: Request) -> Optional[str]:
     """Accept one API-key credential without accepting ambiguous headers."""
-    api_keys = request.headers.getlist("x-api-key")
-    authorizations = request.headers.getlist("authorization")
-    if len(api_keys) > 1 or len(authorizations) > 1:
-        return None
-    if api_keys and authorizations:
-        return None
-    if api_keys:
-        return api_keys[0]
-    if authorizations:
-        value = authorizations[0]
-        if value.lower().startswith("bearer ") and value[7:].strip():
-            return value[7:].strip()
-    return None
+    return single_api_credential(request)
 
 
 def _transport_headers_error(request: Request) -> Optional[Response]:
@@ -140,34 +130,18 @@ def _principal_binding(key_info: dict[str, Any]) -> Optional[str]:
 async def _read_bounded_body(
     request: Request,
 ) -> tuple[Optional[bytes], Optional[Response]]:
-    """Bound both declared and chunked request bodies before JSON parsing."""
-    content_lengths = [
-        value
-        for name, value in request.scope.get("headers", [])
-        if name.lower() == b"content-length"
-    ]
-    if len(content_lengths) > 1:
-        return None, Response(status_code=400)
-    if content_lengths:
-        try:
-            raw_length = content_lengths[0].decode("ascii")
-        except UnicodeDecodeError:
-            return None, Response(status_code=400)
-        if not raw_length.isdigit():
-            return None, Response(status_code=400)
-        normalized = raw_length.lstrip("0") or "0"
-        maximum = str(_MAX_BODY_BYTES)
-        if len(normalized) > len(maximum) or (
-            len(normalized) == len(maximum) and normalized > maximum
-        ):
-            return None, Response(status_code=413)
+    """Bound both declared and chunked request bodies before JSON parsing.
 
-    body = bytearray()
-    async for chunk in request.stream():
-        if len(chunk) > _MAX_BODY_BYTES - len(body):
-            return None, Response(status_code=413)
-        body.extend(chunk)
-    return bytes(body), None
+    Thin adapter over the shared reader so this transport and the CI
+    boundary-review route cannot drift apart; the status mapping (400 for a
+    malformed length, 413 for oversized) is unchanged.
+    """
+    body, error = await read_bounded_body(request, _MAX_BODY_BYTES)
+    if error == TOO_LARGE:
+        return None, Response(status_code=413)
+    if error is not None:
+        return None, Response(status_code=400)
+    return body, None
 
 
 def _valid_initialize(message: dict[str, Any]) -> bool:
