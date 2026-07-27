@@ -30,6 +30,8 @@ import hashlib
 import json
 from typing import Any, Dict, Iterable, List, Optional
 
+from core.tool_metadata import material_tool_metadata
+
 SCHEMA_ID = "interlock.drift-record"
 SCHEMA_VERSION = "1"
 # trust-annotations (io.modelcontextprotocol, draft 2026-06-10): "schema" is a
@@ -234,17 +236,21 @@ def rebaseline_content_canonical_json(
     validated_tools: Optional[List[Dict[str, Any]]],
 ) -> str:
     """
-    Canonical JSON for the exact content rebaseline promotion will persist.
+    Canonical JSON for the material content rebaseline promotion will persist.
 
     Each entry commits to the complete raw tool definition (no known-field
     allowlist, so annotations, outputSchema, and future fields are covered)
-    plus the normalized metadata written to mcp_tool_metadata. Tool order and
-    JSON object key order are insignificant.
+    plus the material normalized metadata written to mcp_tool_metadata. Derived
+    provenance bookkeeping is excluded so introducing it cannot churn legacy
+    baselines; verification and other policy fields remain committed. Tool
+    order and JSON object key order are insignificant.
     """
     contents = [
         {
             "tool": entry.get("tool") or {},
-            "normalized_metadata": entry.get("normalized_metadata") or {},
+            "normalized_metadata": material_tool_metadata(
+                entry.get("normalized_metadata")
+            ),
         }
         for entry in (validated_tools or [])
     ]

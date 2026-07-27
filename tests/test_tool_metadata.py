@@ -33,6 +33,7 @@ assert metadata["side_effect"] == "read_only"
 assert metadata["externality"] == "internal"
 assert metadata["verification_level"] == "mcp_annotations"
 assert metadata["source"] == "mcp_annotations"
+assert metadata["field_sources"]["data_classes"] == "heuristic"
 assert "read" in metadata["effects"]
 assert metadata["confidence"] >= 0.7
 print("  OK")
@@ -64,6 +65,7 @@ metadata = normalize_tool_metadata(
 )
 assert metadata["verification_level"] == "interlock_meta"
 assert metadata["source"] == "interlock_meta"
+assert metadata["field_sources"]["data_classes"] == "interlock_meta"
 assert metadata["side_effect"] == "mutating"
 assert metadata["externality"] == "external"
 assert names(metadata["effects"]) == {"share"}
@@ -96,6 +98,7 @@ metadata = normalize_tool_metadata(
 )
 assert metadata["verification_level"] == "security_meta"
 assert metadata["source"] == "security_meta"
+assert metadata["field_sources"]["data_classes"] == "security_meta"
 assert metadata["effects"] == ["export"]
 assert metadata["side_effect"] == "read_only"
 assert metadata["externality"] == "external"
@@ -116,6 +119,7 @@ metadata = normalize_tool_metadata(
 )
 assert metadata["verification_level"] == "heuristic"
 assert metadata["source"] == "heuristic"
+assert metadata["field_sources"]["data_classes"] == "heuristic"
 assert metadata["side_effect"] == "read_only"
 assert "read" in metadata["effects"]
 assert "user_content" in metadata["data_classes"]

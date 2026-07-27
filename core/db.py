@@ -34,7 +34,7 @@ from core.ema_context import (
     current_authority_call_id,
 )
 from core.mcp_drift import classify_tool_drift
-from core.tool_metadata import normalize_tool_metadata
+from core.tool_metadata import material_tool_metadata, normalize_tool_metadata
 
 logger = logging.getLogger("interlock.db")
 
@@ -4159,7 +4159,8 @@ def upsert_mcp_tool_metadata(
             changed = (
                 previous_schema_hash != tool_schema_hash
                 or previous_description_hash != description_hash
-                or previous_metadata != (normalized_metadata or {})
+                or material_tool_metadata(previous_metadata)
+                != material_tool_metadata(normalized_metadata)
                 or previous_output_schema != current_output_schema
             )
             if changed:

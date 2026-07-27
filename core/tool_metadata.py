@@ -6,6 +6,7 @@ This module preserves that distinction by recording source, verification level,
 confidence, and warnings whenever metadata is inferred or inconsistent.
 """
 
+import copy
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Set
@@ -43,6 +44,8 @@ SOURCE_SECURITY = "security_meta"
 SOURCE_MCP = "mcp_annotations"
 SOURCE_HEURISTIC = "heuristic"
 SOURCE_UNKNOWN = "unknown"
+TRUSTED_DECLARED_DATA_CLASS_SOURCES = {SOURCE_INTERLOCK, SOURCE_SECURITY}
+DERIVED_PROVENANCE_FIELDS = {"field_sources"}
 
 READ_ACTIONS = {"read", "list", "get", "fetch", "search", "query", "lookup", "show"}
 CREATE_ACTIONS = {"create", "add", "new", "upload"}
@@ -139,6 +142,10 @@ class ToolMetadata:
     verification_level: str = SOURCE_UNKNOWN
     confidence: float = 0.0
     warnings: List[str] = field(default_factory=list)
+    # Positive, field-specific provenance for normalized values. Consumers that
+    # make blocking decisions must use this rather than inferring trust from an
+    # overall verification level or from the absence of an `inferred` marker.
+    field_sources: Dict[str, str] = field(default_factory=dict)
     # Fields whose final value came only from heuristic inference (no declared
     # source). Consumers use this to avoid letting low-confidence inference, on
     # its own, drive a hard decision such as deny.
@@ -151,6 +158,7 @@ class ToolMetadata:
         data["required_scopes"] = _ordered_unique(data["required_scopes"])
         data["warnings"] = _ordered_unique(data["warnings"])
         data["inferred"] = _ordered_unique(data["inferred"])
+        data["field_sources"] = dict(sorted(data["field_sources"].items()))
         return data
 
 
@@ -181,8 +189,8 @@ def normalize_tool_metadata(tool: dict) -> Dict[str, Any]:
         confidence=_confidence_for_source(strongest_source),
     )
 
-    for _source, partial, _confidence in sources:
-        _merge_missing(output, partial)
+    for source, partial, _confidence in sources:
+        _merge_missing(output, partial, source)
 
     warnings: List[str] = []
     for _source, partial, _confidence in sources:
@@ -236,6 +244,61 @@ def normalize_tool_metadata(tool: dict) -> Dict[str, Any]:
             output.inferred.append(f)
 
     return output.to_dict()
+
+
+def material_tool_metadata(metadata: Optional[dict]) -> Dict[str, Any]:
+    """Return metadata without derived provenance bookkeeping.
+
+    Verification level, source, inferred fields, warnings, and policy-relevant
+    values remain material. Only reconstructable bookkeeping is excluded from
+    drift comparison and content-addressed surface fingerprints.
+    """
+    value = copy.deepcopy(metadata) if isinstance(metadata, dict) else {}
+    for field_name in DERIVED_PROVENANCE_FIELDS:
+        value.pop(field_name, None)
+    return value
+
+
+def restore_approved_data_class_provenance(
+    metadata: Optional[dict], approved_raw_tool: Optional[dict]
+) -> Dict[str, Any]:
+    """Reconstruct legacy data-class provenance from the approved raw tool.
+
+    Stored provenance is never authoritative on its own. The data-class marker
+    is removed and reconstructed on every call only when the persisted raw
+    approved definition proves the same declared data classes came from trusted
+    security metadata.
+    """
+    restored = copy.deepcopy(metadata) if isinstance(metadata, dict) else {}
+    field_sources = restored.get("field_sources")
+    restored_sources = dict(field_sources) if isinstance(field_sources, dict) else {}
+    restored_sources.pop("data_classes", None)
+    if restored_sources:
+        restored["field_sources"] = restored_sources
+    else:
+        restored.pop("field_sources", None)
+    derived = normalize_tool_metadata(
+        approved_raw_tool if isinstance(approved_raw_tool, dict) else {}
+    )
+    derived_sources = derived.get("field_sources") or {}
+    source = str(derived_sources.get("data_classes") or "")
+    if source not in TRUSTED_DECLARED_DATA_CLASS_SOURCES:
+        return restored
+    approved_classes = {
+        str(value).strip().lower()
+        for value in restored.get("data_classes") or []
+        if str(value).strip()
+    }
+    derived_classes = {
+        str(value).strip().lower()
+        for value in derived.get("data_classes") or []
+        if str(value).strip()
+    }
+    if not approved_classes or approved_classes != derived_classes:
+        return restored
+    restored_sources["data_classes"] = source
+    restored["field_sources"] = restored_sources
+    return restored
 
 
 def _parse_mcp_annotations(annotations: dict) -> Dict[str, Any]:
@@ -598,27 +661,33 @@ def _detect_conflicts(
     return warnings
 
 
-def _merge_missing(target: ToolMetadata, partial: Dict[str, Any]) -> None:
+def _merge_missing(target: ToolMetadata, partial: Dict[str, Any], source: str) -> None:
     if not partial:
         return
     if not target.effects and partial.get("effects"):
         target.effects = _clean_list(partial["effects"], VALID_EFFECTS)
+        target.field_sources["effects"] = source
     if target.side_effect == "unknown" and partial.get("side_effect"):
         target.side_effect = (
             _clean_value(partial["side_effect"], VALID_SIDE_EFFECTS) or "unknown"
         )
+        target.field_sources["side_effect"] = source
     if not target.data_classes and partial.get("data_classes"):
         target.data_classes = _clean_list(partial["data_classes"], VALID_DATA_CLASSES)
+        target.field_sources["data_classes"] = source
     if target.externality == "unknown" and partial.get("externality"):
         target.externality = (
             _clean_value(partial["externality"], VALID_EXTERNALITY) or "unknown"
         )
+        target.field_sources["externality"] = source
     if target.identity_mode == "unknown" and partial.get("identity_mode"):
         target.identity_mode = (
             _clean_value(partial["identity_mode"], VALID_IDENTITY_MODES) or "unknown"
         )
+        target.field_sources["identity_mode"] = source
     if not target.required_scopes and partial.get("required_scopes"):
         target.required_scopes = _clean_string_list(partial["required_scopes"])
+        target.field_sources["required_scopes"] = source
 
 
 def _has_signal(partial: Dict[str, Any]) -> bool:

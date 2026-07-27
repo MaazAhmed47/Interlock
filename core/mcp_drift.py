@@ -6,11 +6,16 @@ answers what changed, how risky it is, and what the gateway should do.
 """
 
 import difflib
+import ipaddress
 import re
 from typing import Any, Dict, Iterable, List, Optional, Set
+from urllib.parse import urlsplit, urlunsplit
 
 from core.tool_inspector import DANGEROUS_FILES
-from core.tool_metadata import normalize_tool_metadata
+from core.tool_metadata import (
+    normalize_tool_metadata,
+    restore_approved_data_class_provenance,
+)
 
 # ── Description-exfiltration detection (added-text conjunction) ────────────────
 # A description rug-pull adds an instruction that (S) touches a sensitive
@@ -70,7 +75,7 @@ EGRESS_VERB_PATTERNS = [
     r"\biwr\b",
 ]
 
-DELIVERY_CONTEXT_PATTERNS = [
+CONCRETE_DELIVERY_CONTEXT_PATTERNS = [
     r"\bpayload\b",
     r"\brequest body\b",
     r"\bcopy\b",
@@ -78,6 +83,52 @@ DELIVERY_CONTEXT_PATTERNS = [
     r"\bbackup\b",
     r"\barchive\b",
 ]
+
+CONCRETE_CONTEXT_ACTION_PATTERNS = [
+    *CONCRETE_DELIVERY_CONTEXT_PATTERNS,
+    r"\binclud(?:e|ed|es|ing)\b",
+    r"\bplac(?:e|ed|es|ing)\b",
+    r"\battach(?:ed|es|ing)?\b",
+    r"\bpackag(?:e|ed|es|ing)\b",
+    r"\bcollect(?:ed|s|ing)?\b",
+    r"\bcop(?:y|ied|ies|ying)\b",
+    r"\bbackup(?:s|ped|ping)?\b",
+    r"\barchive(?:d|s|ing)?\b",
+]
+
+DESCRIPTION_DELIVERY_VERB_PATTERNS = [
+    r"\bsend\b",
+    r"\bforward\b",
+    r"\bupload\b",
+    r"\btransmit\b",
+    r"\bdeliver\b",
+    r"\bpost\b",
+    r"\bshare\b",
+    r"\bexport\b",
+]
+
+DOCUMENTATION_CONTEXT_PATTERN = re.compile(
+    r"\b(?:documentation|documented|docs?|guide|glossary|example|word|how\s+to)\b",
+    re.IGNORECASE,
+)
+
+REFERENTIAL_RESOURCE_PATTERNS = [
+    r"\b(?:retrieved|returned)\s+(?:sensitive\s+)?(?:content|records)\b",
+]
+
+TRUSTED_REFERENTIAL_DATA_CLASSES = {
+    "user_content",
+    "pii",
+    "phi",
+    "financial",
+    "legal",
+    "secrets",
+}
+
+TRUSTED_DATA_CLASS_SOURCES = {
+    "security_meta",
+    "interlock_meta",
+}
 
 # Hosts that are NOT an external destination (loopback, RFC-1918, link-local,
 # cloud metadata, *.local / *.internal).
@@ -172,7 +223,9 @@ def classify_tool_drift(
     """Classify drift between prior and current MCP tool definitions."""
     previous_tool = previous_tool or {}
     current_tool = current_tool or {}
-    previous_metadata = previous_metadata or {}
+    previous_metadata = restore_approved_data_class_provenance(
+        previous_metadata, previous_tool
+    )
     current_metadata = current_metadata or {}
 
     findings: List[Dict[str, Any]] = []
@@ -187,7 +240,11 @@ def classify_tool_drift(
         findings.append(
             _finding("description_changed", "minor", "Tool description changed.")
         )
-        exfil = _detect_description_exfiltration(prev_description, curr_description)
+        exfil = _detect_description_exfiltration(
+            prev_description,
+            curr_description,
+            previous_metadata,
+        )
         if exfil is not None:
             findings.append(exfil)
 
@@ -847,52 +904,349 @@ def _search_any(text: str, patterns: Iterable[str]):
 
 
 def _is_internal_host(host: str) -> bool:
-    host = host.split(":")[0].strip().lower()
-    return any(re.match(p, host) for p in _INTERNAL_HOST_PATTERNS)
+    normalized = host.strip().lower().rstrip(".")
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        return any(re.match(pattern, normalized) for pattern in _INTERNAL_HOST_PATTERNS)
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return bool(
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_unspecified
+    )
 
 
-def _external_destination(text: str) -> Optional[str]:
-    """Return an external network destination found in text, or None. A URL to
-    an internal/loopback/metadata host does not count; neither does a bare word.
-    Used only inside the conjunction, so a lone doc-link never escalates."""
-    for m in re.finditer(r"https?://([^\s/\"'>)]+)", text, re.IGNORECASE):
-        if not _is_internal_host(m.group(1)):
-            return m.group(0)
-    for m in re.finditer(r"\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b", text, re.IGNORECASE):
-        return m.group(0)
-    return None
+def _canonical_url_path(path: str) -> str:
+    """Remove RFC-style dot segments without decoding or exposing the path."""
+    segments: List[str] = []
+    for segment in (path or "/").split("/"):
+        if segment in {"", "."}:
+            continue
+        if segment == "..":
+            if segments:
+                segments.pop()
+            continue
+        segments.append(segment)
+    return "/" + "/".join(segments)
+
+
+def _canonical_external_destinations(text: str) -> List[Dict[str, Any]]:
+    """Return every external-destination occurrence with canonical identity.
+
+    Scheme and host casing, default ports, and trailing path slashes do not
+    create a new endpoint. Query strings remain significant because they can
+    route delivery to a different recipient or sink. Occurrences are not
+    deduplicated here: candidate evaluation needs each source span. Only the
+    safe reference selected for emitted evidence is retained later.
+    """
+    destinations: List[Dict[str, Any]] = []
+    for match in re.finditer(r"https?://[^\s\"'<>]+", text, re.IGNORECASE):
+        raw = match.group(0).rstrip(".,;:!)]}")
+        try:
+            parsed = urlsplit(raw)
+            host = parsed.hostname
+            port = parsed.port
+        except ValueError:
+            continue
+        if not host or _is_internal_host(host):
+            continue
+        scheme = parsed.scheme.lower()
+        normalized_host = host.lower()
+        if ":" in normalized_host:
+            normalized_host = f"[{normalized_host}]"
+        if port is not None and not (
+            (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+        ):
+            normalized_host = f"{normalized_host}:{port}"
+        path = _canonical_url_path(parsed.path)
+        canonical = urlunsplit((scheme, normalized_host, path, parsed.query, ""))
+        destinations.append(
+            {
+                "canonical": canonical,
+                "evidence_reference": f"external-host:{normalized_host}",
+                "start": match.start(),
+                "end": match.start() + len(raw),
+            }
+        )
+    for match in re.finditer(r"\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b", text, re.IGNORECASE):
+        raw = match.group(0)
+        canonical = f"mailto:{raw.lower()}"
+        domain = raw.rsplit("@", 1)[-1].lower()
+        destinations.append(
+            {
+                "canonical": canonical,
+                "evidence_reference": f"external-email-domain:{domain}",
+                "start": match.start(),
+                "end": match.end(),
+            }
+        )
+    return destinations
+
+
+def _mask_url_like_text(text: str) -> str:
+    """Blank URL and email spans while preserving offsets for safe matching."""
+    masked = list(text)
+    patterns = (
+        r"https?://[^\s\"'<>]+",
+        r"\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            masked[match.start() : match.end()] = " " * (match.end() - match.start())
+    return "".join(masked)
+
+
+def _resource_token_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    delimiters = set(" \t\r\n\"'<>|,;()[]{}")
+    token_start = start
+    token_end = end
+    while token_start > 0 and text[token_start - 1] not in delimiters:
+        token_start -= 1
+    while token_end < len(text) and text[token_end] not in delimiters:
+        token_end += 1
+    return token_start, token_end
+
+
+def _concrete_sensitive_resources(added_text: str) -> List[Dict[str, Any]]:
+    masked = _mask_url_like_text(added_text)
+    resources: List[Dict[str, Any]] = []
+    seen_tokens: Set[tuple[int, int]] = set()
+    for pattern in SENSITIVE_PATH_PATTERNS:
+        for match in re.finditer(pattern, masked, re.IGNORECASE):
+            token_start, token_end = _resource_token_bounds(
+                masked, match.start(), match.end()
+            )
+            token_key = (token_start, token_end)
+            if token_key in seen_tokens:
+                continue
+            seen_tokens.add(token_key)
+            token = masked[token_start:token_end]
+            critical = _search_any(token, CRITICAL_RESOURCE_PATTERNS) is not None
+            resources.append(
+                {
+                    "start": token_start,
+                    "end": token_end,
+                    "critical": critical,
+                    "evidence_reference": (
+                        "sensitive-resource:credential-or-private-key"
+                        if critical
+                        else "sensitive-resource:protected-file-or-path"
+                    ),
+                }
+            )
+    return sorted(resources, key=lambda value: (value["start"], value["end"]))
+
+
+def _clause_start(text: str, position: int) -> int:
+    boundaries = list(re.finditer(r"(?:[!?;](?:\s|$)|\.(?:\s|$)|\n)", text[:position]))
+    return boundaries[-1].end() if boundaries else 0
+
+
+def _has_clause_boundary(text: str) -> bool:
+    return re.search(r"(?:[!?;](?:\s|$)|\.(?:\s|$)|\n)", text) is not None
+
+
+def _action_has_preceding_documentation_context(text: str, action_start: int) -> bool:
+    clause_start = _clause_start(text, action_start)
+    prefix = _mask_url_like_text(text[clause_start:action_start])
+    return DOCUMENTATION_CONTEXT_PATTERN.search(prefix) is not None
+
+
+def _action_targets_documentation(
+    text: str, action_end: int, resource_start: int
+) -> bool:
+    """Reject cases where the apparent action acts on documentation itself."""
+    if resource_start <= action_end:
+        return False
+    between = _mask_url_like_text(text[action_end:resource_start])
+    return (
+        re.match(
+            r"\s*(?:the\s+)?(?:documentation|documented|docs?|guide|glossary|example)\b",
+            between,
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
+def _concrete_delivery_signals(
+    added_text: str,
+    resource: Dict[str, Any],
+) -> tuple[Optional[str], Optional[str]]:
+    """Preserve concrete-resource detection without FN-5 novelty semantics."""
+    destinations = _canonical_external_destinations(added_text)
+    if not destinations:
+        return None, None
+    action_text = _mask_url_like_text(added_text)
+    action_patterns = [*EGRESS_VERB_PATTERNS, *CONCRETE_CONTEXT_ACTION_PATTERNS]
+    resource_start = int(resource["start"])
+    resource_end = int(resource["end"])
+    for destination in destinations:
+        destination_start = int(destination["start"])
+        destination_end = int(destination["end"])
+        for pattern in action_patterns:
+            for action in re.finditer(pattern, action_text, re.IGNORECASE):
+                bounds = (
+                    min(action.start(), resource_start, destination_start),
+                    max(action.end(), resource_end, destination_end),
+                )
+                if bounds[1] - bounds[0] > 300:
+                    continue
+                if _has_clause_boundary(added_text[bounds[0] : bounds[1]]):
+                    continue
+                if _action_has_preceding_documentation_context(
+                    added_text, action.start()
+                ):
+                    continue
+                if _action_targets_documentation(
+                    added_text, action.end(), resource_start
+                ):
+                    continue
+                return action.group(0), str(destination["evidence_reference"])
+    return None, None
+
+
+def _new_external_destinations(
+    approved_text: str, added_text: str
+) -> List[Dict[str, Any]]:
+    approved = {
+        destination["canonical"]
+        for destination in _canonical_external_destinations(approved_text)
+    }
+    added = _canonical_external_destinations(added_text)
+    return [
+        destination for destination in added if destination["canonical"] not in approved
+    ]
+
+
+def _referential_delivery_clause(
+    added_text: str,
+    referential_resource: str,
+    destinations: List[Dict[str, Any]],
+) -> tuple[Optional[str], Optional[str]]:
+    resource_pattern = re.compile(re.escape(referential_resource), re.IGNORECASE)
+    for destination in destinations:
+        destination_start = int(destination["start"])
+        for verb_pattern in DESCRIPTION_DELIVERY_VERB_PATTERNS:
+            for verb in re.finditer(verb_pattern, added_text, re.IGNORECASE):
+                if verb.start() >= destination_start:
+                    continue
+                resource = resource_pattern.search(
+                    added_text, verb.end(), destination_start
+                )
+                if resource is None or destination_start - verb.start() > 200:
+                    continue
+                clause_start = (
+                    max(added_text.rfind(mark, 0, verb.start()) for mark in ".!?;\n")
+                    + 1
+                )
+                prefix = added_text[clause_start : verb.start()]
+                if DOCUMENTATION_CONTEXT_PATTERN.search(prefix):
+                    continue
+                transfer = added_text[resource.end() : destination_start]
+                if not re.search(r"\b(?:to|into|via)\b", transfer, re.IGNORECASE):
+                    continue
+                if re.search(r"[.!?;\n]", added_text[verb.start() : destination_start]):
+                    continue
+                return verb.group(0), str(destination["evidence_reference"])
+    return None, None
+
+
+def _referential_delivery_signals(
+    approved_text: str,
+    added_text: str,
+    referential_resource: Optional[str] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    """Return added-text delivery and destination signals.
+
+    This deliberately excludes broader transfer concepts such as remote sync or
+    mirroring. A later FN-10 change can extend or reuse the signal boundary
+    without changing today's description-forwarding behavior.
+    """
+    destinations = _new_external_destinations(approved_text, added_text)
+    if not destinations:
+        return None, None
+    if not referential_resource:
+        return None, None
+    return _referential_delivery_clause(added_text, referential_resource, destinations)
+
+
+def _trusted_referential_resource(
+    added_text: str, approved_metadata: Optional[dict]
+) -> Optional[str]:
+    metadata = approved_metadata if isinstance(approved_metadata, dict) else {}
+    field_sources = metadata.get("field_sources")
+    if not isinstance(field_sources, dict):
+        return None
+    data_class_source = str(field_sources.get("data_classes") or "").lower()
+    if data_class_source not in TRUSTED_DATA_CLASS_SOURCES:
+        return None
+    approved_data_classes = {
+        str(value).strip().lower()
+        for value in metadata.get("data_classes") or []
+        if str(value).strip()
+    }
+    if not approved_data_classes.intersection(TRUSTED_REFERENTIAL_DATA_CLASSES):
+        return None
+    return _search_any(added_text, REFERENTIAL_RESOURCE_PATTERNS)
 
 
 def _detect_description_exfiltration(
-    prev_desc: str, curr_desc: str
+    prev_desc: str,
+    curr_desc: str,
+    approved_metadata: Optional[dict] = None,
 ) -> Optional[Dict[str, str]]:
     """Escalate a description change ONLY when its added text conjunctively
-    instructs (S) accessing a sensitive resource, via an (egress) action, to an
-    (external) destination. Each signal alone is insufficient — that keeps
-    rewords and doc-links minor."""
+    instructs accessing a sensitive resource, via an egress action, to an
+    external destination. The resource must be either concrete or a narrow
+    referential phrase corroborated by trusted approved data classes. Each
+    signal alone is insufficient, so rewords and documentation links stay
+    minor."""
     added = _added_description_text(prev_desc, curr_desc)
     if not added:
         return None
-    sensitive = _search_any(added, SENSITIVE_PATH_PATTERNS)
-    if not sensitive:
+    concrete_candidates = _concrete_sensitive_resources(added)
+    referential_sensitive = _trusted_referential_resource(added, approved_metadata)
+    concrete_results: List[Dict[str, str]] = []
+    for concrete_candidate in concrete_candidates:
+        egress, destination = _concrete_delivery_signals(added, concrete_candidate)
+        if not egress or not destination:
+            continue
+        concrete_results.append(
+            {
+                "severity": ("critical" if concrete_candidate["critical"] else "high"),
+                "sensitive_reference": str(concrete_candidate["evidence_reference"]),
+                "destination": destination,
+            }
+        )
+    if concrete_results:
+        strongest = max(
+            concrete_results,
+            key=lambda result: SEVERITY_ORDER[result["severity"]],
+        )
+        severity = strongest["severity"]
+        sensitive_reference = strongest["sensitive_reference"]
+        destination = strongest["destination"]
+    elif referential_sensitive is not None:
+        egress, destination = _referential_delivery_signals(
+            prev_desc, added, referential_sensitive
+        )
+        if not egress or not destination:
+            return None
+        sensitive_reference = "sensitive-resource:corroborated-approved-data-class"
+        severity = "high"
+    else:
         return None
-    egress = _search_any(added, EGRESS_VERB_PATTERNS)
-    if not egress:
-        egress = _search_any(added, DELIVERY_CONTEXT_PATTERNS)
-    if not egress:
-        return None
-    destination = _external_destination(added)
-    if not destination:
-        return None
-    is_critical = _search_any(added, CRITICAL_RESOURCE_PATTERNS) is not None
-    severity = "critical" if is_critical else "high"
     return _finding(
         "description_exfiltration",
         severity,
         (
-            "Description now instructs accessing a sensitive resource "
-            f"('{sensitive}') and sending it to an external destination "
-            f"('{destination}'). This was not in the approved description."
+            "Description added a delivery instruction for "
+            f"{sensitive_reference} to {destination}. "
+            "This was not in the approved description."
         ),
     )
 
