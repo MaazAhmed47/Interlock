@@ -443,6 +443,7 @@ CREATE TABLE IF NOT EXISTS mcp_audit_log (
     observed_outcome    TEXT    NOT NULL DEFAULT '',
     observed_status_code INTEGER,
     observed_error_class TEXT   NOT NULL DEFAULT '',
+    boundary_review_metadata TEXT NOT NULL DEFAULT '{}',
     drift_status        TEXT    NOT NULL DEFAULT '',
     drift_severity      TEXT    NOT NULL DEFAULT 'none',
     drift_action        TEXT    NOT NULL DEFAULT 'allow',
@@ -537,6 +538,25 @@ CREATE TABLE IF NOT EXISTS mcp_baseline_versions (
 
 CREATE INDEX IF NOT EXISTS idx_mcp_baseline_versions_server
     ON mcp_baseline_versions(server_id, version);
+
+-- Idempotency ledger for CI boundary reviews. key_digest is a sha256 of the
+-- caller-supplied Idempotency-Key: the raw key is never stored. The row is
+-- bound to the verified principal AND the reviewed server, so replaying a
+-- key under a different identity or a different server fails closed instead
+-- of returning someone else's review. Rows expire under a bounded TTL.
+CREATE TABLE IF NOT EXISTS ci_review_idempotency (
+    key_digest        TEXT NOT NULL PRIMARY KEY,
+    principal_binding TEXT NOT NULL,
+    server_id         TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'in_progress',
+    response_json     TEXT,
+    audit_id          INTEGER,
+    created_at        TEXT NOT NULL,
+    expires_at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ci_review_idempotency_expiry
+    ON ci_review_idempotency(expires_at);
 
 CREATE TABLE IF NOT EXISTS mcp_response_profiles (
     server_id    TEXT    NOT NULL,
@@ -792,6 +812,12 @@ def init_db() -> None:
             "observed_error_class",
             "TEXT NOT NULL DEFAULT ''",
         )
+        _ensure_column(
+            conn,
+            "mcp_audit_log",
+            "boundary_review_metadata",
+            "TEXT NOT NULL DEFAULT '{}'",
+        )
         _ensure_column(conn, "api_keys", "max_response_bytes", "INTEGER DEFAULT 50000")
         _ensure_column(conn, "api_keys", "max_array_items", "INTEGER DEFAULT 500")
         # Existing keys migrate to runtime-only. Grandfathering them as admin
@@ -1035,6 +1061,7 @@ _MCP_HASH_VERSIONS = (
     2,
     audit_envelope.HASH_V3,
     audit_envelope.HASH_V4,
+    audit_envelope.HASH_V5,
 )
 _ADMIN_HASH_VERSIONS = (1, audit_envelope.HASH_V3)
 
@@ -1046,6 +1073,12 @@ def _recompute_mcp_audit_hash(row: Dict[str, Any]) -> str:
     exactly {1, 2, 3}; callers turn that into a failed verification.
     """
     version = audit_envelope.require_hash_version(row.get("hash_v"), _MCP_HASH_VERSIONS)
+    if version == audit_envelope.HASH_V5:
+        return audit_envelope.compute_mcp_hash_v5(
+            row,
+            row.get("prev_hash") or "",
+            strict=False,
+        )
     if version == audit_envelope.HASH_V4:
         return audit_envelope.compute_mcp_hash_v4(
             row,
@@ -1237,6 +1270,31 @@ def _serialized_chain_append(conn, table: str):
             logger.exception("Failed to roll back %s chain append", table)
         raise
     conn.execute("COMMIT")
+
+
+def _commit_verified_mcp_audit_transaction(conn) -> None:
+    """Single injectable commit boundary for receipt-bearing audit writes."""
+    conn.execute("COMMIT")
+
+
+@contextmanager
+def _verified_mcp_audit_transaction(conn):
+    """Serialize and atomically commit snapshots plus one verified receipt."""
+    conn.execute("BEGIN" if _is_postgres_conn(conn) else "BEGIN IMMEDIATE")
+    try:
+        if _is_postgres_conn(conn):
+            conn.execute(
+                "SELECT pg_advisory_xact_lock(?)",
+                (_audit_chain_lock_key("mcp_audit_log"),),
+            )
+        yield
+        _commit_verified_mcp_audit_transaction(conn)
+    except BaseException:
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            logger.exception("Failed to roll back verified MCP audit transaction")
+        raise
 
 
 def _validate_identifier(value: str) -> None:
@@ -1522,6 +1580,11 @@ ADMIN_ROLE_DEFAULTS = {
 API_KEY_SCOPES = {
     "mcp.call",
     "mcp.read",
+    # Read-only boundary review of an ALREADY REGISTERED server, for the CI
+    # gate. Narrower than mcp.discover: the target URL comes from the
+    # registry, never from the caller, and the review persists no approval,
+    # baseline, quarantine, or policy state.
+    "mcp.review",
     "mcp.discover",
     "mcp.probe",
     "audit.read",
@@ -2975,6 +3038,17 @@ def _mcp_audit_row_to_dict(row) -> Dict[str, Any]:
             d[col] = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             d[col] = []
+    raw_boundary_metadata = d.get("boundary_review_metadata")
+    if not isinstance(raw_boundary_metadata, dict):
+        try:
+            parsed_boundary_metadata = json.loads(raw_boundary_metadata or "{}")
+        except (json.JSONDecodeError, TypeError):
+            parsed_boundary_metadata = {}
+        d["boundary_review_metadata"] = (
+            parsed_boundary_metadata
+            if isinstance(parsed_boundary_metadata, dict)
+            else {}
+        )
     for col in ("authority_audiences", "authority_scopes"):
         raw = d.get(col)
         if raw is None:
@@ -3336,6 +3410,252 @@ def get_rebaseline_review_snapshot(server_id: str, limit: int = 100) -> Dict[str
             "candidate": _rebaseline_candidate_from_conn(conn, server_id),
             "versions": _baseline_versions_from_conn(conn, server_id, limit),
         }
+
+
+def get_boundary_review_snapshot(server_id: str) -> Dict[str, Any]:
+    """
+    One coherent server-side view for a CI boundary review.
+
+    Registry row, active baseline (hash AND the exact tool content it hashes),
+    per-tool metadata, and the enforced review queue are read inside the
+    server's rebaseline lock domain, so a concurrent promotion cannot hand a
+    review a baseline hash from one moment and tool definitions from another.
+
+    ``snapshot_version`` fingerprints everything a review's conclusion depends
+    on. The caller re-reads it after its network observation and refuses to
+    conclude if it moved.
+    """
+    with (
+        _db_lock,
+        get_conn() as conn,
+        _rebaseline_transaction(conn, server_id),
+    ):
+        server_row = conn.execute(
+            "SELECT * FROM mcp_servers WHERE server_id = ?", (server_id,)
+        ).fetchone()
+        if server_row is None:
+            return {"ok": False, "error": "server_not_found", "server_id": server_id}
+        server = _mcp_row_to_dict(server_row)
+        active = _active_baseline_from_conn(conn, server_id)
+        tool_rows = conn.execute(
+            "SELECT * FROM mcp_tool_metadata WHERE server_id = ? ORDER BY tool_name ASC",
+            (server_id,),
+        ).fetchall()
+
+    tools = [_mcp_tool_metadata_row_to_dict(row) for row in tool_rows]
+    # Same predicate list_drifted_mcp_tools applies in SQL. Canonicalization
+    # only ever escalates a record, so filtering after it yields the same set.
+    drifted = [
+        tool
+        for tool in tools
+        if (tool.get("status") or "active") != "active"
+        or (tool.get("drift_severity") or "none") != "none"
+        or (tool.get("drift_action") or "allow") != "allow"
+    ]
+    fingerprint = drift_evidence.canonical_json_bytes(
+        {
+            "surface_hash": active.get("surface_hash") or "",
+            "verified": bool(server.get("verified")),
+            "environment": str(server.get("environment") or ""),
+            "allowed_tools": sorted(
+                str(t) for t in (server.get("allowed_tools") or [])
+            ),
+            "blocked_tools": sorted(
+                str(t) for t in (server.get("blocked_tools") or [])
+            ),
+            "tools": sorted(
+                [
+                    str(tool.get("tool_name") or ""),
+                    str(tool.get("status") or "active"),
+                    str(tool.get("drift_severity") or "none"),
+                    str(tool.get("drift_action") or "allow"),
+                    str(tool.get("tool_schema_hash") or ""),
+                    str(tool.get("description_hash") or ""),
+                ]
+                for tool in tools
+            ),
+        }
+    )
+    return {
+        "ok": True,
+        "server_id": server_id,
+        "server": server,
+        "active": active,
+        "tools": tools,
+        "drifted": drifted,
+        "snapshot_version": "sha256:" + hashlib.sha256(fingerprint).hexdigest(),
+    }
+
+
+# ── CI boundary-review idempotency ───────────────────────────────────────────
+CI_REVIEW_IDEMPOTENCY_STALE_SECONDS = 300
+
+
+def hash_idempotency_key(raw_key: str) -> str:
+    """Digest of a caller-supplied Idempotency-Key. The raw key never persists."""
+    return hashlib.sha256(str(raw_key or "").encode("utf-8")).hexdigest()
+
+
+def _iso_age_seconds(value: str, now: datetime) -> float:
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return float("inf")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (now - parsed).total_seconds()
+
+
+def _ci_review_response_has_verified_receipt(
+    response: Dict[str, Any], audit_id: Optional[int]
+) -> bool:
+    receipt = (response.get("evidence") or {}).get("receipt") or {}
+    return (
+        isinstance(audit_id, int)
+        and not isinstance(audit_id, bool)
+        and audit_id > 0
+        and receipt.get("audit_id") == audit_id
+        and receipt.get("hash_chained") is True
+        and receipt.get("chain_verified") is True
+        and receipt.get("tamper_evident") is True
+        and receipt.get("receipt_verification_state") == "verified"
+    )
+
+
+def reserve_ci_review_idempotency(
+    key_digest: str,
+    principal_binding: str,
+    server_id: str,
+    ttl_seconds: int,
+    stale_seconds: int = CI_REVIEW_IDEMPOTENCY_STALE_SECONDS,
+) -> Dict[str, Any]:
+    """
+    Claim one idempotency key for a boundary review, or report why not.
+
+    Outcomes: ``reserved`` (caller owns it and must run the review),
+    ``replay`` (a completed review is returned verbatim), ``in_progress``
+    (another worker holds it), or ``conflict`` (the key exists under a
+    different principal or server — fails closed rather than leaking a
+    review across identities). Uniqueness is enforced by the primary key, so
+    two Postgres replicas racing the same key cannot both reserve it.
+    """
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    expires_iso = (now + timedelta(seconds=int(ttl_seconds))).isoformat()
+    with _db_lock, get_conn() as conn:
+        conn.execute(
+            "DELETE FROM ci_review_idempotency WHERE expires_at <= ?", (now_iso,)
+        )
+        inserted = conn.execute(
+            """
+            INSERT INTO ci_review_idempotency
+              (key_digest, principal_binding, server_id, status, response_json,
+               audit_id, created_at, expires_at)
+            VALUES (?, ?, ?, 'in_progress', NULL, NULL, ?, ?)
+            ON CONFLICT (key_digest) DO NOTHING
+            """,
+            (key_digest, principal_binding, server_id, now_iso, expires_iso),
+        )
+        if getattr(inserted, "rowcount", 0) == 1:
+            return {"outcome": "reserved"}
+
+        row = conn.execute(
+            "SELECT principal_binding, server_id, status, response_json, audit_id,"
+            " created_at FROM ci_review_idempotency WHERE key_digest = ?",
+            (key_digest,),
+        ).fetchone()
+        if row is None:
+            return {"outcome": "reserved"}
+
+        binding = str(row_value(row, "principal_binding", 0) or "")
+        stored_server = str(row_value(row, "server_id", 1) or "")
+        status = str(row_value(row, "status", 2) or "")
+        if binding != principal_binding or stored_server != server_id:
+            return {"outcome": "conflict"}
+
+        if status == "completed":
+            try:
+                response = json.loads(row_value(row, "response_json", 3) or "null")
+            except (json.JSONDecodeError, TypeError):
+                response = None
+            if not isinstance(response, dict):
+                return {"outcome": "conflict"}
+            audit_id = row_value(row, "audit_id", 4)
+            receipt_valid = _ci_review_response_has_verified_receipt(response, audit_id)
+            if receipt_valid:
+                try:
+                    receipt_valid = bool(
+                        _verify_mcp_audit_record_on_conn(conn, int(audit_id)).get(
+                            "chain_verified"
+                        )
+                    )
+                except Exception:
+                    receipt_valid = False
+            if not receipt_valid:
+                conn.execute(
+                    "UPDATE ci_review_idempotency SET status = 'in_progress',"
+                    " response_json = NULL, audit_id = NULL, created_at = ?,"
+                    " expires_at = ? WHERE key_digest = ? AND status = 'completed'",
+                    (now_iso, expires_iso, key_digest),
+                )
+                return {"outcome": "reserved"}
+            return {
+                "outcome": "replay",
+                "response": response,
+                "audit_id": audit_id,
+            }
+
+        created_at = str(row_value(row, "created_at", 5) or "")
+        if _iso_age_seconds(created_at, now) > float(stale_seconds):
+            taken = conn.execute(
+                "UPDATE ci_review_idempotency SET created_at = ?, expires_at = ?"
+                " WHERE key_digest = ? AND status = 'in_progress' AND created_at = ?",
+                (now_iso, expires_iso, key_digest, created_at),
+            )
+            if getattr(taken, "rowcount", 0) == 1:
+                return {"outcome": "reserved"}
+        return {"outcome": "in_progress"}
+
+
+def complete_ci_review_idempotency(
+    key_digest: str,
+    response: Dict[str, Any],
+    audit_id: Optional[int],
+    ttl_seconds: int,
+) -> bool:
+    """Store the sanitized review so an identical retry replays it verbatim."""
+    if not _ci_review_response_has_verified_receipt(response, audit_id):
+        return False
+    assert isinstance(audit_id, int) and not isinstance(audit_id, bool)
+    now = datetime.now(timezone.utc)
+    expires_iso = (now + timedelta(seconds=int(ttl_seconds))).isoformat()
+    payload = json.dumps(response, sort_keys=True)
+    with _db_lock, get_conn() as conn:
+        try:
+            receipt_valid = bool(
+                _verify_mcp_audit_record_on_conn(conn, audit_id).get("chain_verified")
+            )
+        except Exception:
+            receipt_valid = False
+        if not receipt_valid:
+            return False
+        updated = conn.execute(
+            "UPDATE ci_review_idempotency SET status = 'completed', response_json = ?,"
+            " audit_id = ?, expires_at = ?"
+            " WHERE key_digest = ? AND status = 'in_progress'",
+            (payload, audit_id, expires_iso, key_digest),
+        )
+        return getattr(updated, "rowcount", 0) == 1
+
+
+def release_ci_review_idempotency(key_digest: str) -> bool:
+    """Drop an unfinished reservation so a later retry is not stuck."""
+    with _db_lock, get_conn() as conn:
+        removed = conn.execute(
+            "DELETE FROM ci_review_idempotency WHERE key_digest = ? AND status = 'in_progress'",
+            (key_digest,),
+        )
+        return getattr(removed, "rowcount", 0) == 1
 
 
 def save_rebaseline_candidate(
@@ -4686,6 +5006,27 @@ def update_mcp_permission_probe_result(
     return cursor.rowcount > 0
 
 
+def _save_tool_surface_snapshot_on_conn(
+    conn, surface_hash: str, canonical_json: str
+) -> bool:
+    if not surface_hash or not canonical_json:
+        return False
+    inserted = conn.execute(
+        """
+        INSERT INTO tool_surface_snapshots
+          (surface_hash, canonical_json, created_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT (surface_hash) DO NOTHING
+        """,
+        (
+            surface_hash,
+            canonical_json,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    return getattr(inserted, "rowcount", 0) == 1
+
+
 def save_tool_surface_snapshot(surface_hash: str, canonical_json: str) -> bool:
     """
     Retain the canonical tool-surface bytes behind a drift-evidence hash.
@@ -4697,31 +5038,8 @@ def save_tool_surface_snapshot(surface_hash: str, canonical_json: str) -> bool:
     """
     if not surface_hash or not canonical_json:
         return False
-    try:
-        with _db_lock, get_conn() as conn:
-            existing = conn.execute(
-                "SELECT 1 FROM tool_surface_snapshots WHERE surface_hash = ?",
-                (surface_hash,),
-            ).fetchone()
-            if existing:
-                return False
-            conn.execute(
-                """
-                INSERT INTO tool_surface_snapshots
-                  (surface_hash, canonical_json, created_at)
-                VALUES (?, ?, ?)
-                """,
-                (
-                    surface_hash,
-                    canonical_json,
-                    datetime.now(timezone.utc).isoformat(),
-                ),
-            )
-        return True
-    except Exception as e:
-        if _is_integrity_error(e):
-            return False
-        raise
+    with _db_lock, get_conn() as conn:
+        return _save_tool_surface_snapshot_on_conn(conn, surface_hash, canonical_json)
 
 
 def get_tool_surface_snapshot(surface_hash: str) -> Optional[Dict[str, Any]]:
@@ -5189,6 +5507,9 @@ def _append_mcp_audit_event(conn, event: dict) -> Dict[str, Any]:
             event.get("observed_status_code")
         ),
         "observed_error_class": event.get("observed_error_class", "") or "",
+        "boundary_review_metadata": _json_dumps_object(
+            event.get("boundary_review_metadata")
+        ),
         "drift_status": event.get("drift_status", "") or "",
         "drift_severity": event.get("drift_severity", "none") or "none",
         "drift_action": event.get("drift_action", "allow") or "allow",
@@ -5201,6 +5522,8 @@ def _append_mcp_audit_event(conn, event: dict) -> Dict[str, Any]:
         ),
         "call_id": call_id,
     }
+    for name, kind in audit_envelope.MCP_AUDIT_V4_AUTHORITY_FIELDS:
+        record[name] = False if kind == audit_envelope.BOOL else None
     authority_context = current_authority_audit_context()
     hash_version = audit_envelope.HASH_V3
     if authority_context is not None:
@@ -5277,6 +5600,8 @@ def _append_mcp_audit_event(conn, event: dict) -> Dict[str, Any]:
                 value = bool(value)
             record[name] = value
         hash_version = audit_envelope.HASH_V4
+    if event.get("boundary_review_metadata") is not None:
+        hash_version = audit_envelope.HASH_V5
     row = conn.execute(
         "SELECT integrity_hash FROM mcp_audit_log ORDER BY id DESC LIMIT 1"
     ).fetchone()
@@ -5287,7 +5612,9 @@ def _append_mcp_audit_event(conn, event: dict) -> Dict[str, Any]:
         # (if the chain was pruned away entirely) instead of GENESIS.
         latest = _latest_chain_checkpoint(conn, "mcp_audit_log")
         prev_hash = (latest or {}).get("last_deleted_hash") or "GENESIS"
-    if hash_version == audit_envelope.HASH_V4:
+    if hash_version == audit_envelope.HASH_V5:
+        integrity_hash = audit_envelope.compute_mcp_hash_v5(record, prev_hash)
+    elif hash_version == audit_envelope.HASH_V4:
         integrity_hash = audit_envelope.compute_mcp_hash_v4(record, prev_hash)
     else:
         integrity_hash = audit_envelope.compute_hash_v3(
@@ -5296,7 +5623,9 @@ def _append_mcp_audit_event(conn, event: dict) -> Dict[str, Any]:
             prev_hash,
         )
     columns = [name for name, _kind in audit_envelope.MCP_AUDIT_V3_FIELDS]
-    if hash_version == audit_envelope.HASH_V4:
+    if hash_version == audit_envelope.HASH_V5:
+        columns = [name for name, _kind in audit_envelope.MCP_AUDIT_V5_FIELDS]
+    elif hash_version == audit_envelope.HASH_V4:
         columns.extend(
             name for name, _kind in audit_envelope.MCP_AUDIT_V4_AUTHORITY_FIELDS
         )
@@ -5326,6 +5655,42 @@ def log_mcp_audit_event(event: dict) -> Dict[str, Any]:
         _serialized_chain_append(conn, "mcp_audit_log"),
     ):
         return _append_mcp_audit_event(conn, event)
+
+
+class MCPAuditReceiptVerificationError(RuntimeError):
+    """The candidate audit row could not be verified before commit."""
+
+
+def log_verified_mcp_audit_event(
+    event: dict, surface_snapshots: Optional[List[Dict[str, str]]] = None
+) -> Dict[str, Any]:
+    """Atomically append and verify one receipt-bearing MCP audit event.
+
+    Surface snapshots, the audit row, its verification, and commit share one
+    transaction. Any append, verifier, or commit failure rolls all candidate
+    evidence back.
+    """
+    with _db_lock, get_conn() as conn:
+        with _verified_mcp_audit_transaction(conn):
+            for snapshot in surface_snapshots or []:
+                _save_tool_surface_snapshot_on_conn(
+                    conn,
+                    str(snapshot.get("surface_hash") or ""),
+                    str(snapshot.get("canonical_json") or ""),
+                )
+            saved = _append_mcp_audit_event(conn, event)
+            try:
+                verification = _verify_mcp_audit_record_on_conn(conn, int(saved["id"]))
+            except Exception as exc:
+                raise MCPAuditReceiptVerificationError(
+                    "receipt verifier raised"
+                ) from exc
+            if verification.get("chain_verified") is not True:
+                raise MCPAuditReceiptVerificationError(
+                    str(verification.get("reason") or "receipt verification failed")
+                )
+        saved["receipt_verification_state"] = "verified"
+        return saved
 
 
 def list_mcp_audit_logs(limit: int = 100) -> List[Dict[str, Any]]:
@@ -5443,41 +5808,21 @@ def list_mcp_audit_logs_between(
     return [_mcp_audit_row_to_dict(r) for r in rows]
 
 
-def verify_mcp_audit_record(audit_id: int) -> Dict[str, Any]:
-    """
-    Verify one mcp_audit_log record against the tamper-evident hash chain.
-
-    Two independent checks:
-      1. content integrity — the stored integrity_hash matches a fresh hash of
-         the record's own fields (including its stored prev_hash); and
-      2. linkage — the record's prev_hash equals the previous record's stored
-         integrity_hash (or GENESIS for the first record).
-
-    Together these make a single receipt tamper-evident without re-walking the
-    entire chain from genesis.
-
-    v3 rows commit every stored security-significant column, so the full row
-    is loaded and recomputed. The first retained record of a pruned chain
-    links to the retention checkpoint's recorded boundary hash instead of
-    GENESIS; the checkpoints themselves are verified before being trusted as
-    an anchor.
-    """
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM mcp_audit_log WHERE id = ?",
-            (audit_id,),
-        ).fetchone()
-        if not row:
-            return {"chain_verified": False, "reason": "record_not_found"}
-        row = row_to_plain_dict(row)
-        prev = conn.execute(
-            "SELECT integrity_hash FROM mcp_audit_log WHERE id < ? "
-            "ORDER BY id DESC LIMIT 1",
-            (audit_id,),
-        ).fetchone()
-        checkpoints = (
-            _list_chain_checkpoints(conn, "mcp_audit_log") if prev is None else []
-        )
+def _verify_mcp_audit_record_on_conn(conn, audit_id: int) -> Dict[str, Any]:
+    """Verify one row using an existing append transaction."""
+    row = conn.execute(
+        "SELECT * FROM mcp_audit_log WHERE id = ?",
+        (audit_id,),
+    ).fetchone()
+    if not row:
+        return {"chain_verified": False, "reason": "record_not_found"}
+    row = row_to_plain_dict(row)
+    prev = conn.execute(
+        "SELECT integrity_hash FROM mcp_audit_log WHERE id < ? "
+        "ORDER BY id DESC LIMIT 1",
+        (audit_id,),
+    ).fetchone()
+    checkpoints = _list_chain_checkpoints(conn, "mcp_audit_log") if prev is None else []
 
     stored_hash = row.get("integrity_hash") or ""
     if not stored_hash:
@@ -5487,9 +5832,6 @@ def verify_mcp_audit_record(audit_id: int) -> Dict[str, Any]:
         checkpoint_failure = _verify_checkpoint_rows(checkpoints)
         if checkpoint_failure:
             return {"chain_verified": False, "reason": checkpoint_failure}
-        # This row is the start of the retained chain: it must be exactly the
-        # row the newest checkpoint promised to retain (a self-consistent
-        # replacement row linking to the anchor must still fail).
         first_retained_id = checkpoints[-1].get("first_retained_id")
         if first_retained_id is not None and int(row["id"]) != int(first_retained_id):
             return {
@@ -5513,18 +5855,39 @@ def verify_mcp_audit_record(audit_id: int) -> Dict[str, Any]:
     content_ok = recomputed == stored_hash
     link_ok = (row.get("prev_hash") or "") == expected_prev
     verified = content_ok and link_ok
-    if verified:
-        reason = "verified"
-    elif not content_ok:
-        reason = "hash mismatch"
-    else:
-        reason = "broken chain link"
     return {
         "chain_verified": verified,
-        "reason": reason,
+        "reason": (
+            "verified"
+            if verified
+            else "hash mismatch" if not content_ok else "broken chain link"
+        ),
         "content_ok": content_ok,
         "link_ok": link_ok,
     }
+
+
+def verify_mcp_audit_record(audit_id: int) -> Dict[str, Any]:
+    """
+    Verify one mcp_audit_log record against the tamper-evident hash chain.
+
+    Two independent checks:
+      1. content integrity — the stored integrity_hash matches a fresh hash of
+         the record's own fields (including its stored prev_hash); and
+      2. linkage — the record's prev_hash equals the previous record's stored
+         integrity_hash (or GENESIS for the first record).
+
+    Together these make a single receipt tamper-evident without re-walking the
+    entire chain from genesis.
+
+    v3 rows commit every stored security-significant column, so the full row
+    is loaded and recomputed. The first retained record of a pruned chain
+    links to the retention checkpoint's recorded boundary hash instead of
+    GENESIS; the checkpoints themselves are verified before being trusted as
+    an anchor.
+    """
+    with get_conn() as conn:
+        return _verify_mcp_audit_record_on_conn(conn, audit_id)
 
 
 # ── Policy helpers ────────────────────────────────────────────────────────────

@@ -443,10 +443,32 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
 
 
 # ── MCP Server Discovery ──────────────────────────────────────────────────────
+async def _read_bounded_json(client, server_url, payload, headers, max_bytes: int):
+    """Stream an upstream JSON-RPC response, refusing it past ``max_bytes``.
+
+    Used only when a caller supplies a byte budget, so the default discovery
+    path keeps its existing unstreamed behavior.
+    """
+    async with client.stream(
+        "POST", server_url, **_mcp_post_kwargs(payload, headers)
+    ) as resp:
+        resp.raise_for_status()
+        declared = resp.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > max_bytes:
+            return None
+        body = bytearray()
+        async for chunk in resp.aiter_bytes():
+            if len(body) + len(chunk) > max_bytes:
+                return None
+            body.extend(chunk)
+    return json.loads(bytes(body).decode("utf-8"))
+
+
 async def _fetch_tool_list_payload(
     server_url: str,
     timeout: float,
     server_id: Optional[str],
+    max_response_bytes: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Transport + shape screening shared by every discovery path: URL safety,
@@ -454,6 +476,10 @@ async def _fetch_tool_list_payload(
     checks, and duplicate-name rejection. Reads the registry but never
     writes anything. Never raises — every failure maps to an
     {"ok": False, "error", "message"} dict with the reason.
+
+    ``max_response_bytes`` bounds the upstream body when the caller needs a
+    hard memory budget (the CI boundary review does). Left unset, the
+    response is read exactly as before.
     """
     try:
         server_url = ensure_safe_outbound_url(server_url, context="MCP discovery")
@@ -474,9 +500,26 @@ async def _fetch_tool_list_payload(
                 "method": "tools/list",
                 "params": {},
             }
-            resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
-            resp.raise_for_status()
-            data = resp.json()
+            if max_response_bytes is not None:
+                data = await _read_bounded_json(
+                    client, server_url, payload, headers, int(max_response_bytes)
+                )
+                if data is None:
+                    return {
+                        "ok": False,
+                        "error": "response_too_large",
+                        "message": (
+                            "MCP tools/list response exceeded the configured "
+                            "boundary-review byte budget."
+                        ),
+                        "server_url": server_url,
+                    }
+            else:
+                resp = await client.post(
+                    server_url, **_mcp_post_kwargs(payload, headers)
+                )
+                resp.raise_for_status()
+                data = resp.json()
         if not isinstance(data, dict):
             return {
                 "ok": False,
@@ -547,6 +590,8 @@ async def fetch_candidate_tool_surface(
     server_url: str,
     timeout: float = 10.0,
     server_id: Optional[str] = None,
+    max_response_bytes: Optional[int] = None,
+    max_tools: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Fetch and validate a server's COMPLETE tool surface as a rebaseline
@@ -557,11 +602,23 @@ async def fetch_candidate_tool_surface(
     Every failure (timeout, malformed response, duplicate names, validation)
     returns {"ok": False} with a clear reason and changes nothing.
     """
-    fetched = await _fetch_tool_list_payload(server_url, timeout, server_id)
+    fetched = await _fetch_tool_list_payload(
+        server_url, timeout, server_id, max_response_bytes=max_response_bytes
+    )
     if not fetched.get("ok"):
         return fetched
 
     tools = fetched["tools"]
+    if max_tools is not None and len(tools) > int(max_tools):
+        return {
+            "ok": False,
+            "error": "too_many_tools",
+            "message": (
+                f"MCP server advertised {len(tools)} tools, above the configured "
+                f"boundary-review ceiling of {int(max_tools)}."
+            ),
+            "server_url": fetched["server_url"],
+        }
     validated_tools = []
     blocked = []
     for tool in tools:

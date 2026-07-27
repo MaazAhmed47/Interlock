@@ -49,6 +49,8 @@ When working on agent security, edit those modules — not the prompt-scan layer
 - `core/admin.py` — `/admin/keys` CRUD, protected by `ADMIN_TOKEN` env var.
 - `core/llm_judge.py` — Layer 3 with three fail-modes (`fail_closed` / `fail_open` / `fail_open_safe`) and a circuit breaker that trips after 5 consecutive failures and skips Groq for 60s.
 - `core/mcp_gateway.py` — MCP tool definition validation + tool-call proxy. The differentiator.
+- `core/http_cache_headers.py` / `core/http_body.py` — anti-cache header middleware for the boundary-review path, and the shared bounded request-body reader used by both that route and the Streamable HTTP transport.
+- `core/ci_boundary_review.py` — read-only approved-vs-observed boundary review for the optional CI gate (`POST /mcp/servers/{server_id}/boundary-review`, `mcp.review` scope). Takes a coherent snapshot via `db.get_boundary_review_snapshot`, observes with `fetch_candidate_tool_surface` under byte/tool caps, classifies with `mcp_drift`, then re-checks the snapshot version. Never mutates approval/baseline/quarantine/policy state. CLI: `scripts/interlock_ci_gate.py`.
 - `core/tool_inspector.py` — SQL/code/shell/file threat detection on tool args.
 - `core/policy.py` — `policy_scan` (per-key) and `rbac_scan` (per-agent-role). Six predefined roles: support_agent, devops_agent, finance_agent, readonly_agent, data_analyst, admin_agent.
 - `core/learning.py` — fingerprint-based pattern cache populated from LLM judge results.
@@ -103,6 +105,7 @@ When working on agent security, edit those modules — not the prompt-scan layer
 - `ADMIN_TOKEN` — required for `/admin/*` endpoints. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Treat like a DB root password.
 - `SLACK_WEBHOOK_URL` / `DATADOG_API_KEY` / `PAGERDUTY_KEY` — referenced by older SIEM seed code; new keys carry their own `siem_configs` JSON
 - `FIREWALL_DB_PATH` — defaults to `data/firewall.db`
+- `INTERLOCK_BOUNDARY_REVIEW_TIMEOUT_S` / `..._MAX_RESPONSE_BYTES` / `..._MAX_TOOLS` / `..._MAX_FINDINGS` / `..._IDEMPOTENCY_TTL_S` — validated, clamped limits for the CI boundary-review gate
 
 `config.py` loads these. If you add a new env var, also add it to `config.py` so it's importable everywhere.
 

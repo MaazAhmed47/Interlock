@@ -32,6 +32,7 @@ import proxy  # noqa: E402
 NON_ADMIN_SCOPES = [
     "mcp.call",
     "mcp.read",
+    "mcp.review",
     "mcp.discover",
     "mcp.probe",
     "audit.read",
@@ -67,6 +68,13 @@ MATRIX = [
     ("get", "/mcp/servers", None, "mcp.read", None),
     ("get", "/mcp/tools", None, "mcp.read", None),
     ("get", "/mcp/tools/drifted", None, "mcp.read", None),
+    (
+        "post",
+        "/mcp/servers/matrix-missing/boundary-review",
+        None,
+        "mcp.review",
+        None,
+    ),
     (
         "post",
         "/mcp/discover",

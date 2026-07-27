@@ -106,6 +106,21 @@ def _log_v4(context=None):
         return db.log_mcp_audit_event(_event())
 
 
+def _log_v5(context=None):
+    from core.ema_context import authority_audit_scope
+
+    event = _event()
+    event["boundary_review_metadata"] = {
+        "boundary_review_semantic_outcome": "clean",
+        "boundary_review_final_outcome": "clean",
+        "boundary_review_final_exit_code": 0,
+        "fail_policy": "material",
+        "receipt_verification_state": "verified",
+    }
+    with authority_audit_scope(context or _verified_context()):
+        return db.log_mcp_audit_event(event)
+
+
 def test_context_writes_v4_without_overloading_legacy_principal():
     saved = _log_v4()
     row = db.get_mcp_audit_log(saved["id"])
@@ -124,7 +139,18 @@ def test_legacy_writer_stays_v3_and_v1_v2_v3_verification_is_unchanged():
     saved = db.log_mcp_audit_event(_event())
     assert db.get_mcp_audit_log(saved["id"])["hash_v"] == 3
     assert db.verify_mcp_audit_record(saved["id"])["chain_verified"] is True
-    assert db._MCP_HASH_VERSIONS == (1, 2, 3, 4)
+    assert db._MCP_HASH_VERSIONS == (1, 2, 3, 4, 5)
+
+
+def test_existing_v3_and_v4_rows_remain_verifiable_after_v5_extension():
+    v3 = db.log_mcp_audit_event(_event())
+    v4 = _log_v4()
+
+    assert db.get_mcp_audit_log(v3["id"])["hash_v"] == 3
+    assert db.get_mcp_audit_log(v4["id"])["hash_v"] == 4
+    assert db.verify_mcp_audit_record(v3["id"])["chain_verified"] is True
+    assert db.verify_mcp_audit_record(v4["id"])["chain_verified"] is True
+    assert db.verify_audit_chain()["valid"] is True
 
 
 def test_denied_unverified_authority_has_exact_null_defaults():
@@ -195,6 +221,8 @@ def test_verified_authority_context_rejects_nonempty_legacy_principal():
 def _mutated_value(field, kind, original):
     if kind == audit_envelope.JSON_LIST:
         return '["tampered"]'
+    if kind == audit_envelope.JSON_OBJECT:
+        return '{"tampered":true}'
     if kind == audit_envelope.INT:
         return 0 if original not in (0, None) else 1
     if kind == audit_envelope.FLOAT:
@@ -219,6 +247,58 @@ def test_every_v4_field_is_hash_bound(field, kind):
             (value, saved["id"]),
         )
     assert db.verify_mcp_audit_record(saved["id"])["chain_verified"] is False
+
+
+@pytest.mark.parametrize(
+    "field,kind",
+    audit_envelope.MCP_AUDIT_V4_AUTHORITY_FIELDS,
+    ids=[name for name, _ in audit_envelope.MCP_AUDIT_V4_AUTHORITY_FIELDS],
+)
+def test_every_authority_and_transport_field_is_hash_bound_on_v5(field, kind):
+    saved = _log_v5()
+    row = db.get_mcp_audit_log(saved["id"])
+    assert row["hash_v"] == 5
+    assert db.verify_mcp_audit_record(saved["id"])["chain_verified"] is True
+
+    value = _mutated_value(field, kind, row.get(field))
+    with db._db_lock, db.get_conn() as conn:
+        conn.execute(
+            f"UPDATE mcp_audit_log SET {field} = ? WHERE id = ?",
+            (value, saved["id"]),
+        )
+
+    verification = db.verify_mcp_audit_record(saved["id"])
+    assert verification["chain_verified"] is False
+    assert verification["reason"] == "hash mismatch"
+
+
+@pytest.mark.parametrize(
+    "field,kind",
+    [
+        ("authority_resource", audit_envelope.STR),
+        ("boundary_review_metadata", audit_envelope.JSON_OBJECT),
+    ],
+)
+def test_combined_authority_and_boundary_metadata_selects_v5_and_binds_both_areas(
+    field, kind
+):
+    saved = _log_v5()
+    row = db.get_mcp_audit_log(saved["id"])
+    assert row["hash_v"] == 5
+    assert row["authority_resource"] == _verified_context()["authority_resource"]
+    assert row["boundary_review_metadata"]["boundary_review_final_outcome"] == "clean"
+    assert db.verify_mcp_audit_record(saved["id"])["chain_verified"] is True
+
+    value = _mutated_value(field, kind, row.get(field))
+    with db._db_lock, db.get_conn() as conn:
+        conn.execute(
+            f"UPDATE mcp_audit_log SET {field} = ? WHERE id = ?",
+            (value, saved["id"]),
+        )
+
+    verification = db.verify_mcp_audit_record(saved["id"])
+    assert verification["chain_verified"] is False
+    assert verification["reason"] == "hash mismatch"
 
 
 def test_v4_receipt_uses_explicit_identities_and_gateway_boundary_wording():

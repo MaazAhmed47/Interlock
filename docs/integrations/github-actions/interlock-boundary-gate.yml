@@ -1,0 +1,93 @@
+# Interlock MCP boundary-review gate — GitHub Actions template.
+#
+# This file is a TEMPLATE and is deliberately stored OUTSIDE .github/workflows/
+# so it is never registered as a workflow in this repository. Copy it to your
+# own repository's .github/workflows/ directory to activate it.
+#
+# It calls a self-hosted Interlock deployment's read-only boundary-review
+# endpoint for one registered MCP server, publishes the sanitized Markdown
+# summary to the job summary, uploads both artifacts (pass or fail), and lets
+# the gate's exit code decide whether the job fails.
+#
+# See docs/integrations/ci-boundary-review-gate.md.
+
+name: Interlock MCP boundary review
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  boundary-review:
+    name: MCP boundary review
+    runs-on: ubuntu-latest
+    # Fork pull requests cannot read repository secrets, so the credentialed
+    # gate is skipped cleanly instead of failing every fork PR with a
+    # configuration error. pull_request_target is deliberately NOT used: it
+    # would expose the secret to untrusted head-repository code.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The gate is stdlib-only: no pip install step is required. Vendor
+      # scripts/interlock_ci_gate.py into your repository, or fetch it from
+      # your own internal artifact store.
+
+      - name: Run Interlock boundary-review gate
+        id: gate
+        # Keep going so the summary and artifact upload below still run on a
+        # failing gate.
+        continue-on-error: true
+        env:
+          # Reachable from the runner. Self-hosted runners are the usual choice
+          # for an internal Interlock deployment. HTTPS is required unless the
+          # host is loopback.
+          INTERLOCK_BASE_URL: ${{ vars.INTERLOCK_BASE_URL }}
+          # Least-privilege key holding only the mcp.review scope.
+          # Never pass the credential as a command-line argument, and never
+          # echo it: no `run:` line below prints a secret value.
+          INTERLOCK_CI_API_KEY: ${{ secrets.INTERLOCK_CI_API_KEY }}
+          # Every GitHub expression reaches the shell through the environment,
+          # never through direct interpolation into `run:`. Direct
+          # interpolation is a script-injection vector.
+          INTERLOCK_MCP_SERVER_ID: ${{ vars.INTERLOCK_MCP_SERVER_ID }}
+          ARTIFACT_DIR: ${{ runner.temp }}/interlock
+        run: |
+          python scripts/interlock_ci_gate.py \
+            --server-id "$INTERLOCK_MCP_SERVER_ID" \
+            --output-dir "$ARTIFACT_DIR" \
+            --fail-policy material
+
+      - name: Publish review summary
+        if: always()
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/interlock
+        run: |
+          if [ -f "$ARTIFACT_DIR/interlock-boundary-review.md" ]; then
+            cat "$ARTIFACT_DIR/interlock-boundary-review.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Interlock boundary review produced no summary." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload sanitized review artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: interlock-boundary-review
+          path: ${{ runner.temp }}/interlock/
+          if-no-files-found: warn
+
+      - name: Fail the job on a failing gate
+        if: steps.gate.outcome == 'failure'
+        run: |
+          echo "Interlock boundary review gate failed. See the job summary and the uploaded artifact."
+          exit 1

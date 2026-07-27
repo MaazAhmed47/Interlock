@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+import math
 import os
 
 load_dotenv()
@@ -23,6 +24,159 @@ def mcp_upstream_auth_allowed_env_vars() -> set[str]:
     """
     raw = os.getenv("MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS", "")
     return {name.strip() for name in raw.split(",") if name.strip()}
+
+
+class ConfigurationError(RuntimeError):
+    """An explicitly configured value is unusable. Never silently substituted."""
+
+
+def _bounded_number(name: str, default, minimum, maximum, cast):
+    """
+    Read one operator-tunable limit at call time and validate it.
+
+    Unset (or empty, which is how the local test harness neutralizes a
+    ``.env``) means "use the documented default". A value that IS set but
+    cannot be parsed, or falls outside the supported range, raises rather
+    than quietly substituting a different limit: an operator who typed a
+    number must never end up running under a limit they did not choose, and
+    must never discover it only by reading an artifact.
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = cast(raw.strip())
+    except (TypeError, ValueError):
+        raise ConfigurationError(
+            f"{name} is set to an unparsable value. Set a number between "
+            f"{minimum} and {maximum}, or unset it to use the default "
+            f"({default})."
+        )
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ConfigurationError(
+            f"{name} must be finite. Unset it to use the default ({default})."
+        )
+    if value < minimum or value > maximum:
+        raise ConfigurationError(
+            f"{name} is set to {value}, outside the supported range "
+            f"{minimum}..{maximum}. Unset it to use the default ({default})."
+        )
+    return value
+
+
+# Documented upper bounds for the CI boundary-review limits below. These are
+# transport/size limits, not detection thresholds, and are reported in the
+# gate artifact so a truncated or refused review is never mistaken for a pass.
+BOUNDARY_REVIEW_TIMEOUT_DEFAULT_S = 10.0
+BOUNDARY_REVIEW_TIMEOUT_MIN_S = 0.1
+BOUNDARY_REVIEW_TIMEOUT_MAX_S = 120.0
+BOUNDARY_REVIEW_MAX_RESPONSE_BYTES_DEFAULT = 2 * 1024 * 1024
+BOUNDARY_REVIEW_MAX_RESPONSE_BYTES_MIN = 1024
+BOUNDARY_REVIEW_MAX_RESPONSE_BYTES_CEILING = 20 * 1024 * 1024
+BOUNDARY_REVIEW_MAX_TOOLS_DEFAULT = 200
+BOUNDARY_REVIEW_MAX_TOOLS_MIN = 1
+BOUNDARY_REVIEW_MAX_TOOLS_CEILING = 2000
+BOUNDARY_REVIEW_MAX_FINDINGS_DEFAULT = 100
+BOUNDARY_REVIEW_MAX_FINDINGS_MIN = 1
+BOUNDARY_REVIEW_MAX_FINDINGS_CEILING = 1000
+BOUNDARY_REVIEW_IDEMPOTENCY_TTL_DEFAULT_S = 24 * 3600
+BOUNDARY_REVIEW_IDEMPOTENCY_TTL_MIN_S = 60
+BOUNDARY_REVIEW_IDEMPOTENCY_TTL_CEILING_S = 7 * 24 * 3600
+CI_BOUNDARY_REVIEW_MAX_REQUEST_BYTES_DEFAULT = 8 * 1024
+CI_BOUNDARY_REVIEW_MAX_REQUEST_BYTES_MIN = 0
+CI_BOUNDARY_REVIEW_MAX_REQUEST_BYTES_CEILING = 1024 * 1024
+
+
+def boundary_review_timeout_seconds() -> float:
+    """
+    Upstream timeout, in seconds, for the read-only observation a CI
+    boundary review performs. Read at call time so an operator can tune it
+    per deployment without a restart.
+    """
+    return _bounded_number(
+        "INTERLOCK_BOUNDARY_REVIEW_TIMEOUT_S",
+        BOUNDARY_REVIEW_TIMEOUT_DEFAULT_S,
+        BOUNDARY_REVIEW_TIMEOUT_MIN_S,
+        BOUNDARY_REVIEW_TIMEOUT_MAX_S,
+        float,
+    )
+
+
+def boundary_review_max_response_bytes() -> int:
+    """Hard cap on the upstream tools/list body one review will read."""
+    return _bounded_number(
+        "INTERLOCK_BOUNDARY_REVIEW_MAX_RESPONSE_BYTES",
+        BOUNDARY_REVIEW_MAX_RESPONSE_BYTES_DEFAULT,
+        BOUNDARY_REVIEW_MAX_RESPONSE_BYTES_MIN,
+        BOUNDARY_REVIEW_MAX_RESPONSE_BYTES_CEILING,
+        int,
+    )
+
+
+def boundary_review_max_tools() -> int:
+    """Hard cap on the observed tool count a review will classify."""
+    return _bounded_number(
+        "INTERLOCK_BOUNDARY_REVIEW_MAX_TOOLS",
+        BOUNDARY_REVIEW_MAX_TOOLS_DEFAULT,
+        BOUNDARY_REVIEW_MAX_TOOLS_MIN,
+        BOUNDARY_REVIEW_MAX_TOOLS_CEILING,
+        int,
+    )
+
+
+def boundary_review_max_findings() -> int:
+    """Hard cap on findings plus review-queue entries in one artifact."""
+    return _bounded_number(
+        "INTERLOCK_BOUNDARY_REVIEW_MAX_FINDINGS",
+        BOUNDARY_REVIEW_MAX_FINDINGS_DEFAULT,
+        BOUNDARY_REVIEW_MAX_FINDINGS_MIN,
+        BOUNDARY_REVIEW_MAX_FINDINGS_CEILING,
+        int,
+    )
+
+
+def boundary_review_idempotency_ttl_seconds() -> int:
+    """How long a completed boundary review stays replayable by its key."""
+    return _bounded_number(
+        "INTERLOCK_BOUNDARY_REVIEW_IDEMPOTENCY_TTL_S",
+        BOUNDARY_REVIEW_IDEMPOTENCY_TTL_DEFAULT_S,
+        BOUNDARY_REVIEW_IDEMPOTENCY_TTL_MIN_S,
+        BOUNDARY_REVIEW_IDEMPOTENCY_TTL_CEILING_S,
+        int,
+    )
+
+
+def ci_boundary_review_max_request_bytes() -> int:
+    """
+    Hard cap on the boundary-review POST body.
+
+    The route ignores the body entirely — nothing in it can influence the
+    server, baseline, reviewer, decision, or evidence — so the default is
+    deliberately small. It exists only so an authenticated caller cannot push
+    unbounded volume through the endpoint.
+    """
+    return _bounded_number(
+        "INTERLOCK_CI_BOUNDARY_REVIEW_MAX_REQUEST_BYTES",
+        CI_BOUNDARY_REVIEW_MAX_REQUEST_BYTES_DEFAULT,
+        CI_BOUNDARY_REVIEW_MAX_REQUEST_BYTES_MIN,
+        CI_BOUNDARY_REVIEW_MAX_REQUEST_BYTES_CEILING,
+        int,
+    )
+
+
+def assert_boundary_review_config_valid() -> None:
+    """
+    Validate every boundary-review limit at startup.
+
+    Called before any database or network work so a misconfigured deployment
+    refuses to start instead of discovering the problem mid-review.
+    """
+    boundary_review_timeout_seconds()
+    boundary_review_max_response_bytes()
+    boundary_review_max_tools()
+    boundary_review_max_findings()
+    boundary_review_idempotency_ttl_seconds()
+    ci_boundary_review_max_request_bytes()
 
 
 # Threat levels
