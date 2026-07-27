@@ -166,3 +166,11 @@ readiness. A passing report proves only that the named synthetic corpus produced
 its reviewed expected decisions at the recorded Interlock revision. Unresolved
 blind spots remain visible as case IDs linked to their adversarial test or
 strict `xfail`; they are not converted into passing detections.
+
+The resolved FN-5 case covers only newly added, ordered forwarding language
+with a new public destination and retrieved or returned content corroborated by
+a trusted declared data class in the approved baseline. Existing concrete
+sensitive-resource detection remains a separate path without destination
+novelty. The corpus keeps uncorroborated FN-5U description-level exfiltration as
+a distinct known miss; these results do not establish detection of arbitrary
+semantic exfiltration wording.

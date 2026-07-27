@@ -24,6 +24,7 @@ from core.detection_quality_evidence import (
     assert_report_safe,
     assert_web_url_payload_safe,
     build_report,
+    evaluate_case,
     _assert_safe_value,
     _decoded_variants,
     _git_revision_identity,
@@ -33,12 +34,13 @@ from core.detection_quality_evidence import (
     render_markdown,
     score_results,
 )
+from core.tool_metadata import normalize_tool_metadata
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "generate_detection_quality_evidence.py"
 EXPECTED_GAPS = {
     "DQV1-GAP-FN1",
-    "DQV1-GAP-FN5",
+    "DQV1-GAP-FN5-UNCORROBORATED",
     "DQV1-GAP-FN7",
     "DQV1-GAP-FN10",
     "DQV1-GAP-FP2",
@@ -67,7 +69,7 @@ def test_corpus_is_strict_valid_versioned_and_uniquely_identified(
 ) -> None:
     assert corpus.corpus_version == "1.0.0"
     case_ids = [case.case_id for case in corpus.cases]
-    assert len(case_ids) == len(set(case_ids)) == 15
+    assert len(case_ids) == len(set(case_ids)) == 16
     assert all(case.rationale for case in corpus.cases)
     assert all(case.expected_ground_truth_label for case in corpus.cases)
 
@@ -109,6 +111,7 @@ def test_corpus_rejects_empty_detector_inputs_and_invalid_probe_shapes(
 
 
 def test_report_exercises_existing_surface_and_probe_paths(
+    corpus: Corpus,
     report: EvidenceReport,
 ) -> None:
     by_id = {result.case_id: result for result in report.cases}
@@ -124,31 +127,66 @@ def test_report_exercises_existing_surface_and_probe_paths(
         "effective_permission_expansion" in behavioral.detector_evidence.finding_types
     )
 
+    fn5_case = next(
+        case for case in corpus.cases if case.case_id == "DQV1-RESOLVED-FN5"
+    )
+    assert fn5_case.execution_path == "sqlite_storage"
+    assert fn5_case.baseline.metadata is None
+    fn5_tool = fn5_case.baseline.tool.model_dump(by_alias=True, exclude_none=True)
+    fn5_metadata = normalize_tool_metadata(fn5_tool)
+    assert fn5_metadata["field_sources"]["data_classes"] == "security_meta"
+    assert "data_classes" not in fn5_metadata["inferred"]
+
     clean = by_id["DQV1-PROBE-002"]
     assert clean.actual_interlock_decision == "allow"
     assert clean.detector_evidence.observed_outcome == "denied"
+
+
+def test_fn5_report_decision_executes_real_storage_upserts(
+    corpus: Corpus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core import db
+
+    fn5_case = next(
+        case for case in corpus.cases if case.case_id == "DQV1-RESOLVED-FN5"
+    )
+    calls: list[tuple[dict, dict]] = []
+    real_upsert = db.upsert_mcp_tool_metadata
+
+    def tracked_upsert(server_id: str, tool: dict, metadata: dict) -> dict:
+        calls.append((tool, metadata))
+        return real_upsert(server_id, tool, metadata)
+
+    monkeypatch.setattr(db, "upsert_mcp_tool_metadata", tracked_upsert)
+    result = evaluate_case(fn5_case)
+
+    assert len(calls) == 2
+    assert calls[0][1]["field_sources"]["data_classes"] == "security_meta"
+    assert result.actual_interlock_decision == "deny"
+    assert result.detector_evidence.severity == "high"
+    assert result.confusion_class == "true_positive"
 
 
 def test_scoring_math_and_denominators_are_explicit(
     report: EvidenceReport,
 ) -> None:
     metrics = report.aggregate_metrics
-    assert metrics.evaluated_case_count == 15
-    assert metrics.total_corpus_case_count == 15
-    assert metrics.confirmed_true_positives == 3
+    assert metrics.evaluated_case_count == 16
+    assert metrics.total_corpus_case_count == 16
+    assert metrics.confirmed_true_positives == 4
     assert metrics.confirmed_false_positives == 3
     assert metrics.confirmed_true_negatives == 2
     assert metrics.confirmed_false_negatives_or_known_misses == 4
     assert metrics.corpus_bound_precision.model_dump() == {
-        "numerator": 3,
-        "denominator": 6,
-        "value": 0.5,
+        "numerator": 4,
+        "denominator": 7,
+        "value": 0.571429,
         "qualification": "corpus-bound",
     }
     assert metrics.corpus_bound_recall.model_dump() == {
-        "numerator": 3,
-        "denominator": 7,
-        "value": 0.428571,
+        "numerator": 4,
+        "denominator": 8,
+        "value": 0.5,
         "qualification": "corpus-bound",
     }
     assert metrics.corpus_bound_false_positive_rate.model_dump() == {
@@ -197,6 +235,8 @@ def test_every_documented_unresolved_gap_is_visible_and_linked(
     assert all(case_id in markdown for case_id in EXPECTED_GAPS)
     assert "DQV1-RESOLVED-FN2" in markdown
     assert "DQV1-RESOLVED-FN2" not in blind_spots
+    assert "DQV1-RESOLVED-FN5" in markdown
+    assert "DQV1-RESOLVED-FN5" not in blind_spots
 
 
 def test_every_confusion_class_is_explicit_in_json_and_markdown(
@@ -232,8 +272,8 @@ def test_every_confusion_class_is_explicit_in_json_and_markdown(
         version="test-version",
     )
     assert expanded_report.cases[-1].confusion_class == "unsupported_unscored"
-    assert expanded_report.aggregate_metrics.total_corpus_case_count == 16
-    assert expanded_report.aggregate_metrics.evaluated_case_count == 15
+    assert expanded_report.aggregate_metrics.total_corpus_case_count == 17
+    assert expanded_report.aggregate_metrics.evaluated_case_count == 16
     assert expanded_report.aggregate_metrics.unsupported_or_unscored_count == 1
 
 

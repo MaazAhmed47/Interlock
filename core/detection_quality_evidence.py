@@ -14,6 +14,7 @@ import tempfile
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Annotated, Any, Literal, Union
 from urllib.parse import unquote_plus, urlsplit
 
@@ -34,6 +35,7 @@ CORPUS_PATH = (
     / "v1"
     / "corpus.json"
 )
+_STORAGE_EVALUATION_LOCK = Lock()
 
 # Evidence references must survive reformatting of the file they point at.
 # A `path/to/test_file.py::test_name` identifier does; a `#L120` anchor does
@@ -91,6 +93,23 @@ class McpAnnotations(StrictModel):
     open_world_hint: bool | None = Field(default=None, alias="openWorldHint")
 
 
+class DeclaredSecurityMetadata(StrictModel):
+    effects: list[str] = Field(min_length=1)
+    side_effect: Literal["read_only", "mutating", "destructive", "unknown"] = Field(
+        alias="sideEffect"
+    )
+    data_classes: list[str] = Field(min_length=1, alias="dataClasses")
+    externality: Literal["internal", "external", "unknown"]
+    identity_mode: Literal[
+        "unknown", "authenticated_user", "delegated_agent", "service_account"
+    ] = Field(alias="identityMode")
+    required_scopes: list[str] = Field(alias="requiredScopes")
+
+
+class RawToolMetadata(StrictModel):
+    security: DeclaredSecurityMetadata
+
+
 class ToolDefinition(StrictModel):
     name: str = Field(min_length=1)
     description: str = Field(min_length=1)
@@ -98,6 +117,7 @@ class ToolDefinition(StrictModel):
     output_schema: ObjectSchema | None = Field(default=None, alias="outputSchema")
     title: str | None = Field(default=None, min_length=1)
     annotations: McpAnnotations | None = None
+    raw_metadata: RawToolMetadata | None = Field(default=None, alias="_meta")
 
 
 class StoredMetadata(StrictModel):
@@ -217,8 +237,19 @@ class CorpusCaseBase(StrictModel):
 
 class SurfaceDriftCase(CorpusCaseBase):
     detector_path: Literal["surface_drift"]
+    execution_path: Literal["direct", "sqlite_storage"] = "direct"
     baseline: SurfaceSnapshot
     observed: SurfaceSnapshot
+
+    @model_validator(mode="after")
+    def storage_path_requires_raw_normalization(self) -> "SurfaceDriftCase":
+        if self.execution_path == "sqlite_storage" and (
+            self.baseline.metadata is not None or self.observed.metadata is not None
+        ):
+            raise ValueError(
+                "sqlite_storage cases must derive metadata from raw tool definitions"
+            )
+        return self
 
 
 class EffectivePermissionCase(CorpusCaseBase):
@@ -623,6 +654,13 @@ def _evaluate_surface_case(case: SurfaceDriftCase) -> tuple[Decision, DetectorEv
         previous_metadata = normalize_tool_metadata(previous_tool)
     if current_metadata is None:
         current_metadata = normalize_tool_metadata(current_tool)
+    if case.execution_path == "sqlite_storage":
+        return _evaluate_surface_case_via_sqlite(
+            previous_tool,
+            current_tool,
+            previous_metadata,
+            current_metadata,
+        )
     result = classify_tool_drift(
         previous_tool,
         current_tool,
@@ -634,6 +672,60 @@ def _evaluate_surface_case(case: SurfaceDriftCase) -> tuple[Decision, DetectorEv
         severity=str(result.get("severity") or "none"),
         action=decision,
         finding_types=[str(value) for value in result.get("types") or []],
+    )
+
+
+def _evaluate_surface_case_via_sqlite(
+    previous_tool: dict[str, Any],
+    current_tool: dict[str, Any],
+    previous_metadata: dict[str, Any],
+    current_metadata: dict[str, Any],
+) -> tuple[Decision, DetectorEvidence]:
+    """Exercise the production SQLite baseline and rediscovery write path.
+
+    The temporary database is isolated from configured application storage.
+    Metadata is still produced by ``normalize_tool_metadata`` before the same
+    upsert/classifier path used by MCP discovery.
+    """
+    from core import db
+
+    with (
+        _STORAGE_EVALUATION_LOCK,
+        tempfile.TemporaryDirectory(prefix="interlock-dq-storage-") as temp_dir,
+    ):
+        prior_path = db.DB_PATH
+        prior_backend = db.USE_POSTGRES
+        try:
+            db.DB_PATH = str(Path(temp_dir) / "evidence.db")
+            db.USE_POSTGRES = False
+            db.init_db()
+            server_id = "_fixture_detection_quality_surface"
+            if not db.register_mcp_server(
+                server_id,
+                {
+                    "url": "http://localhost:9781/mcp",
+                    "description": "isolated detection-quality evidence",
+                    "environment": "non_production",
+                },
+            ):
+                raise EvidenceError("unable to initialize isolated evidence storage")
+            baseline = db.upsert_mcp_tool_metadata(
+                server_id, previous_tool, previous_metadata
+            )
+            if baseline.get("status") != "active":
+                raise EvidenceError("unable to persist active evidence baseline")
+            result = db.upsert_mcp_tool_metadata(
+                server_id, current_tool, current_metadata
+            )
+        finally:
+            db.DB_PATH = prior_path
+            db.USE_POSTGRES = prior_backend
+
+    decision = str(result.get("drift_action") or "allow")
+    return _as_decision(decision), DetectorEvidence(
+        severity=str(result.get("drift_severity") or "none"),
+        action=decision,
+        finding_types=[str(value) for value in result.get("drift_types") or []],
     )
 
 

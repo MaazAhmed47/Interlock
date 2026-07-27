@@ -99,15 +99,22 @@ In rough priority order; each item closes a limitation above.
 - **Close the documented detection gaps (deferred).** Seven gaps are checked
   in as documented-gap assertions in `tests/test_drift_adversarial.py`:
   false negatives FN-1 (undeclared server-side behavior change is invisible
-  to surface diffing), FN-5 (description-level exfiltration instruction
-  scored only by character diff), FN-7 (indirect auth-scope widening via an
-  added delegation parameter), FN-10 (export verbs outside the heuristic
-  keyword set); and false positives FP-2 (optional annotation-hint loss
-  downgrades verification level and denies), HM-1 (added required safety
-  field denied like any required-field addition), HM-3 (optional-to-required
-  tightening scored high/deny). Each closure requires an adversarial
-  regression case that fails before the fix, and corpus evidence
+  to surface diffing), FN-5U (description-level exfiltration without a concrete
+  sensitive resource or trusted approved data-class corroboration), FN-7
+  (indirect auth-scope widening via an added delegation parameter), FN-10
+  (export verbs outside the heuristic keyword set); and false positives FP-2
+  (optional annotation-hint loss downgrades verification level and denies),
+  HM-1 (added required safety field denied like any required-field addition),
+  HM-3 (optional-to-required tightening scored high/deny). Each closure requires
+  an adversarial regression case that fails before the fix, and corpus evidence
   regenerated at the fixed revision.
+- **FN-5 resolved only at its corroborated boundary.** Newly added description
+  text containing an ordered delivery instruction, a new public destination,
+  and retrieved or returned content corroborated by a trusted declared data
+  class in the approved baseline now denies. Concrete sensitive-resource
+  delivery retains its existing detection path and does not require destination
+  novelty. FN-5U remains a distinct known miss, so this corpus-bound result does
+  not claim detection of arbitrary semantic exfiltration language.
 - **Cautious evidence-corpus sanitizer expansion (deferred).** Extend the
   evidence-corpus input sanitizer with further unambiguous credential
   formats, such as AWS access-key identifiers, where the format is
