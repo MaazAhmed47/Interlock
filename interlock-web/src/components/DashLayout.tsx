@@ -1,10 +1,11 @@
-import { Outlet, Link, NavLink } from 'react-router-dom'
-import { LayoutDashboard, ScanLine, Server, BookOpen, Settings, ArrowLeft, Menu, X, LogIn, LogOut, ShieldCheck } from 'lucide-react'
+import { Outlet, Link, NavLink, useLocation } from 'react-router-dom'
+import { LayoutDashboard, ScanLine, Server, BookOpen, Settings, ArrowLeft, Menu, X, LogIn, LogOut, ShieldCheck, GitCompareArrows } from 'lucide-react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, hasApiKey, HealthResponse, UsageResponse, MCPServer, MCPTool, AuditEvent, ShadowStats, ScanHistoryEvent, ScanResult, ScanStats, normalizeLayerLabel, DEMO_USAGE, DEMO_MCP_SERVERS, DEMO_MCP_TOOLS, DEMO_DRIFTED_TOOLS, DEMO_AUDIT_EVENTS, DEMO_SCAN_HISTORY, DEMO_SCAN_STATS, DEMO_SHADOW_STATS } from '../api'
 import { authDisplayName, clearAuthSession, redirectToOidcLogout, useAuthSession } from '../auth'
 
 const NAV = [
+  { to: '/dashboard/proof', label: 'Drift Proof', icon: GitCompareArrows, end: false },
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, end: true },
   { to: '/dashboard/scan', label: 'Scan', icon: ScanLine, end: false },
   { to: '/dashboard/mcp', label: 'MCP Gateway', icon: Server, end: false },
@@ -365,7 +366,7 @@ function DashTopbarStatus() {
   const { lastLoadedAt } = useDashboardData()
   if (!lastLoadedAt) return null
   return (
-    <span style={{ fontSize: 11, color: 'var(--dim)', fontFamily: 'var(--font-mono)' }}>
+    <span className="dash-topbar-updated">
       Last updated: {formatRelativeTime(lastLoadedAt)}
     </span>
   )
@@ -373,9 +374,11 @@ function DashTopbarStatus() {
 
 export default function DashLayout() {
   const [mobileOpen, setMobileOpen] = useState(false)
+  const location = useLocation()
   const session = useAuthSession()
   const signedInAs = authDisplayName(session)
   const topbarIdentity = session ? 'Interlock Admin' : 'Admin SSO not signed in'
+  const isProofRoute = location.pathname === '/dashboard/proof'
 
   function handleSignOut() {
     const redirected = redirectToOidcLogout('/dashboard/login')
@@ -387,7 +390,10 @@ export default function DashLayout() {
       <div className="dash-shell">
         <aside className="dash-sidebar">
           <a href="/" className="dash-logo" aria-label="Interlock landing page">
-            Interlock
+            <picture>
+              <source media="(max-width: 900px)" srcSet="/interlock-favicon-white.svg" />
+              <img src="/interlock-lockup-white.svg" alt="Interlock" />
+            </picture>
             <div className="dash-logo-sub">Security Gateway</div>
           </a>
           <nav className="dash-nav">
@@ -421,7 +427,9 @@ export default function DashLayout() {
         </aside>
 
         <div className="dash-mobile-nav">
-          <a href="/" style={{ fontWeight: 700, fontSize: 16 }}>Interlock</a>
+          <a href="/" className="dash-mobile-logo" aria-label="Interlock landing page">
+            <img src="/interlock-favicon-white.svg" alt="Interlock" />
+          </a>
           <button className="btn btn-ghost btn-icon" onClick={() => setMobileOpen(o => !o)} aria-label="Toggle dashboard navigation">
             {mobileOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
@@ -439,13 +447,13 @@ export default function DashLayout() {
               <NavLink
                 key={to} to={to} end={end}
                 className={({ isActive }) => `dash-nav-item${isActive ? ' active' : ''}`}
-                style={{ fontSize: 15, padding: '14px 24px' }}
+                style={{ fontSize: 14, padding: '14px 24px' }}
                 onClick={() => setMobileOpen(false)}
               >
                 <Icon size={16} />{label}
               </NavLink>
             ))}
-            <a href="/" className="dash-nav-item" style={{ fontSize: 13, padding: '14px 24px' }}
+            <a href="/" className="dash-nav-item" style={{ fontSize: 14, padding: '14px 24px' }}
               onClick={() => setMobileOpen(false)}>
               <ArrowLeft size={14} />Back to site
             </a>
@@ -454,7 +462,7 @@ export default function DashLayout() {
                 <LogOut size={14} />Sign out
               </button>
             ) : (
-              <NavLink to="/dashboard/login" className="dash-nav-item" style={{ fontSize: 13, padding: '14px 24px' }} onClick={() => setMobileOpen(false)}>
+              <NavLink to="/dashboard/login" className="dash-nav-item" style={{ fontSize: 14, padding: '14px 24px' }} onClick={() => setMobileOpen(false)}>
                 <LogIn size={14} />SSO login
               </NavLink>
             )}
@@ -462,29 +470,31 @@ export default function DashLayout() {
         )}
 
         <div className="dash-content">
-          <div className="dash-topbar">
-            <div className="dash-topbar-identity">
-              <ShieldCheck size={16} />
-              <div>
-                <span>Control plane</span>
-                <strong title={signedInAs || undefined}>{topbarIdentity}</strong>
-                <DashTopbarStatus />
+          {!isProofRoute && (
+            <div className="dash-topbar">
+              <div className="dash-topbar-identity">
+                <ShieldCheck size={16} />
+                <div>
+                  <span>Control plane</span>
+                  <strong title={signedInAs || undefined}>{topbarIdentity}</strong>
+                  <DashTopbarStatus />
+                </div>
+              </div>
+              <div className="dash-topbar-actions">
+                {session ? (
+                  <>
+                    <Link to="/dashboard/audit?view=admin" className="btn btn-cyan btn-sm">Admin Audit</Link>
+                    <button className="btn btn-ghost btn-sm" onClick={handleSignOut}><LogOut size={12} />Sign Out</button>
+                  </>
+                ) : (
+                  <>
+                    <Link to="/dashboard/login" className="btn btn-primary btn-sm"><LogIn size={12} />Admin Login</Link>
+                    <Link to="/dashboard/settings" className="btn btn-ghost btn-sm">SSO Settings</Link>
+                  </>
+                )}
               </div>
             </div>
-            <div className="dash-topbar-actions">
-              {session ? (
-                <>
-                  <Link to="/dashboard/audit?view=admin" className="btn btn-cyan btn-sm">Admin Audit</Link>
-                  <button className="btn btn-ghost btn-sm" onClick={handleSignOut}><LogOut size={12} />Sign Out</button>
-                </>
-              ) : (
-                <>
-                  <Link to="/dashboard/login" className="btn btn-primary btn-sm"><LogIn size={12} />Admin Login</Link>
-                  <Link to="/dashboard/settings" className="btn btn-ghost btn-sm">SSO Settings</Link>
-                </>
-              )}
-            </div>
-          </div>
+          )}
           <Outlet />
         </div>
       </div>
