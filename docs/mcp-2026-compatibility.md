@@ -41,6 +41,16 @@ and tests are rerun against that final text.
 | Both gateway directions | `x-mcp-header` tool parameters | Blocked | Tools containing the annotation are excluded from the inbound advertised surface, rejected from candidate baselines, and denied before upstream invocation. Correct validation and forwarding are future work. |
 | Both gateway directions | Tasks, subscriptions, roots, prompts, resources, logging, sampling, elicitation | Future | Not part of this release scope and not advertised as supported. |
 
+## Legacy pagination containment
+
+Any upstream `tools/list` response with a non-empty `nextCursor` is rejected.
+Interlock will not record page one as a complete approved surface.
+
+This applies to legacy and `2026-07-28` upstream profiles and affects
+registration, verification, discovery, rebaseline, CI boundary review, and
+refresh operations. The upstream must expose a complete single-page tool list
+until Interlock implements safe pagination.
+
 ## Upstream registration
 
 `POST /mcp/servers` accepts `upstream_protocol_profile` with exactly two

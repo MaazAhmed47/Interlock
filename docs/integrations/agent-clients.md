@@ -80,12 +80,44 @@ Authenticate every POST with either `X-API-Key: <runtime-key>` or
 `Authorization: Bearer <runtime-key>`. The key must have `mcp.call`; its stored
 role and key identity are used for enforcement and audit evidence.
 
+### Breaking change: Streamable HTTP upgrade
+
+The existing `/mcp/stream/{server_id}` endpoint moved from the MCP
+`2025-11-25` session lifecycle to Interlock's constrained, stateless
+`2026-07-28` profile. This is an in-place protocol change: clients configured
+for the former lifecycle will not continue working without migration.
+
+Affected clients and operators include:
+
+- `mcp==1.28.1` Python `ClientSession` users;
+- clients that send `initialize`;
+- clients that send `notifications/initialized`;
+- clients that rely on `MCP-Session-Id`;
+- clients that use `ping` or session-bound POST requests; and
+- operators that configure `INTERLOCK_MCP_SESSION_TTL_SECONDS` or
+  `INTERLOCK_MCP_MAX_SESSIONS`. Those session settings no longer apply to this
+  endpoint because Interlock does not create inbound MCP sessions.
+
+Choose one of these migration paths:
+
+1. Upgrade the client to support Interlock's scoped stateless `2026-07-28`
+   profile. The client must use `server/discover`, `tools/list`, and
+   `tools/call` with the required request headers and per-request `_meta`
+   described below. Client information is optional and validated when
+   supplied.
+2. Where a native Streamable HTTP client is not required, use Interlock's
+   existing `POST /mcp/call` gateway route.
+
+Interlock does not silently fall back to the former session lifecycle, does
+not provide a legacy compatibility flag, and does not protect direct upstream
+connections that bypass its gateway.
+
 This is a stateless profile. Every request must carry the following:
 
 - `MCP-Protocol-Version: 2026-07-28` and `Mcp-Method` headers;
 - `Mcp-Name` for `tools/call`, matching `params.name` exactly;
 - per-request protocol version and client capabilities in `params._meta`.
-  Client identity is recommended and validated when present, but is optional.
+  Client information is optional and validated when supplied.
 
 Interlock implements `server/discover`, `tools/list`, and `tools/call`.
 Successful responses include `resultType: "complete"` and server identity in
