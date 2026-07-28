@@ -16,6 +16,17 @@ class ToolEligibility:
     stored_tool: Optional[dict[str, Any]] = None
 
 
+def uses_mcp_parameter_headers(value: Any) -> bool:
+    """Reject a capability until the gateway can mirror it without leaking it."""
+    if isinstance(value, dict):
+        if "x-mcp-header" in value:
+            return True
+        return any(uses_mcp_parameter_headers(child) for child in value.values())
+    if isinstance(value, list):
+        return any(uses_mcp_parameter_headers(child) for child in value)
+    return False
+
+
 def evaluate_streamable_tool(server_id: str, tool_name: str) -> ToolEligibility:
     """Require one verified, active, allowlisted stored tool baseline."""
     server = db.lookup_mcp_server(server_id)
@@ -60,13 +71,23 @@ def evaluate_streamable_tool(server_id: str, tool_name: str) -> ToolEligibility:
         return ToolEligibility(
             False, "tool_metadata_untrusted", server=server, stored_tool=stored
         )
+    if uses_mcp_parameter_headers(raw["inputSchema"]):
+        return ToolEligibility(
+            False,
+            "unsupported_mcp_parameter_header",
+            server=server,
+            stored_tool=stored,
+        )
     return ToolEligibility(True, "eligible", server=server, stored_tool=stored)
 
 
 def list_streamable_tools(server_id: str) -> list[dict[str, Any]]:
     """List exactly the tool definitions accepted by the call boundary."""
     tools: list[dict[str, Any]] = []
-    for record in db.list_mcp_tool_metadata(server_id):
+    for record in sorted(
+        db.list_mcp_tool_metadata(server_id),
+        key=lambda item: str(item.get("tool_name") or ""),
+    ):
         name = record.get("tool_name")
         if not isinstance(name, str):
             continue

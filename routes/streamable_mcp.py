@@ -1,7 +1,13 @@
-"""JSON-response MCP Streamable HTTP endpoint backed by Interlock's gateway."""
+"""Stateless MCP 2026-07-28 Streamable HTTP endpoint.
+
+Interlock exposes only its approved tool surface and gateway-mediated tool
+calls. It does not advertise protocol features it cannot enforce.
+"""
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 from typing import Any, Optional
 from urllib.parse import urlsplit
@@ -16,31 +22,44 @@ from core.http_body import TOO_LARGE, read_bounded_body
 from core.http_credentials import single_api_credential
 from core.mcp_gateway import proxy_mcp_tool_call
 from core.mcp_tool_eligibility import list_streamable_tools
-from core.streamable_sessions import session_store
 
 router = APIRouter()
 
 _JSON_RPC_VERSION = "2.0"
-_PROTOCOL_VERSION = "2025-11-25"
+_PROTOCOL_VERSION = "2026-07-28"
 _PATH = "/mcp/stream/{server_id}"
 _MAX_BODY_BYTES = 256 * 1024
+_LIST_TTL_MS = 5_000
+_SERVER_INFO = {"name": "interlock-mcp-gateway", "version": "0.2.0-alpha.1"}
+_SERVER_CAPABILITIES = {"tools": {"listChanged": False}}
 
 
-def _json_result(request_id: Any, result: Any) -> JSONResponse:
+def _result_meta() -> dict[str, Any]:
+    return {"io.modelcontextprotocol/serverInfo": _SERVER_INFO}
+
+
+def _json_result(request_id: Any, result: dict[str, Any]) -> JSONResponse:
+    # The gateway is the server seen by the inbound client. Do not let an
+    # upstream result replace its wire discriminator or identity stamp.
+    payload = {**result, "resultType": "complete", "_meta": _result_meta()}
     return JSONResponse(
-        {"jsonrpc": _JSON_RPC_VERSION, "id": request_id, "result": result}
+        {"jsonrpc": _JSON_RPC_VERSION, "id": request_id, "result": payload}
     )
 
 
 def _json_error(
-    request_id: Any, code: int, message: str, *, status_code: int = 200
+    request_id: Any,
+    code: int,
+    message: str,
+    *,
+    status_code: int = 200,
+    data: Optional[dict[str, Any]] = None,
 ) -> JSONResponse:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        error["data"] = data
     return JSONResponse(
-        {
-            "jsonrpc": _JSON_RPC_VERSION,
-            "id": request_id,
-            "error": {"code": code, "message": message},
-        },
+        {"jsonrpc": _JSON_RPC_VERSION, "id": request_id, "error": error},
         status_code=status_code,
     )
 
@@ -89,7 +108,6 @@ def _normalize_origin(value: str) -> Optional[str]:
 
 
 def _credential(request: Request) -> Optional[str]:
-    """Accept one API-key credential without accepting ambiguous headers."""
     return single_api_credential(request)
 
 
@@ -106,36 +124,9 @@ def _transport_headers_error(request: Request) -> Optional[Response]:
     return None
 
 
-def _protocol_header_error(request: Request) -> Optional[Response]:
-    if request.headers.get("mcp-protocol-version") != _PROTOCOL_VERSION:
-        return Response(status_code=400)
-    return None
-
-
-def _session_id(request: Request) -> Optional[str]:
-    values = request.headers.getlist("mcp-session-id")
-    if len(values) != 1:
-        return None
-    return values[0]
-
-
-def _principal_binding(key_info: dict[str, Any]) -> Optional[str]:
-    key_id = key_info.get("id")
-    key_hash = key_info.get("key_hash")
-    if key_id is None or not isinstance(key_hash, str) or not key_hash:
-        return None
-    return f"{key_id}:{key_hash}"
-
-
 async def _read_bounded_body(
     request: Request,
 ) -> tuple[Optional[bytes], Optional[Response]]:
-    """Bound both declared and chunked request bodies before JSON parsing.
-
-    Thin adapter over the shared reader so this transport and the CI
-    boundary-review route cannot drift apart; the status mapping (400 for a
-    malformed length, 413 for oversized) is unchanged.
-    """
     body, error = await read_bounded_body(request, _MAX_BODY_BYTES)
     if error == TOO_LARGE:
         return None, Response(status_code=413)
@@ -144,30 +135,98 @@ async def _read_bounded_body(
     return body, None
 
 
-def _valid_initialize(message: dict[str, Any]) -> bool:
-    params = message.get("params")
-    return (
-        "id" in message
-        and message.get("id") is not None
-        and isinstance(params, dict)
-        and isinstance(params.get("protocolVersion"), str)
-        and bool(params["protocolVersion"])
-        and isinstance(params.get("capabilities"), dict)
-        and isinstance(params.get("clientInfo"), dict)
-        and isinstance(params["clientInfo"].get("name"), str)
-        and bool(params["clientInfo"]["name"])
-        and isinstance(params["clientInfo"].get("version"), str)
-        and bool(params["clientInfo"]["version"])
-    )
+def _request_meta(message: dict[str, Any]) -> Optional[dict[str, Any]]:
+    params = message.get("params", {})
+    if not isinstance(params, dict):
+        return None
+    meta = params.get("_meta")
+    if not isinstance(meta, dict):
+        return None
+    version = meta.get("io.modelcontextprotocol/protocolVersion")
+    client_info = meta.get("io.modelcontextprotocol/clientInfo")
+    capabilities = meta.get("io.modelcontextprotocol/clientCapabilities")
+    if (
+        not isinstance(version, str)
+        or not version
+        or not isinstance(capabilities, dict)
+    ):
+        return None
+    if client_info is not None and (
+        not isinstance(client_info, dict)
+        or not isinstance(client_info.get("name"), str)
+        or not client_info["name"]
+        or not isinstance(client_info.get("version"), str)
+        or not client_info["version"]
+    ):
+        return None
+    return meta
+
+
+def _decode_mcp_header_value(value: str) -> Optional[str]:
+    if not (value.startswith("=?base64?") and value.endswith("?=")):
+        if value != value.strip() or any(
+            character != "\t" and not 0x20 <= ord(character) <= 0x7E
+            for character in value
+        ):
+            return None
+        return value
+    encoded = value[len("=?base64?") : -len("?=")]
+    try:
+        return base64.b64decode(encoded, validate=True).decode("utf-8")
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return None
+
+
+def _header_error(
+    request: Request, message: dict[str, Any], method: str
+) -> Optional[JSONResponse]:
+    request_id = message.get("id")
+    version = request.headers.get("mcp-protocol-version")
+    if version != _PROTOCOL_VERSION:
+        return _json_error(
+            request_id,
+            -32022,
+            "Unsupported protocol version",
+            status_code=400,
+            data={"supported": [_PROTOCOL_VERSION], "requested": version},
+        )
+    if request.headers.get("mcp-method") != method:
+        return _json_error(request_id, -32020, "Header mismatch", status_code=400)
+    params = message.get("params", {})
+    if method == "tools/call":
+        expected_name = params.get("name") if isinstance(params, dict) else None
+        raw_name = request.headers.get("mcp-name")
+        header_name = (
+            _decode_mcp_header_value(raw_name) if raw_name is not None else None
+        )
+        if not isinstance(expected_name, str) or header_name != expected_name:
+            return _json_error(request_id, -32020, "Header mismatch", status_code=400)
+    elif request.headers.get("mcp-name") is not None:
+        return _json_error(request_id, -32020, "Header mismatch", status_code=400)
+    return None
+
+
+def _unsupported_version_error(
+    request_id: Any, meta: dict[str, Any]
+) -> Optional[JSONResponse]:
+    requested = meta["io.modelcontextprotocol/protocolVersion"]
+    if requested != _PROTOCOL_VERSION:
+        return _json_error(
+            request_id,
+            -32022,
+            "Unsupported protocol version",
+            status_code=400,
+            data={"supported": [_PROTOCOL_VERSION], "requested": requested},
+        )
+    return None
 
 
 @router.post(_PATH, include_in_schema=False)
 async def streamable_http_post(server_id: str, request: Request):
-    """Serve MCP JSON-RPC over the standard Streamable HTTP request shape."""
+    """Serve stateless MCP JSON-RPC over Streamable HTTP."""
     origin_error = _origin_error(request)
     if origin_error is not None:
         return origin_error
-
     transport_error = _transport_headers_error(request)
     if transport_error is not None:
         return transport_error
@@ -177,10 +236,6 @@ async def streamable_http_post(server_id: str, request: Request):
         return Response(status_code=401)
     key_info, raw_key = proxy.require_scope(credential, "mcp.call")
     proxy.check_rate(raw_key, key_info["rate_per_min"])
-    principal_binding = _principal_binding(key_info)
-    if principal_binding is None:
-        return Response(status_code=401)
-
     server = db.lookup_mcp_server(server_id)
     if not server or not server.get("verified"):
         return Response(status_code=404)
@@ -197,75 +252,45 @@ async def streamable_http_post(server_id: str, request: Request):
 
     method = message.get("method")
     request_id = message.get("id")
-    if not isinstance(method, str) or not method:
+    if (
+        not isinstance(method, str)
+        or not method
+        or request_id is None
+        or isinstance(request_id, bool)
+        or not isinstance(request_id, (str, int))
+    ):
         return _json_error(request_id, -32600, "Invalid Request", status_code=400)
+    header_error = _header_error(request, message, method)
+    if header_error is not None:
+        return header_error
+    meta = _request_meta(message)
+    if meta is None:
+        return _json_error(request_id, -32602, "Invalid params", status_code=400)
+    version_error = _unsupported_version_error(request_id, meta)
+    if version_error is not None:
+        return version_error
 
-    if method == "initialize":
-        if request.headers.getlist("mcp-session-id"):
-            return Response(status_code=400)
-        if not _valid_initialize(message):
-            return _json_error(request_id, -32602, "Invalid params", status_code=400)
-        session = session_store.create(principal_binding, server_id)
-        response = _json_result(
+    if method == "server/discover":
+        return _json_result(
             request_id,
             {
-                "protocolVersion": _PROTOCOL_VERSION,
-                "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {
-                    "name": "interlock-mcp-gateway",
-                    "version": "0.2.0-alpha.1",
-                },
-                "instructions": (
-                    "Interlock proxies this server's registered tools through "
-                    "its runtime trust controls."
-                ),
+                "supportedVersions": [_PROTOCOL_VERSION],
+                "capabilities": _SERVER_CAPABILITIES,
+                "instructions": "Interlock exposes approved tools and enforces its gateway trust boundary.",
+                "ttlMs": _LIST_TTL_MS,
+                "cacheScope": "private",
             },
         )
-        response.headers["MCP-Session-Id"] = session.session_id
-        return response
-
-    protocol_error = _protocol_header_error(request)
-    if protocol_error is not None:
-        return protocol_error
-
-    session_id = _session_id(request)
-    if session_id is None:
-        return Response(status_code=404)
-
-    if method == "notifications/initialized":
-        if "id" in message:
-            return _json_error(request_id, -32600, "Invalid Request", status_code=400)
-        if not session_store.mark_initialized(session_id, principal_binding, server_id):
-            return Response(status_code=404)
-        return Response(status_code=202)
-
-    if (
-        session_store.authorize(
-            session_id,
-            principal_binding,
-            server_id,
-            require_initialized=True,
-        )
-        is None
-    ):
-        return Response(status_code=404)
-
-    if "id" not in message:
-        return Response(status_code=202)
-
-    if method == "ping":
-        if "id" not in message or request_id is None:
-            return _json_error(None, -32600, "Invalid Request", status_code=400)
-        return _json_result(request_id, {})
-
     if method == "tools/list":
-        if "id" not in message or request_id is None:
-            return _json_error(None, -32600, "Invalid Request", status_code=400)
-        return _json_result(request_id, {"tools": list_streamable_tools(server_id)})
-
+        return _json_result(
+            request_id,
+            {
+                "tools": list_streamable_tools(server_id),
+                "ttlMs": _LIST_TTL_MS,
+                "cacheScope": "private",
+            },
+        )
     if method == "tools/call":
-        if "id" not in message or request_id is None:
-            return _json_error(None, -32600, "Invalid Request", status_code=400)
         params = message.get("params")
         if not isinstance(params, dict):
             return _json_error(request_id, -32602, "Invalid params")
@@ -293,14 +318,13 @@ async def streamable_http_post(server_id: str, request: Request):
                 "isError": True,
             },
         )
-
-    return _json_error(request_id, -32601, "Method not found")
+    return _json_error(request_id, -32601, "Method not found", status_code=404)
 
 
 @router.get(_PATH, include_in_schema=False)
 @router.delete(_PATH, include_in_schema=False)
 async def streamable_http_non_post(server_id: str, request: Request):
-    """This JSON-only profile intentionally does not expose an SSE stream."""
+    """The 2026 profile has no GET lifecycle endpoint or session deletion."""
     origin_error = _origin_error(request)
     if origin_error is not None:
         return origin_error

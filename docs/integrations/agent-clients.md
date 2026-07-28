@@ -69,8 +69,8 @@ curl -X POST http://localhost:8001/mcp/call \
 
 ## MCP Streamable HTTP Clients
 
-Clients that support MCP Streamable HTTP can connect directly to one verified
-Interlock registry server at:
+Interlock's inbound Streamable HTTP profile supports MCP `2026-07-28` for one
+verified registry server at:
 
 ```text
 http://localhost:8001/mcp/stream/<server_id>
@@ -78,58 +78,64 @@ http://localhost:8001/mcp/stream/<server_id>
 
 Authenticate every POST with either `X-API-Key: <runtime-key>` or
 `Authorization: Bearer <runtime-key>`. The key must have `mcp.call`; its stored
-role and key identity are used for enforcement and audit evidence. Interlock
-supports the `2025-11-25` protocol version and the `initialize`,
-`notifications/initialized`, `ping`, `tools/list`, and `tools/call` methods.
-The visible tool list contains only active, allowlisted, non-blocked,
+role and key identity are used for enforcement and audit evidence.
+
+This is a stateless profile. Every request must carry the following:
+
+- `MCP-Protocol-Version: 2026-07-28` and `Mcp-Method` headers;
+- `Mcp-Name` for `tools/call`, matching `params.name` exactly;
+- per-request protocol version and client capabilities in `params._meta`.
+  Client identity is recommended and validated when present, but is optional.
+
+Interlock implements `server/discover`, `tools/list`, and `tools/call`.
+Successful responses include `resultType: "complete"` and server identity in
+`result._meta`. Tool lists are deterministic and return a short, private cache
+hint. The visible tool list contains only active, allowlisted, non-blocked,
 non-quarantined tools with a trusted stored metadata baseline. The identical
-eligibility check runs at the gateway boundary before a Streamable HTTP tool
-call; eligible calls then continue through the same trust, drift, inspection,
-RBAC, response-scan, quarantine, and audit pipeline as `/mcp/call`.
-
-Successful initialization issues an opaque `MCP-Session-Id`. Subsequent POSTs
-must send that ID and `MCP-Protocol-Version: 2025-11-25`; the client must send
-`notifications/initialized` before normal requests. Sessions are stored only
-in bounded, expiring process memory and are bound to the authenticated API-key
-record and target registry server. They contain no raw credential, tool
-arguments, or customer data. Unknown, expired, malformed, cross-key, and
-cross-server session IDs fail closed. Configure the lifetime with
-`INTERLOCK_MCP_SESSION_TTL_SECONDS` (default 900 seconds, maximum 86400) and the
-process-local bound with `INTERLOCK_MCP_MAX_SESSIONS` (default 10000, maximum
-100000). In a multi-replica deployment, requests for one session must remain on
-the replica that issued it; an unknown replica fails closed.
-
-This profile does not initiate server-to-client requests or offer an SSE
-stream. GET and DELETE return `405 Method Not Allowed`; session records expire
-automatically rather than relying on DELETE termination. A client must support
-Streamable HTTP JSON responses rather than requiring SSE.
-
-An initialization request looks like:
+eligibility check runs at the gateway boundary before a tool call; eligible
+calls continue through the same trust, drift, inspection, RBAC, response-scan,
+quarantine, and audit pipeline as `/mcp/call`.
 
 ```bash
 curl -X POST http://localhost:8001/mcp/stream/internal-slack \
   -H "Authorization: Bearer <YOUR_RUNTIME_INTERLOCK_API_KEY>" \
   -H "Accept: application/json, text/event-stream" \
   -H "Content-Type: application/json" \
+  -H "MCP-Protocol-Version: 2026-07-28" \
+  -H "Mcp-Method: tools/list" \
   -d '{
     "jsonrpc": "2.0",
     "id": 1,
-    "method": "initialize",
+    "method": "tools/list",
     "params": {
-      "protocolVersion": "2025-11-25",
-      "capabilities": {},
-      "clientInfo": {"name": "pilot-client", "version": "1.0.0"}
+      "_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": {
+          "name": "pilot-client", "version": "1.0.0"
+        },
+        "io.modelcontextprotocol/clientCapabilities": {}
+      }
     }
   }'
 ```
 
-The initialization response includes `MCP-Session-Id`. Subsequent POSTs must
-include that value and `MCP-Protocol-Version: 2025-11-25`.
+The former `initialize`/`notifications/initialized` lifecycle,
+`MCP-Session-Id`, `ping`, HTTP GET lifecycle endpoint, and SSE resumption are
+not supported. GET and DELETE return `405 Method Not Allowed`. This profile
+does not yet advertise subscriptions, tasks, prompts, resources, MRTR, or
+`x-mcp-header` parameter mirroring. Tools that require `x-mcp-header` are hidden
+and denied before execution.
+
+Registered upstreams default to the existing `legacy` bare JSON-RPC adapter.
+Set `upstream_protocol_profile` to `2026-07-28` only for an upstream that
+implements the pinned stateless profile. Interlock then sends `server/discover`,
+`tools/list`, and `tools/call` with the required headers and per-request metadata
+and never silently downgrades. See the exact supported, blocked, and future
+boundary in [MCP 2026 compatibility](../mcp-2026-compatibility.md).
 
 Browser-originated requests are accepted only when the complete Origin is
 listed explicitly in `ALLOWED_ORIGINS`. The wildcard value does not authorize
-an Origin for this endpoint. Requests from non-browser MCP clients may omit the
-Origin header.
+an Origin for this endpoint. Non-browser MCP clients may omit Origin.
 
 ## Local Adapter For Other MCP Clients
 

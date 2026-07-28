@@ -65,6 +65,9 @@ class MCPRegisterRequest(BaseModel):
     auth_type: Literal["none", "bearer", "x-api-key"] = "none"
     auth_header: Optional[str] = None
     auth_token_env: Optional[str] = None
+    # Explicit and pinned. Existing registrations remain legacy; a declared
+    # modern upstream is never silently retried with a legacy envelope.
+    upstream_protocol_profile: Literal["legacy", "2026-07-28"] = "legacy"
     # Probe authorization state. Fail closed: production + probes disabled
     # unless the admin registering the server explicitly says otherwise.
     environment: Literal["production", "non_production"] = "production"

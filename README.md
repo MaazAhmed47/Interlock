@@ -802,12 +802,13 @@ For planned multi-step workflows, `POST /mcp/chains/analyze` runs a separate pre
 
 Prompt scanning still exists at `POST /scan`, but the product moat is the MCP gateway and agent RBAC path.
 
-Compatible MCP clients can use the same enforcement path through the
-Streamable HTTP endpoint at `POST /mcp/stream/{server_id}`. This transport
-profile supports MCP protocol `2025-11-25` initialization, bounded server-side
-session lifecycle, ping, tool discovery, and tool calls using JSON responses.
-It does not provide SSE or server-initiated messaging. See
-[Agent Client Integration Patterns](docs/integrations/agent-clients.md#mcp-streamable-http-clients).
+Compatible MCP clients can use the same enforcement path through the stateless
+MCP `2026-07-28` Streamable HTTP endpoint at `POST /mcp/stream/{server_id}`.
+The current profile implements `server/discover`, `tools/list`, and `tools/call`
+with per-request protocol metadata and does not advertise sessions, subscriptions,
+or server-initiated messaging. See
+[Agent Client Integration Patterns](docs/integrations/agent-clients.md#mcp-streamable-http-clients)
+and the [exact MCP 2026 compatibility matrix](docs/mcp-2026-compatibility.md).
 
 ---
 
