@@ -58,7 +58,52 @@ cd Interlock/demo/offline
 
 Do not add an `.env` file or reuse state from another Interlock checkout.
 
-## 2. Start Interlock and the local MCP example
+## 2. Create the local artifact directory
+
+This setup step is required before any Docker Compose command. Creating the
+parent directory as the evaluator ensures they can remove generated files
+even if Docker ownership mapping is unavailable.
+
+PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force evaluator-artifacts | Out-Null
+```
+
+Bash on Linux or macOS:
+
+```bash
+mkdir -p evaluator-artifacts
+```
+
+Linux users must export both values below in the same shell before running any
+`docker compose` command. Keep them exported for the runner and operator-action
+commands:
+
+```bash
+export INTERLOCK_EVALUATOR_UID="$(id -u)"
+export INTERLOCK_EVALUATOR_GID="$(id -g)"
+```
+
+The UID/GID mapping makes new files user-owned. The required user-owned parent
+directory is also a cleanup fallback: Linux permits its owner to unlink entries
+from it even if a Docker setup cannot apply the requested file ownership.
+
+If an older run already created a root-owned `evaluator-artifacts` directory,
+recover it once with the existing local runner image, then repeat the required
+setup above:
+
+```bash
+export HOST_UID="$(id -u)" HOST_GID="$(id -g)"
+docker run --rm --user 0:0 \
+  -e HOST_UID -e HOST_GID \
+  -v "$PWD/evaluator-artifacts:/artifacts" \
+  python:3.12-slim sh -c 'chown -R "$HOST_UID:$HOST_GID" /artifacts'
+rm -rf evaluator-artifacts
+mkdir -p evaluator-artifacts
+```
+
+## 3. Start Interlock and the local MCP example
 
 ```bash
 docker compose up -d --build
@@ -84,19 +129,10 @@ docker compose ps
 exited successfully. The fixed demo key exists only because this Compose stack
 sets `INTERLOCK_OFFLINE_DEMO=true`; it is not production configuration.
 
-## 3. Run the complete evaluator proof
+## 4. Run the complete evaluator proof
 
-On Linux only, create the bind-mounted directory as your user and tell Compose
-which UID/GID must own new artifacts:
-
-```bash
-mkdir -p evaluator-artifacts
-export INTERLOCK_EVALUATOR_UID="$(id -u)"
-export INTERLOCK_EVALUATOR_GID="$(id -g)"
-```
-
-Windows and macOS Docker Desktop users do not need this Linux ownership step.
-The standard runner command is unchanged on every platform:
+Run this in the same shell used for setup. The standard runner command is
+unchanged on every platform:
 
 ```bash
 docker compose run --rm evaluator-runner run
@@ -120,7 +156,7 @@ Any nonzero exit is a failed evaluation. Do not treat a partial artifact
 directory as proof; the runner removes incomplete packs and resets its mock
 phase/counters on failure.
 
-## 4. Review the evidence
+## 5. Review the evidence
 
 The runner writes `demo/offline/evaluator-artifacts/` on the host:
 
@@ -143,7 +179,7 @@ Optional UI review: open <http://localhost:8080/dashboard/>. The terminal proof
 is complete without the UI. If prompted in dashboard Settings, use API URL
 `http://localhost:8001` and the explicitly local key `lf-demo-offline-key`.
 
-## 5. Choose the operator action
+## 6. Choose the operator action
 
 Review the evidence first, then run exactly one command.
 
@@ -171,7 +207,7 @@ written as `operator-action.json`, and `manifest.json` is refreshed. â€œRejectâ€
 the evaluator language for the product's keep/mark-quarantined action; there is
 no separate `/reject` endpoint.
 
-## 6. Give structured feedback
+## 7. Give structured feedback
 
 Complete `evaluator-artifacts/feedback.md` without live coaching:
 
@@ -183,7 +219,7 @@ Complete `evaluator-artifacts/feedback.md` without live coaching:
 6. Where did the process confuse or slow you down?
 7. Would you keep Interlock in this workflow? Why or why not?
 
-## 7. Clean up
+## 8. Clean up
 
 ```bash
 docker compose down -v

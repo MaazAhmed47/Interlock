@@ -378,9 +378,19 @@ def test_linux_runner_uses_invoking_uid_gid_and_documented_user_owned_directory(
     assert runner["user"] == (
         "${INTERLOCK_EVALUATOR_UID:-0}:${INTERLOCK_EVALUATOR_GID:-0}"
     )
-    assert "mkdir -p evaluator-artifacts" in guide
+    powershell_setup = (
+        "New-Item -ItemType Directory -Force evaluator-artifacts | Out-Null"
+    )
+    bash_setup = "mkdir -p evaluator-artifacts"
+    assert powershell_setup in guide
+    assert bash_setup in guide
+    assert guide.index(powershell_setup) < guide.index("docker compose up -d --build")
+    assert guide.index(bash_setup) < guide.index("docker compose up -d --build")
     assert 'export INTERLOCK_EVALUATOR_UID="$(id -u)"' in guide
     assert 'export INTERLOCK_EVALUATOR_GID="$(id -g)"' in guide
+    assert "Linux users must export both values" in guide
+    assert "even if Docker ownership mapping is unavailable" in guide
+    assert "chown -R" in guide
     assert "sudo" not in guide.lower()
 
     artifact_dir = tmp_path / "evaluator-artifacts"
