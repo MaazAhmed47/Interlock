@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { RefreshCw, ScanLine, Server, Activity, ShieldCheck } from 'lucide-react'
 import { AuditEvent, ScanHistoryEvent, ScanStats, ShadowStats, DEMO_PROMPTS } from '../api'
 import { useDashboardData } from '../components/DashLayout'
+import { riskMeter, RISK_UNAVAILABLE_LABEL } from '../riskSeverity'
 import MetricCard from '../components/MetricCard'
 import StatusBadge from '../components/StatusBadge'
 import ErrorCard from '../components/ErrorCard'
@@ -64,14 +65,12 @@ function getShadowMetric(shadow: ShadowStats | null) {
     }
   }
 
-  const avgRisk = typeof shadow.avg_risk_score === 'number' && Number.isFinite(shadow.avg_risk_score)
-    ? Math.round(shadow.avg_risk_score)
-    : 0
+  const avgRisk = riskMeter(shadow.avg_risk_score)
 
   return {
     label: 'Shadow Findings',
     value: total,
-    sub: 'Avg risk ' + avgRisk + '/100',
+    sub: avgRisk.available ? `Avg risk ${avgRisk.score}/100` : RISK_UNAVAILABLE_LABEL,
   }
 }
 
@@ -143,7 +142,7 @@ function SecurityPosture({ scanStats }: { scanStats: ScanStats | null }) {
   const blocked = scanStats?.threats ?? 0
   const safe = scanStats?.safe ?? 0
   const blockRate = scanStats?.block_rate ?? 0
-  const avgRisk = Math.round(scanStats?.avg_risk_score ?? 0)
+  const risk = riskMeter(scanStats?.avg_risk_score)
   const byLevel = scanStats?.by_level ?? {}
   const pieStyle = { '--blocked': String(Math.max(0, Math.min(100, blockRate))) } as CSSProperties
 
@@ -154,8 +153,18 @@ function SecurityPosture({ scanStats }: { scanStats: ScanStats | null }) {
         <div className="posture-card">
           <div className="posture-label">Average Risk</div>
           <div className="risk-meter">
-            <div className="risk-meter-top"><strong>{avgRisk}/100</strong><span>{total} scan{total === 1 ? '' : 's'}</span></div>
-            <div className="risk-bar"><span style={{ width: Math.max(0, Math.min(100, avgRisk)) + '%' }} /></div>
+            <div className="risk-meter-top">
+              <span className="risk-meter-value">
+                {risk.available
+                  ? <strong>{risk.score}/100</strong>
+                  : <strong className="risk-placeholder" aria-hidden="true">&mdash;</strong>}
+                <span className={'risk-severity ' + risk.className}>{risk.label}</span>
+              </span>
+              <span>{total} scan{total === 1 ? '' : 's'}</span>
+            </div>
+            <div className={'risk-bar' + (risk.available ? '' : ' is-unavailable')}>
+              <span className={risk.className} style={{ width: (risk.available ? risk.percent : 0) + '%' }} />
+            </div>
           </div>
         </div>
         <div className="posture-card posture-pie-card">

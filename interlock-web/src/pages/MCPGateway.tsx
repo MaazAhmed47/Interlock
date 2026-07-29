@@ -122,7 +122,7 @@ export default function MCPGateway() {
 
       {drifted.length > 0 && (
         <>
-          <div className="dash-section-title" style={{ color: 'var(--orange)' }}>
+          <div className="dash-section-title critical-section-title">
             Drifted / Quarantined - {drifted.length} {drifted.length === 1 ? 'tool needs' : 'tools need'} review
           </div>
           <div className="drift-grid" style={{ marginBottom: 28 }}>
@@ -130,6 +130,8 @@ export default function MCPGateway() {
               const k = `${tool.server_id}/${tool.tool_name}`
               const isQ = tool.status === 'quarantined'
               const reasons = driftReasons(tool)
+              const description = formatValue(toolField(tool, 'description'))
+              const reviewReason = reasons.length > 0 ? reasons.join(' ') : description
               return (
                 <div key={k} className={`drift-card${isQ ? ' quarantined' : ''}`}>
                   <div className="drift-card-header">
@@ -139,17 +141,14 @@ export default function MCPGateway() {
                     </div>
                     {tool.drift_severity && <StatusBadge value={tool.drift_severity} />}
                   </div>
-                  {formatValue(toolField(tool, 'description')) !== '-' && (
-                    <div className="drift-card-field" style={{ color: 'var(--brand-color-text-muted)' }}>{formatValue(toolField(tool, 'description'))}</div>
+                  {reviewReason !== '-' && (
+                    <div className="drift-card-field drift-card-reason"><strong>Review reason:</strong> {reviewReason}</div>
                   )}
                   <div className="drift-card-field"><strong>Effects:</strong> {formatValue(toolField(tool, 'effects'))}</div>
                   <div className="drift-card-field"><strong>Side effect:</strong> {formatValue(toolField(tool, 'side_effect'))}</div>
                   <div className="drift-card-field"><strong>Externality:</strong> {formatValue(toolField(tool, 'externality'))}</div>
                   <div className="drift-card-field"><strong>Data classes:</strong> {formatValue(toolField(tool, 'data_classes'))}</div>
                   <div className="drift-card-field"><strong>Drift action:</strong> {formatValue(tool.drift_action)}</div>
-                  {reasons.length > 0 && (
-                    <div className="drift-card-field"><strong>Why quarantined:</strong> {reasons.join(' ')}</div>
-                  )}
                   {quarantinePending === k ? (
                     <div className="drift-card-actions" style={{ flexDirection: 'column', gap: 8 }}>
                       <div style={{ fontSize: 12, color: 'var(--orange)', fontFamily: 'var(--font-mono)' }}>
@@ -217,7 +216,7 @@ export default function MCPGateway() {
                       <td className="mono">{t.server_id}</td>
                       <td className="mono">{t.tool_name}</td>
                       <td>{t.status ? <StatusBadge value={t.status} /> : <span className="dim">-</span>}</td>
-                      <td className="dim" style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <td className="dim tool-description">
                         {formatValue(toolField(t, 'description'))}
                       </td>
                     </tr>
