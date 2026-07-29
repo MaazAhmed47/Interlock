@@ -42,14 +42,16 @@ installation, cloud account, or MCP credential is required.
 
 ## 1. Clone a clean checkout
 
-For the merged public repository:
+For the merged/main version of this guide, clone the public repository's
+default branch:
 
 ```bash
 git clone https://github.com/MaazAhmed47/Interlock.git
 cd Interlock/demo/offline
 ```
 
-To evaluate a specific review branch before merge, make the branch explicit:
+Reviewer-only before merge: clone the review branch explicitly. This is not the
+normal evaluator path:
 
 ```bash
 git clone --branch agent/evaluator-journey-v2 --single-branch https://github.com/MaazAhmed47/Interlock.git Interlock
@@ -219,7 +221,13 @@ Complete `evaluator-artifacts/feedback.md` without live coaching:
 6. Where did the process confuse or slow you down?
 7. Would you keep Interlock in this workflow? Why or why not?
 
-## 8. Clean up
+## 8. Return feedback
+
+Send only `evaluator-artifacts/feedback.md` and
+`evaluator-artifacts/summary.md` privately to the person who invited you. Do
+not publish evaluator artifacts in a public issue.
+
+## 9. Clean up
 
 ```bash
 docker compose down -v
