@@ -11,100 +11,119 @@
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://getinterlock.dev/">
 <meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/interlock-favicon-white.svg" type="image/svg+xml">
+<link rel="icon" href="/interlock-favicon-white.png" type="image/png">
+<link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+<link rel="apple-touch-icon" href="/interlock-favicon-white.png">
+<link rel="preload" href="/fonts/space-grotesk-latin-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/jetbrains-mono-latin-var.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+  /* Self-hosted so the offline proof and a strict CSP both keep working.
+     Variable weight, latin subset. SIL OFL — licences beside the files. */
+  @font-face{font-family:"Space Grotesk";font-style:normal;font-weight:300 700;font-display:swap;
+    src:url("/fonts/space-grotesk-latin-var.woff2") format("woff2")}
+  @font-face{font-family:"JetBrains Mono";font-style:normal;font-weight:100 800;font-display:swap;
+    src:url("/fonts/jetbrains-mono-latin-var.woff2") format("woff2")}
+  /* Metric-matched stand-ins so the swap reflows nothing. Tuned by measuring
+     each declared fallback against its webfont at the sizes this page renders,
+     then re-measuring until the residual was under 0.1% (see the handover). */
+  @font-face{font-family:"Space Grotesk Fallback";
+    src:local("Segoe UI"),local("Helvetica Neue"),local("Arial"),local("Liberation Sans");
+    size-adjust:110.24%;ascent-override:88.9%;descent-override:26.3%;line-gap-override:0%}
+  @font-face{font-family:"JetBrains Mono Fallback";
+    src:local("Consolas"),local("Menlo"),local("DejaVu Sans Mono"),local("Liberation Mono");
+    size-adjust:109.13%;ascent-override:93.5%;descent-override:27.5%;line-gap-override:0%}
   :root{
-    --bg:#05051a; --bg2:#07081c; --ink:#ffffff; --muted:#c3c6e8; --muted2:#9ba0d4;
-    --line:#2c3170; --line2:#3d4390; --card:rgba(255,255,255,0.03); --cardsolid:rgba(13,16,50,0.85);
-    --green:#238636; --greenText:#7ee787; --greenLine:#2ea44f; --amber:#e3b341; --amberText:#f2cc60;
-    --red:#da3633; --redLine:#f85149; --redText:#ff9492; --purple:#7c52ff; --purpleText:#b39dff;
-    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    /* Tokens sampled from interlock-capability-drift-receipt-full.png (the 1x
+       render behind the LinkedIn graphic); see the token table in the handover.
+       Colour carries decision meaning only: green = approved/verified,
+       amber = changed, red = held/quarantined. */
+    --bg:#0a0b0c;          /* neutral graphite page field */
+    --bg2:#101315;         /* card / chrome */
+    --surface:#101315;
+    --surface2:#15181b;    /* button + subtle fill                          */
+    --surface3:#171a1d;    /* inline hash / code chip                       */
+    --approvedBg:#101713;  /* approved-state panel                          */
+    --ink:#f2f4f4; --muted:#c6cacc; --muted2:#c6cacc; --faint:#7c838a;
+    --line:#262a2e; --line2:#262a2e; --line3:#1c2023;
+    --control:#5b6168;     /* form-control edge: 3:1 for WCAG 1.4.11        */
+    --card:var(--surface); --cardsolid:var(--surface);
+    --green:#08872b; --greenText:#5fed83; --greenLine:#265933;
+    --amber:#d29922; --amberText:#f0b72f;
+    /* No red anywhere in the graphic — its QUARANTINE chip is amber. These
+       are carried over unchanged rather than invented from the sample. */
+    --red:#f85149; --redLine:rgba(248,81,73,0.48); --redText:#ff8182;
+    --grid:rgba(255,255,255,.016); /* neutral technical grid */
+    --sans:"Space Grotesk","Space Grotesk Fallback",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    --mono:"JetBrains Mono","JetBrains Mono Fallback",ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
   }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
   body{margin:0;background:var(--bg);color:var(--ink);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
-    -webkit-font-smoothing:antialiased;line-height:1.5;letter-spacing:0}
+    font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;line-height:1.5;letter-spacing:0;
+    /* Ligatures off everywhere so technical strings stay literal — JetBrains
+       Mono renders -> as an arrow glyph under its default calt otherwise. */
+    font-variant-ligatures:none;font-feature-settings:"liga" 0,"calt" 0}
   a{color:inherit;text-decoration:none}
-  :focus-visible{outline:3px solid rgba(126,231,135,0.95);outline-offset:3px;border-radius:6px}
+  ::selection{color:#000;background:rgba(95,237,131,0.65)}
+  :focus-visible{outline:3px solid var(--greenText);outline-offset:3px;border-radius:6px}
   .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
-  .mono{font-family:var(--mono)}
-  .eyebrow{font-size:13px;font-weight:600;letter-spacing:1px;color:var(--greenText)}
-  .eyebrow.p{color:var(--purpleText)}
-  h1,h2{margin:0;font-weight:600;text-wrap:balance}
-  h1{font-size:clamp(34px,5vw,64px);line-height:1.08;letter-spacing:-1.4px}
-  h2{font-size:clamp(26px,3.4vw,40px);line-height:1.14;letter-spacing:-0.8px}
+  .mono,code,pre,kbd,samp{font-family:var(--mono);
+    font-variant-ligatures:none;font-feature-settings:"liga" 0,"calt" 0}
+  /* Compact uppercase label — section markers and every technical caption */
+  .eyebrow{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:0;
+    text-transform:uppercase;color:var(--greenText)}
+  .eyebrow.p{color:var(--faint)}
+  h1,h2{margin:0;font-weight:600;text-wrap:balance;letter-spacing:0}
+  h1{font-size:clamp(34px,5vw,64px);line-height:1.08}
+  h2{font-size:clamp(26px,3.4vw,40px);line-height:1.14}
   p.lede{font-size:clamp(15px,1.5vw,19px);line-height:1.6;color:var(--muted);text-wrap:pretty}
-  .btn{display:inline-block;font-size:15px;font-weight:600;color:#fff;padding:13px 24px;border-radius:8px;
+  .btn{display:inline-block;font-size:15px;font-weight:600;color:#fff;padding:13px 24px;border-radius:6px;
     background:var(--green);border:1px solid transparent;cursor:pointer;transition:background .18s,border-color .18s,transform .18s}
-  .btn:hover{background:#2ea043;transform:translateY(-1px)}
-  .btn.ghost{background:rgba(255,255,255,0.04);border:1px solid #6e76c9}
-  .btn.ghost:hover{background:rgba(255,255,255,0.08)}
+  /* Hover brightens the edge, not the fill: #08872b is the lightest green that
+     still clears 4.5:1 against white label text. */
+  .btn:hover{border-color:var(--greenText);transform:translateY(-1px)}
+  .btn.ghost{background:transparent;border:1px solid var(--line2);color:var(--muted)}
+  .btn.ghost:hover{background:var(--surface2);border-color:var(--control);color:var(--ink)}
   section{border-top:1px solid var(--line)}
   .pad{padding:clamp(56px,8vw,88px) 0}
-  /* Side glows: wide, moderate peak, long multi-stop falloff so the edge melts
-     into the shared --bg canvas instead of ending on a visible ring. */
-  .glowL{background:
-    radial-gradient(ellipse 900px 680px at 0% 50%,
-      rgba(139,92,255,0.25) 0%,
-      rgba(136,90,252,0.155) 26%,
-      rgba(132,88,248,0.075) 46%,
-      rgba(128,85,242,0.028) 62%,
-      rgba(124,82,255,0) 78%),
-    var(--bg)}
-  .glowR{background:
-    radial-gradient(ellipse 900px 680px at 100% 50%,
-      rgba(139,92,255,0.25) 0%,
-      rgba(136,90,252,0.155) 26%,
-      rgba(132,88,248,0.075) 46%,
-      rgba(128,85,242,0.028) 62%,
-      rgba(124,82,255,0) 78%),
-    var(--bg)}
-  /* Bottom-anchored bloom for the closing section, same canvas and falloff. */
-  .glowB{background:
-    radial-gradient(ellipse 1000px 620px at 50% 116%,
-      rgba(146,100,255,0.25) 0%,
-      rgba(142,97,252,0.16) 26%,
-      rgba(136,92,248,0.08) 46%,
-      rgba(130,87,242,0.03) 62%,
-      rgba(124,82,255,0) 80%),
-    var(--bg)}
-  .card{background:var(--card);border:1px solid var(--line2);border-radius:10px;padding:20px 22px}
+  .band{background:var(--bg)}
+  .card{background:var(--card);border:1px solid var(--line2);border-radius:8px;padding:20px 22px}
   .grid{display:grid;gap:16px}
   .reveal{opacity:0;transform:translateY(16px);transition:opacity .6s ease-out,transform .6s ease-out}
   .reveal.vis{opacity:1;transform:none}
   .src{font-size:13px;color:var(--greenText);margin-top:auto;transition:color .15s}
-  .src:hover{color:#a6f0b0;text-decoration:underline}
+  .src:hover{color:#8df3a5;text-decoration:underline}
+
+  /* Thin technical grid — hero and closing panel only, so it reads as
+     measurement texture rather than wallpaper. Hard 1px stops, no colour ramp. */
+  .hero,#pilot{position:relative}
+  .hero::before,#pilot::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;
+    background-image:
+      repeating-linear-gradient(to right,var(--grid) 0 1px,transparent 1px 64px),
+      repeating-linear-gradient(to bottom,var(--grid) 0 1px,transparent 1px 64px)}
+  .hero>.wrap,#pilot>.wrap{position:relative;z-index:1}
 
   /* NAV */
-  .nav{position:sticky;top:0;z-index:50;background:rgba(5,5,26,0.82);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
-  .nav .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
-  .brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:700;letter-spacing:-0.2px}
+  .nav{position:sticky;top:0;z-index:50;background:rgba(10,11,12,0.88);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  /* 74px = 28px lockup + 2x one bracket height (22.83px at this lockup size),
+     so the mark keeps its required clear space inside the bar. */
+  .nav .wrap{display:flex;align-items:center;justify-content:space-between;height:74px}
+  .brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:700;letter-spacing:0}
   .logo{width:24px;height:24px;border:3px solid #fff;border-radius:6px;position:relative;display:inline-block}
   .logo::after{content:"";position:absolute;inset:4px;border:2.5px solid var(--greenText);border-radius:2px}
+  .brand{display:flex;align-items:center;gap:0;padding:12px;margin:-12px;font-size:inherit;font-weight:inherit;letter-spacing:0}
+  .brand picture{display:block;line-height:0}
+  .brand img{display:block;height:28px;width:auto;max-width:none}
   .navlinks{display:flex;align-items:center;gap:24px;font-size:15px}
-  .navlinks a{color:var(--muted);transition:color .15s}
+  .navlinks a{color:var(--muted2);transition:color .15s}
   .navlinks a:hover{color:#fff}
   .navtoggle{display:none;flex-direction:column;gap:4px;background:none;border:0;cursor:pointer;padding:8px}
   .navtoggle span{width:20px;height:2px;background:#fff;border-radius:2px}
 
   /* HERO */
-  /* Hero sits on the same flat --bg canvas as every other section; the purple
-     bloom is layered on top rather than baked into a lighter base colour. */
-  .hero{position:relative;text-align:center;padding:clamp(72px,11vw,120px) 0 clamp(56px,8vw,80px);
-    background:
-      radial-gradient(ellipse 900px 560px at 50% 106%,
-        rgba(146,100,255,0.25) 0%,
-        rgba(142,97,252,0.16) 26%,
-        rgba(136,92,248,0.08) 46%,
-        rgba(130,87,242,0.03) 62%,
-        rgba(124,82,255,0) 80%),
-      radial-gradient(ellipse 1250px 780px at 50% 112%,
-        rgba(88,58,190,0.18) 0%,
-        rgba(86,57,186,0.095) 34%,
-        rgba(84,55,182,0.04) 54%,
-        rgba(82,54,180,0.014) 68%,
-        rgba(80,52,178,0) 82%),
-      var(--bg)}
+  .hero{text-align:center;padding:clamp(72px,11vw,120px) 0 clamp(56px,8vw,80px);background:var(--bg)}
   .hero h1{max-width:940px;margin:0 auto}
   .hero .lede{max-width:720px;margin:22px auto 0}
   .cta-row{display:flex;justify-content:center;gap:14px;margin-top:32px;flex-wrap:wrap}
@@ -113,17 +132,30 @@
   /* FLOW */
   .flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr auto 1fr;align-items:stretch;gap:0;
     max-width:1180px;margin:clamp(48px,7vw,84px) auto 0;text-align:left}
-  .flow .arrow{display:flex;align-items:center;justify-content:center;color:#6e76c9;font-size:16px;padding:0 8px}
-  .fstep{background:var(--cardsolid);border:1px solid var(--line2);border-radius:10px;padding:18px}
-  .fstep.red{background:rgba(60,16,30,0.55);border-color:var(--redLine)}
+  .flow .arrow{display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:16px;padding:0 8px}
+  /* 1px border, plus a 3px accent bar on the top edge when the card asserts a
+     state — the one place the graphic uses a 3px rule. */
+  .fstep{position:relative;background:var(--cardsolid);border:1px solid var(--line2);
+    border-radius:8px;padding:18px;overflow:hidden}
+  .fstep.green,.fstep.amber,.fstep.red{padding-top:21px}
+  .fstep.green::before,.fstep.amber::before,.fstep.red::before{
+    content:"";position:absolute;top:0;left:0;right:0;height:3px}
   .fstep.green{border-color:var(--greenLine)}
+  .fstep.green::before{background:var(--greenText)}
+  .fstep.amber{border-color:rgba(210,153,34,0.42);background:rgba(210,153,34,0.05)}
+  .fstep.amber::before{background:var(--amberText)}
+  .fstep.red{background:rgba(248,81,73,0.06);border-color:var(--redLine)}
+  .fstep.red::before{background:var(--redText)}
   .fstep .top{display:flex;align-items:center;justify-content:space-between;gap:8px}
-  .flabel{font-size:11px;font-weight:600;letter-spacing:0.5px;color:var(--muted2)}
-  .pill{font-size:11px;font-weight:600;border-radius:999px;padding:2px 9px;white-space:nowrap}
-  .pill.green{color:var(--greenText);background:rgba(46,160,67,0.2)}
-  .pill.amber{color:var(--amberText);border:1px solid var(--amberText)}
-  .pill.red{color:#fff;background:var(--red)}
-  .fbody{font-family:var(--mono);font-size:12px;line-height:1.7;color:#e2e4f6;margin-top:10px}
+  .flabel{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:0;
+    text-transform:uppercase;color:var(--faint)}
+  /* Status chips carry the decision: approved/verified, changed, held. */
+  .pill{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:0;
+    border:1px solid transparent;border-radius:999px;padding:2px 9px;white-space:nowrap}
+  .pill.green{color:var(--greenText);border-color:var(--greenLine);background:rgba(95,237,131,0.09)}
+  .pill.amber{color:var(--amberText);border-color:rgba(210,153,34,0.42);background:rgba(210,153,34,0.10)}
+  .pill.red{color:var(--redText);border-color:var(--redLine);background:rgba(248,81,73,0.12)}
+  .fbody{font-family:var(--mono);font-size:12px;line-height:1.7;color:var(--muted);margin-top:10px}
   .big{font-family:var(--mono);font-size:15px;font-weight:700;color:#fff;margin-top:10px}
 
   /* PROBLEM cards */
@@ -131,18 +163,18 @@
   .cols4{grid-template-columns:1fr 1fr 1fr 1fr}
   .cols2{grid-template-columns:1fr 1fr}
   .split{display:grid;grid-template-columns:380px 1fr;gap:48px;align-items:start}
-  .kv{font-size:14px;color:#e2e4f6;line-height:1.6}
+  .kv{font-size:14px;color:var(--muted);line-height:1.6}
   .steps{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  .step{background:var(--card);border:1px solid var(--line2);border-radius:10px;padding:14px 18px;font-size:14px;color:#e2e4f6}
-  .step b{font-family:var(--mono);color:var(--purpleText);margin-right:10px;font-weight:400}
-  .note{margin-top:16px;font-size:13px;color:var(--muted);border:1px solid var(--line2);border-radius:8px;padding:12px 16px;background:var(--card)}
+  .step{background:var(--card);border:1px solid var(--line2);border-radius:8px;padding:14px 18px;font-size:14px;color:var(--muted)}
+  .step b{font-family:var(--mono);color:var(--faint);margin-right:10px;font-weight:400}
+  .note{margin-top:16px;font-size:13px;color:var(--muted2);border:1px solid var(--line2);border-radius:8px;padding:12px 16px;background:var(--card)}
 
   /* CONSOLE */
-  .console{background:var(--bg2);border:1px solid var(--line2);border-radius:10px;overflow:hidden}
-  .console .head{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--line2);background:rgba(255,255,255,0.03);font-size:13px;font-weight:600}
-  .console .sub{font-family:var(--mono);font-size:12px;color:var(--muted2)}
-  .crow{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr;padding:11px 20px;font-size:13px;align-items:center;border-bottom:1px solid #262b63}
-  .chead{font-size:11px;font-weight:600;letter-spacing:0.5px;color:#6e76c9}
+  .console{background:var(--surface);border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+  .console .head{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--line2);background:var(--surface2);font-size:13px;font-weight:600}
+  .console .sub{font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .crow{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr;padding:11px 20px;font-size:13px;align-items:center;border-bottom:1px solid var(--line3)}
+  .chead{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:0;text-transform:uppercase;color:var(--faint)}
   .cactions{display:flex;gap:10px;padding:14px 20px;align-items:center;flex-wrap:wrap}
   /* Non-interactive chips. These name the operator actions the console offers,
      inside a labelled offline proof fixture — they are not live controls. */
@@ -151,12 +183,18 @@
     cursor:default;user-select:none}
 
   /* limits */
-  .limit{display:flex;gap:12px;font-size:14px;color:#e2e4f6;line-height:1.6}
-  .limit span:first-child{color:var(--muted2)}
+  .limit{display:flex;gap:12px;font-size:14px;color:var(--muted);line-height:1.6}
+  .limit span:first-child{color:var(--faint)}
+
+  /* email capture */
+  .capture{display:flex;gap:10px;max-width:460px;margin:0 auto;flex-wrap:wrap;justify-content:center}
+  .capture input{flex:1;min-width:220px;background:var(--bg);border:1px solid var(--control);border-radius:6px;
+    padding:13px 16px;color:#fff;font-size:15px}
+  .capture input::placeholder{color:var(--faint)}
 
   /* footer */
-  footer{border-top:1px solid var(--line);background:var(--bg)}
-  footer .wrap{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:24px 24px;font-size:13px;color:var(--muted2);flex-wrap:wrap}
+  footer{border-top:1px solid var(--line);background:var(--bg2)}
+  footer .wrap{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:24px 24px;font-size:13px;color:var(--faint);flex-wrap:wrap}
   .flinks{display:flex;gap:18px;flex-wrap:wrap}
   .flinks a:hover{color:#fff}
 
@@ -168,8 +206,8 @@
     .steps{grid-template-columns:1fr}
     .navlinks{display:none}
     .navtoggle{display:flex}
-    .navlinks.open{display:flex;position:absolute;top:64px;left:0;right:0;flex-direction:column;
-      background:#05051a;border-bottom:1px solid var(--line);padding:16px 24px;gap:16px}
+    .navlinks.open{display:flex;position:absolute;top:74px;left:0;right:0;flex-direction:column;
+      background:var(--bg2);border-bottom:1px solid var(--line);padding:16px 24px;gap:16px}
     .crow{grid-template-columns:1fr;gap:4px}
     .chead{display:none}
     .cactions{gap:8px}
@@ -186,11 +224,17 @@
 <!-- NAV -->
 <nav class="nav">
   <div class="wrap">
-    <a class="brand" href="#top"><span class="logo"></span>Interlock</a>
+    <a class="brand" href="/">
+      <picture>
+        <source media="(max-width:900px)" srcset="/interlock-favicon-white.svg">
+        <img src="/interlock-lockup-white.svg" alt="Interlock">
+      </picture>
+    </a>
     <div class="navlinks" id="navlinks">
       <a href="#problem">Problem</a>
       <a href="#how">How it works</a>
       <a href="#console">Console</a>
+      <a href="/dashboard/">Dashboard</a>
       <a href="#evidence">Evidence</a>
       <a href="#limits">Honest limits</a>
       <a href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">Repository ↗</a>
@@ -202,8 +246,8 @@
 <!-- HERO -->
 <header class="hero" id="top">
   <div class="wrap">
-    <h1>Know when an approved MCP tool changes.</h1>
-    <p class="lede">Interlock baselines the approved tool boundary, detects material capability or observed behavioral drift, quarantines the changed gateway-mediated call, and records hash-chained evidence.</p>
+    <h1>Interlock stops AI agents from using MCP tools that changed after approval.</h1>
+    <p class="lede">Detect material changes, hold risky gateway-mediated calls, and review the evidence before they run.</p>
     <div class="cta-row">
       <a class="btn" href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline" target="_blank" rel="noopener">Run the offline proof</a>
       <a class="btn ghost" href="mailto:maaz@getinterlock.dev?subject=MCP%20trust%20boundary%20%E2%80%94%20evaluation%20interest&body=Hi%20Maaz%2C%0A%0AWe%20run%20agents%20against%20MCP%20tools%20and%20want%20to%20discuss%20post-approval%20drift.%0A%0AOur%20setup%3A%20%0A">Discuss one MCP trust boundary</a>
@@ -212,12 +256,12 @@
 
     <!-- proof flow -->
     <div class="flow reveal">
-      <div class="fstep">
+      <div class="fstep green">
         <div class="top"><span class="flabel">1 · APPROVED BOUNDARY</span><span class="pill green">✓ approved</span></div>
         <div class="fbody">read-only tool · internal access<br>expected capability: read<br>expected result: denied / 403<br><span style="color:var(--muted2)">baseline hash pinned · policy approved</span></div>
       </div>
       <div class="arrow">→</div>
-      <div class="fstep">
+      <div class="fstep amber">
         <div class="top"><span class="flabel">2 · BEHAVIOR CHANGED</span><span class="pill amber">changed</span></div>
         <div class="big">expected 403 → observed <span style="color:var(--amberText)">200</span></div>
         <div class="fbody">manifest surface: unchanged<br><span style="color:var(--muted2)">behavioral drift detected</span></div>
@@ -233,12 +277,12 @@
         <div class="fbody">hash-chained receipt<br>previous hash → current hash<br>verified offline<br><span style="color:var(--greenText)">chain: verified</span></div>
       </div>
     </div>
-    <div class="subnote" style="margin-top:20px">Gateway-mediated decisions are recorded in a hash-chained audit log, from which receipts can be verified offline. <span class="mono" style="border:1px solid var(--line2);border-radius:999px;padding:2px 10px;margin-left:8px">offline proof fixture</span></div>
+    <div class="subnote" style="margin-top:20px">Gateway-mediated decisions are recorded in a hash-chained audit log, from which receipts can be verified offline. <span class="mono" style="border:1px solid rgba(210,153,34,0.48);background:rgba(210,153,34,0.10);color:var(--amberText);border-radius:999px;padding:2px 10px;margin-left:8px">offline proof fixture</span></div>
   </div>
 </header>
 
 <!-- PROBLEM -->
-<section class="pad glowL" id="problem">
+<section class="pad band" id="problem">
   <div class="wrap">
     <div style="max-width:680px" class="reveal">
       <div class="eyebrow">THE PROBLEM</div>
@@ -248,13 +292,13 @@
     <div class="grid cols3 reveal" style="margin-top:40px">
       <div class="card"><div class="eyebrow" style="color:var(--muted2)">SURFACE DRIFT</div><div class="kv" style="margin-top:8px">Tool names, parameters, schemas, or declared capabilities change.</div></div>
       <div class="card"><div class="eyebrow" style="color:var(--muted2)">CAPABILITY DRIFT</div><div class="kv" style="margin-top:8px">A tool gains broader effects, externality, permissions, or data access.</div></div>
-      <div class="card" style="background:rgba(124,82,255,0.1);border-left:3px solid var(--purple);border-radius:0 10px 10px 0"><div class="eyebrow" style="color:var(--purpleText)">OBSERVED BEHAVIORAL DRIFT</div><div class="kv" style="margin-top:8px">Runtime behavior changes while the manifest remains unchanged — <span class="mono">expected 403 → observed 200</span>. Invisible to schema diffing.</div></div>
+      <div class="card" style="background:rgba(210,153,34,0.06);border-left:3px solid var(--amber);border-radius:0 8px 8px 0"><div class="eyebrow" style="color:var(--amberText)">OBSERVED BEHAVIORAL DRIFT</div><div class="kv" style="margin-top:8px">Runtime behavior changes while the manifest remains unchanged — <span class="mono">expected 403 → observed 200</span>. Invisible to schema diffing.</div></div>
     </div>
   </div>
 </section>
 
 <!-- HOW IT WORKS -->
-<section class="pad glowR" id="how">
+<section class="pad band" id="how">
   <div class="wrap split">
     <div class="reveal">
       <div class="eyebrow">HOW IT WORKS</div>
@@ -276,13 +320,13 @@
 </section>
 
 <!-- CONSOLE -->
-<section class="pad glowL" id="console">
+<section class="pad band" id="console">
   <div class="wrap split">
     <div class="reveal">
       <div class="eyebrow">THE PRODUCT CONSOLE</div>
       <h2 style="margin-top:12px">Drift review comes first.</h2>
       <p class="lede" style="margin-top:14px">The first thing you see is the drift review queue: the approved baseline, expected-versus-observed evidence, the quarantine decision, forwarding status, and the receipt — with approve, reject, or rebaseline one action away.</p>
-      <div style="margin-top:20px;display:flex;flex-direction:column;gap:10px;font-size:14px;color:#e2e4f6">
+      <div style="margin-top:20px;display:flex;flex-direction:column;gap:10px;font-size:14px;color:var(--muted)">
         <div style="display:flex;gap:10px"><span style="color:var(--greenText)">✓</span>Approved server and tool baseline, always visible</div>
         <div style="display:flex;gap:10px"><span style="color:var(--greenText)">✓</span>Expected-versus-observed evidence per decision</div>
         <div style="display:flex;gap:10px"><span style="color:var(--greenText)">✓</span>Receipt details and offline chain verification</div>
@@ -292,20 +336,20 @@
     <div class="console reveal">
       <div class="head"><span>Drift review queue</span><span class="sub">Offline proof fixture. Receipt chain verified.</span></div>
       <div class="crow chead"><span>TOOL BOUNDARY</span><span>EXPECTED</span><span>OBSERVED</span><span>DECISION</span></div>
-      <div class="crow" style="background:rgba(218,54,51,0.1)">
+      <div class="crow" style="background:rgba(248,81,73,0.07)">
         <span class="mono">read-only tool (fixture)</span>
         <span class="mono" style="color:var(--greenText)">denied / 403</span>
         <span class="mono" style="color:var(--amberText)">allowed / 200</span>
         <span><span class="pill red">quarantined</span></span>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #262b63">
-        <div style="padding:14px 20px;border-right:1px solid #262b63">
+      <div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line3)">
+        <div style="padding:14px 20px;border-right:1px solid var(--line3)">
           <div class="chead" style="display:block">EXPECTED VS OBSERVED</div>
-          <div class="mono" style="font-size:12.5px;line-height:1.8;color:#e2e4f6;margin-top:6px">manifest surface: unchanged<br>classification: behavioral scope drift<br>forwarding: not forwarded</div>
+          <div class="mono" style="font-size:12.5px;line-height:1.8;color:var(--muted);margin-top:6px">manifest surface: unchanged<br>classification: behavioral scope drift<br>forwarding: not forwarded</div>
         </div>
         <div style="padding:14px 20px">
           <div class="chead" style="display:block">RECEIPT</div>
-          <div class="mono" style="font-size:12.5px;line-height:1.8;color:#e2e4f6;margin-top:6px">previous hash → current hash<br>chain: <span style="color:var(--greenText)">verified</span> · verifiable offline</div>
+          <div class="mono" style="font-size:12.5px;line-height:1.8;color:var(--muted);margin-top:6px">previous hash → current hash<br>chain: <span style="color:var(--greenText)">verified</span> · verifiable offline</div>
         </div>
       </div>
       <div class="cactions">
@@ -319,7 +363,7 @@
 </section>
 
 <!-- EVIDENCE COMPARISON -->
-<section class="pad glowR" id="evidence">
+<section class="pad band" id="evidence">
   <div class="wrap">
     <div style="max-width:680px" class="reveal">
       <div class="eyebrow">EVIDENCE</div>
@@ -327,15 +371,15 @@
       <p class="lede" style="margin-top:14px">Schema drift shows up in the surface diff. Behavioral drift shows up only in observed evidence — same manifest, different runtime behavior.</p>
     </div>
     <div class="grid cols3 reveal" style="margin-top:40px">
-      <div class="fstep green"><div class="flabel" style="color:var(--greenText)">APPROVED</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:#e2e4f6;margin-top:10px">expected result: denied / 403<br>manifest surface: unchanged<br>approved baseline<br><span style="color:var(--muted2)">policy version recorded</span></div></div>
-      <div class="fstep"><div class="flabel" style="color:var(--amberText)">OBSERVED</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:#e2e4f6;margin-top:10px">observed result: <span style="color:var(--amberText);font-weight:700">allowed / 200</span><br>manifest surface: unchanged<br>behavioral mismatch detected<br><span style="color:var(--muted2)">evidence recorded</span></div></div>
-      <div class="fstep red"><div class="flabel" style="color:var(--redText)">DECISION</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:#e2e4f6;margin-top:10px">classification: behavioral scope drift<br>decision: quarantined<br>call not forwarded<br><span style="color:var(--greenText)">receipt recorded</span></div></div>
+      <div class="fstep green"><div class="flabel" style="color:var(--greenText)">APPROVED</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:var(--muted);margin-top:10px">expected result: denied / 403<br>manifest surface: unchanged<br>approved baseline<br><span style="color:var(--muted2)">policy version recorded</span></div></div>
+      <div class="fstep amber"><div class="flabel" style="color:var(--amberText)">OBSERVED</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:var(--muted);margin-top:10px">observed result: <span style="color:var(--amberText);font-weight:700">allowed / 200</span><br>manifest surface: unchanged<br>behavioral mismatch detected<br><span style="color:var(--muted2)">evidence recorded</span></div></div>
+      <div class="fstep red"><div class="flabel" style="color:var(--redText)">DECISION</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:var(--muted);margin-top:10px">classification: behavioral scope drift<br>decision: quarantined<br>call not forwarded<br><span style="color:var(--greenText)">receipt recorded</span></div></div>
     </div>
   </div>
 </section>
 
 <!-- OFFLINE PROOF -->
-<section class="pad glowL">
+<section class="pad band">
   <div class="wrap split">
     <div class="reveal">
       <div class="eyebrow">OFFLINE PROOF</div>
@@ -343,7 +387,7 @@
       <p class="lede" style="margin-top:14px">You don't need a call to see it work. The proof runs on your machine, against a clearly labelled fixture.</p>
       <div class="cta-row" style="justify-content:flex-start;margin-top:24px">
         <a class="btn" href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline" target="_blank" rel="noopener">Run the offline proof</a>
-        <a class="btn ghost" href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline" target="_blank" rel="noopener">Read the walkthrough</a>
+        <a class="btn ghost" href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">Read the walkthrough</a>
       </div>
     </div>
     <div class="grid cols2 reveal">
@@ -358,7 +402,7 @@
 </section>
 
 <!-- PUBLIC TECHNICAL FEEDBACK -->
-<section class="pad glowR">
+<section class="pad band">
   <div class="wrap">
     <div style="display:flex;align-items:baseline;justify-content:space-between;gap:24px;flex-wrap:wrap" class="reveal">
       <div>
@@ -369,19 +413,19 @@
     </div>
     <div class="grid cols3 reveal" style="margin-top:32px">
       <div class="card" style="display:flex;flex-direction:column;gap:10px">
-        <span class="mono" style="font-size:12px;color:var(--purpleText)">spec · draft · in public review</span>
+        <span class="mono" style="font-size:12px;color:var(--faint)">spec · draft · in public review</span>
         <div style="font-size:16px;font-weight:600">MCP SEP #3004 — draft receipt specification</div>
         <div style="font-size:13px;color:var(--muted2);line-height:1.55">Proposed receipt semantics for the MCP spec process. Draft under review in an open PR; revisions are tracked there.</div>
         <a class="src" href="https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3004" target="_blank" rel="noopener">View the public draft ↗</a>
       </div>
       <div class="card" style="display:flex;flex-direction:column;gap:10px">
-        <span class="mono" style="font-size:12px;color:var(--purpleText)">merged · upstream</span>
+        <span class="mono" style="font-size:12px;color:var(--faint)">merged · upstream</span>
         <div style="font-size:16px;font-weight:600">substack-mcp annotation fix</div>
         <div style="font-size:13px;color:var(--muted2);line-height:1.55">A review raised an annotation-default issue on the substack-mcp server; the fix was merged upstream by the maintainer.</div>
         <a class="src" href="https://github.com/conorbronsdon/substack-mcp/pull/11" target="_blank" rel="noopener">View the merged pull request ↗</a>
       </div>
       <div class="card" style="display:flex;flex-direction:column;gap:10px">
-        <span class="mono" style="font-size:12px;color:var(--purpleText)">discussion · public</span>
+        <span class="mono" style="font-size:12px;color:var(--faint)">discussion · public</span>
         <div style="font-size:16px;font-weight:600">Maintainer discussions of drift detection</div>
         <div style="font-size:13px;color:var(--muted2);line-height:1.55">Public threads on where post-approval trust-checking belongs — on the substack-mcp and mailchimp-mcp-server repositories.</div>
         <div style="display:flex;flex-direction:column;gap:4px;margin-top:auto">
@@ -394,7 +438,7 @@
 </section>
 
 <!-- HONEST LIMITS -->
-<section class="pad glowL" id="limits">
+<section class="pad band" id="limits">
   <div class="wrap split">
     <div>
       <div class="eyebrow p">HONEST LIMITS</div>
@@ -413,21 +457,21 @@
 </section>
 
 <!-- WHO IT'S FOR -->
-<section class="pad glowR">
+<section class="pad band">
   <div class="wrap">
     <div class="eyebrow reveal">WHO IT'S FOR</div>
     <div class="grid cols4 reveal" style="margin-top:24px">
-      <div class="card"><div class="eyebrow" style="color:var(--purpleText);letter-spacing:0.8px">AI PLATFORM TEAMS</div><div style="font-size:13px;color:var(--muted2);line-height:1.55;margin-top:8px">Operating internal or customer-facing agents.</div></div>
-      <div class="card"><div class="eyebrow" style="color:var(--purpleText);letter-spacing:0.8px">AGENT INFRASTRUCTURE</div><div style="font-size:13px;color:var(--muted2);line-height:1.55;margin-top:8px">Managing changing MCP servers, gateways, and tool registries.</div></div>
-      <div class="card"><div class="eyebrow" style="color:var(--purpleText);letter-spacing:0.8px">PLATFORM SECURITY</div><div style="font-size:13px;color:var(--muted2);line-height:1.55;margin-top:8px">Reviewing permissions, externality, and data boundaries.</div></div>
-      <div class="card"><div class="eyebrow" style="color:var(--purpleText);letter-spacing:0.8px">DEVSECOPS TEAMS</div><div style="font-size:13px;color:var(--muted2);line-height:1.55;margin-top:8px">Governing consequential tool actions in the call path.</div></div>
+      <div class="card"><div class="eyebrow" style="color:var(--faint)">AI PLATFORM TEAMS</div><div style="font-size:13px;color:var(--muted2);line-height:1.55;margin-top:8px">Operating internal or customer-facing agents.</div></div>
+      <div class="card"><div class="eyebrow" style="color:var(--faint)">AGENT INFRASTRUCTURE</div><div style="font-size:13px;color:var(--muted2);line-height:1.55;margin-top:8px">Managing changing MCP servers, gateways, and tool registries.</div></div>
+      <div class="card"><div class="eyebrow" style="color:var(--faint)">PLATFORM SECURITY</div><div style="font-size:13px;color:var(--muted2);line-height:1.55;margin-top:8px">Reviewing permissions, externality, and data boundaries.</div></div>
+      <div class="card"><div class="eyebrow" style="color:var(--faint)">DEVSECOPS TEAMS</div><div style="font-size:13px;color:var(--muted2);line-height:1.55;margin-top:8px">Governing consequential tool actions in the call path.</div></div>
     </div>
     <div style="font-size:12px;color:var(--muted2);margin-top:14px">Relevant environments may include databases, CRM systems, GitHub, deployment infrastructure, internal APIs, customer records, and communication tools — not implied as current deployments.</div>
   </div>
 </section>
 
 <!-- PILOT CTA -->
-<section class="pad glowB" id="pilot" style="text-align:center">
+<section class="pad" id="pilot" style="text-align:center;background:var(--bg)">
   <div class="wrap">
     <h2 class="reveal">Evaluate one MCP trust boundary.</h2>
     <p class="lede reveal" style="margin:14px auto 0;max-width:560px">Interlock is seeking technical conversations and controlled non-production evaluations with teams operating meaningful MCP tool boundaries.</p>

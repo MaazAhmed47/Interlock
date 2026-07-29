@@ -6,6 +6,7 @@ import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
 import ErrorCard from '../components/ErrorCard'
 import { useDashboardData } from '../components/DashLayout'
+import { riskMeter, RISK_SCORE_LABEL, THREAT_SEVERITY_LABEL } from '../riskSeverity'
 
 function threatClass(level: string) {
   const l = level.toLowerCase()
@@ -101,6 +102,8 @@ function ScanForm({
     ['Request Time', result ? formatElapsed(elapsedMs) : null],
   ]
 
+  const risk = riskMeter(result?.risk_score)
+
   return (
     <div className="card" style={{ flex: 1, minWidth: 280 }}>
       <div className="card-header"><div className="card-title">{title}</div></div>
@@ -140,6 +143,7 @@ function ScanForm({
       {result && (
         <div className={`scan-result ${threatClass(result.threat_level)}`}>
           <div className="scan-result-header">
+            <span className="scan-result-field-label">{THREAT_SEVERITY_LABEL}</span>
             <StatusBadge value={result.threat_level} />
             <span style={{ fontSize: 13, color: result.is_threat ? 'var(--red)' : 'var(--cyan)' }}>
               {result.is_threat ? 'Threat detected' : 'Clean'}
@@ -147,10 +151,17 @@ function ScanForm({
           </div>
           <div className="risk-meter compact">
             <div className="risk-meter-top">
-              <span>Risk Score</span>
-              <strong>{result.risk_score ?? 0}/100</strong>
+              <span className="scan-result-field-label">{RISK_SCORE_LABEL}</span>
+              <span className="risk-meter-value">
+                {risk.available
+                  ? <strong>{risk.score}/100</strong>
+                  : <strong className="risk-placeholder" aria-hidden="true">&mdash;</strong>}
+                <span className={'risk-severity ' + risk.className}>{risk.label}</span>
+              </span>
             </div>
-            <div className="risk-bar"><span style={{ width: `${Math.max(0, Math.min(100, result.risk_score ?? 0))}%` }} /></div>
+            <div className={'risk-bar' + (risk.available ? '' : ' is-unavailable')}>
+              <span className={risk.className} style={{ width: (risk.available ? risk.percent : 0) + '%' }} />
+            </div>
           </div>
           {rows.filter(([, v]) => v != null && v !== '').map(([k, v]) => (
             <div key={k} className="scan-result-row">
