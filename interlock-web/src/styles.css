@@ -73,6 +73,7 @@
   --brand-color-accent-primary: #5fed83;
   --brand-color-accent-changed: #f0b72f;
   --brand-color-accent-held: #ff8182;
+  --dash-mobile-header-height: 63px;
   /* Risk-meter severity scale. Discrete steps, no ramp; each clears 4.5:1 as
      text on the card surfaces, and the severity word carries the meaning for
      anyone who can't separate the warm three by hue. */
@@ -716,11 +717,11 @@ textarea.form-input { resize: vertical; min-height: 100px; font-family: var(--fo
   .dash-content { margin-left: 0; }
   .dash-mobile-nav {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 0 16px; height: 52px;
+    padding: 17px; height: var(--dash-mobile-header-height);
     border-bottom: 1px solid var(--border);
     background: var(--black); position: sticky; top: 0; z-index: 100;
   }
-  .dash-topbar { top: 52px; padding: 10px 16px; align-items: flex-start; flex-direction: column; }
+  .dash-topbar { top: var(--dash-mobile-header-height); padding: 10px 16px; align-items: flex-start; flex-direction: column; }
   .dash-topbar-identity strong { max-width: calc(100vw - 56px); }
   .dash-topbar-actions { width: 100%; justify-content: flex-start; }
   .dash-main { padding: 16px; }
@@ -1043,7 +1044,7 @@ body {
 
 @media (max-width: 768px) {
   .dash-content { margin-left: 0; }
-  .dash-mobile-nav { min-height: 52px; background: var(--brand-color-canvas-muted); border-bottom-color: var(--brand-color-border-default); }
+  .dash-mobile-nav { min-height: var(--dash-mobile-header-height); background: var(--brand-color-canvas-muted); border-bottom-color: var(--brand-color-border-default); }
   .dash-main { padding: 20px 16px 40px; }
   .dash-page-header h1 { font-size: var(--text-page); }
   .dash-topbar { align-items: flex-start; padding: 12px 16px; }

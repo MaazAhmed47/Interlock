@@ -3,6 +3,7 @@ import { LayoutDashboard, ScanLine, Server, BookOpen, Settings, ArrowLeft, Menu,
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, hasApiKey, HealthResponse, UsageResponse, MCPServer, MCPTool, AuditEvent, ShadowStats, ScanHistoryEvent, ScanResult, ScanStats, normalizeLayerLabel, DEMO_USAGE, DEMO_MCP_SERVERS, DEMO_MCP_TOOLS, DEMO_DRIFTED_TOOLS, DEMO_AUDIT_EVENTS, DEMO_SCAN_HISTORY, DEMO_SCAN_STATS, DEMO_SHADOW_STATS } from '../api'
 import { authDisplayName, clearAuthSession, redirectToOidcLogout, useAuthSession } from '../auth'
+import { isProofRoutePath } from '../routePaths'
 
 const NAV = [
   { to: '/dashboard/proof', label: 'Drift Proof', icon: GitCompareArrows, end: false },
@@ -378,7 +379,7 @@ export default function DashLayout() {
   const session = useAuthSession()
   const signedInAs = authDisplayName(session)
   const topbarIdentity = session ? 'Interlock Admin' : 'Admin SSO not signed in'
-  const isProofRoute = location.pathname === '/dashboard/proof'
+  const isProofRoute = isProofRoutePath(location.pathname)
 
   function handleSignOut() {
     const redirected = redirectToOidcLogout('/dashboard/login')
@@ -438,9 +439,9 @@ export default function DashLayout() {
         {mobileOpen && (
           <div
             style={{
-              position: 'fixed', inset: 0, zIndex: 200,
+              position: 'fixed', inset: 0, zIndex: 99,
               background: 'rgba(0,0,0,.96)',
-              paddingTop: 52, display: 'flex', flexDirection: 'column',
+              paddingTop: 'var(--dash-mobile-header-height)', display: 'flex', flexDirection: 'column',
             }}
           >
             {NAV.map(({ to, label, icon: Icon, end }) => (
