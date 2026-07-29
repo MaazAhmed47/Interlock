@@ -37,11 +37,28 @@ def _load_runner():
 class FakeEvaluatorClient:
     """Deterministic API double; it models only responses the runner consumes."""
 
-    def __init__(self, *, receipt_suffix="a", fail_on_changed_discovery=False):
+    def __init__(
+        self,
+        *,
+        receipt_suffix="a",
+        fail_on_changed_discovery=False,
+        approved_metadata=None,
+    ):
         self.phase = 1
         self.upstream_calls = 0
         self.receipt_suffix = receipt_suffix
         self.fail_on_changed_discovery = fail_on_changed_discovery
+        self.approved_metadata = (
+            approved_metadata
+            if approved_metadata is not None
+            else {
+                "effects": ["read"],
+                "side_effect": "read_only",
+                "data_classes": ["user_content", "internal"],
+                "externality": "internal",
+                "source": "mcp_annotations",
+            }
+        )
         self.requests = []
 
     def request(self, service, method, path, body=None):
@@ -96,6 +113,7 @@ class FakeEvaluatorClient:
                                 "externality_expanded",
                             ]
                         ),
+                        "normalized_metadata": self.approved_metadata,
                     }
                 ]
             }
@@ -191,7 +209,14 @@ def test_full_happy_path_writes_complete_real_evidence_pack(tmp_path):
         "manifest.json",
     }
     artifacts = _json_artifacts(tmp_path)
-    assert artifacts["approved-state.json"]["status"] == "approved"
+    assert artifacts["approved-state.json"]["status"] == "active"
+    assert artifacts["approved-state.json"]["boundary"] == {
+        "data_classes": ["internal", "user_content"],
+        "effects": ["read"],
+        "externality": "internal",
+        "side_effect": "read_only",
+    }
+    assert artifacts["approved-state.json"]["approved_call_executions"] == 1
     assert artifacts["changed-state.json"]["decision"] == "quarantine"
     assert artifacts["held-call.json"]["upstream_execution_delta"] == 0
     assert artifacts["receipt-summary.json"]["verified"] is True
@@ -227,6 +252,44 @@ def test_artifacts_exclude_raw_identity_url_arguments_paths_and_schema(tmp_path)
     )
     for value in forbidden:
         assert value not in combined
+
+
+def test_approved_artifact_tracks_authoritative_inventory_metadata(tmp_path):
+    runner = _load_runner()
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    runner.run_journey(
+        FakeEvaluatorClient(
+            approved_metadata={
+                "effects": ["read"],
+                "side_effect": "read_only",
+                "externality": "internal",
+            }
+        ),
+        first,
+    )
+    runner.run_journey(
+        FakeEvaluatorClient(
+            approved_metadata={
+                "effects": ["read", "export"],
+                "side_effect": "read_only",
+                "externality": "external",
+                "unobserved_assertion": "must not escape",
+            }
+        ),
+        second,
+    )
+
+    first_state = json.loads((first / "approved-state.json").read_text())
+    second_state = json.loads((second / "approved-state.json").read_text())
+    assert first_state["boundary"] != second_state["boundary"]
+    assert second_state["boundary"] == {
+        "effects": ["export", "read"],
+        "externality": "external",
+        "side_effect": "read_only",
+    }
+    assert "unobserved_assertion" not in json.dumps(second_state)
+    assert "required_input_classes" not in json.dumps(first_state)
 
 
 def test_normalized_decision_artifacts_are_deterministic(tmp_path):
@@ -305,6 +368,30 @@ def test_compose_runtime_is_internal_and_host_ports_are_loopback_only():
         assert compose["services"][service]["networks"] == ["demo-net"]
 
 
+def test_linux_runner_uses_invoking_uid_gid_and_documented_user_owned_directory(
+    tmp_path,
+):
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    runner = compose["services"]["evaluator-runner"]
+    guide = GUIDE.read_text(encoding="utf-8")
+
+    assert runner["user"] == (
+        "${INTERLOCK_EVALUATOR_UID:-0}:${INTERLOCK_EVALUATOR_GID:-0}"
+    )
+    assert "mkdir -p evaluator-artifacts" in guide
+    assert 'export INTERLOCK_EVALUATOR_UID="$(id -u)"' in guide
+    assert 'export INTERLOCK_EVALUATOR_GID="$(id -g)"' in guide
+    assert "sudo" not in guide.lower()
+
+    artifact_dir = tmp_path / "evaluator-artifacts"
+    artifact_dir.mkdir()
+    probe = artifact_dir / "ownership-probe"
+    probe.write_text("invoking-user", encoding="utf-8")
+    probe.unlink()
+    artifact_dir.rmdir()
+    assert not artifact_dir.exists()
+
+
 def test_manifest_hashes_every_evidence_file_except_itself(tmp_path):
     runner = _load_runner()
     runner.run_journey(FakeEvaluatorClient(), tmp_path)
@@ -335,6 +422,9 @@ def test_published_guide_is_complete_and_claim_limited():
         "non-production",
         "Direct MCP connections that bypass Interlock",
         "approve, reject, or rebaseline",
+        "may take several minutes",
+        "There is no universal first-run duration",
+        "failed to solve",
     )
     for text in required:
         assert text in guide

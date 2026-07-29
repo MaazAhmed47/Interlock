@@ -59,6 +59,32 @@ FORBIDDEN_ARTIFACT_VALUES = (
     "evaluator-document",
     "review@example.invalid",
 )
+APPROVED_BOUNDARY_LIST_VALUES = {
+    "effects": {
+        "read",
+        "create",
+        "update",
+        "delete",
+        "share",
+        "export",
+        "message",
+        "execute",
+    },
+    "data_classes": {
+        "pii",
+        "phi",
+        "financial",
+        "legal",
+        "secrets",
+        "user_content",
+        "internal",
+    },
+}
+APPROVED_BOUNDARY_SCALAR_VALUES = {
+    "side_effect": {"read_only", "mutating", "destructive"},
+    "externality": {"internal", "external"},
+    "identity_mode": {"authenticated_user", "service_account", "delegated_agent"},
+}
 
 
 class JourneyError(RuntimeError):
@@ -87,6 +113,43 @@ def _canonical_json_bytes(value: Any) -> bytes:
         json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         + "\n"
     ).encode("utf-8")
+
+
+def _approved_boundary_from_inventory(tool_row: dict) -> dict:
+    """Project only allowlisted normalized fields from Interlock's inventory."""
+    metadata = tool_row.get("normalized_metadata")
+    if not isinstance(metadata, dict):
+        return {}
+
+    boundary: dict[str, Any] = {}
+    for field, allowed in APPROVED_BOUNDARY_LIST_VALUES.items():
+        value = metadata.get(field)
+        if isinstance(value, list):
+            normalized = sorted(
+                {
+                    str(item)
+                    for item in value
+                    if isinstance(item, str) and item in allowed
+                }
+            )
+            if normalized:
+                boundary[field] = normalized
+    for field, allowed in APPROVED_BOUNDARY_SCALAR_VALUES.items():
+        value = metadata.get(field)
+        if isinstance(value, str) and value in allowed:
+            boundary[field] = value
+    return dict(sorted(boundary.items()))
+
+
+def _boundary_summary(boundary: dict) -> str:
+    if not boundary:
+        return "no allowlisted normalized boundary fields were observable"
+    parts = []
+    for field in sorted(boundary):
+        value = boundary[field]
+        rendered = ",".join(value) if isinstance(value, list) else str(value)
+        parts.append(f"{field}={rendered}")
+    return "; ".join(parts)
 
 
 def _expect(
@@ -474,20 +537,18 @@ def run_journey(client: Any, output_dir: Path | str) -> dict:
         execution = claims.get("claim_4_execution_after_detection") or {}
         if execution.get("boundary_crossing_executed") is not False:
             raise JourneyError("claim evidence did not prove a held gateway path")
+        approved_boundary = _approved_boundary_from_inventory(approved_row)
 
         artifacts = {
             "approved-state.json": {
                 "artifactType": "interlock.evaluator.approved.v1",
                 "scenario": SCENARIO,
                 "tool": TOOL_NAME,
-                "status": "approved",
-                "boundary": {
-                    "effects": ["read"],
-                    "externality": "internal",
-                    "required_input_classes": ["document_reference"],
-                },
+                "status": str(approved_row.get("status") or ""),
+                "boundary": approved_boundary,
+                "boundary_source": "interlock_tool_inventory.normalized_metadata",
                 "surface_hash": approved_hash,
-                "approved_call_executions": 1,
+                "approved_call_executions": before,
             },
             "changed-state.json": {
                 "artifactType": "interlock.evaluator.changed.v1",
@@ -536,7 +597,8 @@ def run_journey(client: Any, output_dir: Path | str) -> dict:
         summary = (
             "# Interlock evaluator evidence summary\n\n"
             f"Scenario: {DISPLAY_NAME}.\n\n"
-            "- Approved boundary: internal document read with one document reference.\n"
+            "- Approved inventory boundary: "
+            f"{_boundary_summary(approved_boundary)}.\n"
             "- Material change: the same tool introduced external export and broader data handling.\n"
             "- Gateway decision: `tool_quarantined`; the changed call was held.\n"
             f"- Independent mock execution counter: {before} before, {after} after the held call.\n"

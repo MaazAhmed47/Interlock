@@ -141,9 +141,9 @@ class Demo:
         """
         Register + verify a demo server.
 
-        probes=True stores the server as non-production and probe-enabled.
-        Probe authorization is decided by that STORED registry state, not by
-        any request flag, so scenario B's effective-permission probe needs it.
+        Every bundled demo server is stored as non-production. probes=True
+        additionally enables stored probe authorization for scenario B's
+        effective-permission probe; probes=False leaves probing disabled.
         Everything here targets the bundled local mock server.
         """
         status, payload = self.gw(

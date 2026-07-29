@@ -64,6 +64,15 @@ Do not add an `.env` file or reuse state from another Interlock checkout.
 docker compose up -d --build
 ```
 
+There is no universal first-run duration. The first run downloads and builds
+Docker images and installs declared dependencies, so it may take several minutes
+depending on network speed and Docker's cache. `Pulling`, image-layer downloads,
+numbered build steps, package installation, and containers moving through
+`Creating`, `Starting`, or health-check `Waiting` are normal progress. An actual
+failure exits nonzero and ends with an error such as `failed to solve`, a pull
+error, or an unhealthy service; use the troubleshooting commands below rather
+than treating ordinary build output as failure.
+
 Expected result: the gateway, dashboard, MCP mock, and one-shot baseline seeder
 start successfully. Confirm with:
 
@@ -76,6 +85,18 @@ exited successfully. The fixed demo key exists only because this Compose stack
 sets `INTERLOCK_OFFLINE_DEMO=true`; it is not production configuration.
 
 ## 3. Run the complete evaluator proof
+
+On Linux only, create the bind-mounted directory as your user and tell Compose
+which UID/GID must own new artifacts:
+
+```bash
+mkdir -p evaluator-artifacts
+export INTERLOCK_EVALUATOR_UID="$(id -u)"
+export INTERLOCK_EVALUATOR_GID="$(id -g)"
+```
+
+Windows and macOS Docker Desktop users do not need this Linux ownership step.
+The standard runner command is unchanged on every platform:
 
 ```bash
 docker compose run --rm evaluator-runner run

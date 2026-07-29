@@ -157,6 +157,7 @@ services:
   evaluator-runner:
     image: python:3.12-slim
     profiles: ["tools"]
+    user: "${INTERLOCK_EVALUATOR_UID:-0}:${INTERLOCK_EVALUATOR_GID:-0}"
     volumes:
       - .:/demo:ro
       - ./evaluator-artifacts:/artifacts
