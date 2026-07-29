@@ -20,6 +20,7 @@ const client = new Client(
     versionNegotiation: { mode: { pin: "2026-07-28" } },
   },
 );
+const useParameterHeader = process.argv[2] === "parameter-header";
 
 let outcome;
 try {
@@ -27,7 +28,10 @@ try {
   const listed = await client.listTools();
   const called = await client.callTool({
     name: "read_document",
-    arguments: { document_id: "safe" },
+    arguments: {
+      document_id: "safe",
+      ...(useParameterHeader ? { tenant: "internal" } : {}),
+    },
   });
   outcome = {
     connected: true,

@@ -1,4 +1,3 @@
-import base64
 import re
 import json
 import os
@@ -34,6 +33,19 @@ from core.mcp_drift import classify_server_drift
 from core.mcp_tool_eligibility import (
     evaluate_streamable_tool,
     uses_mcp_parameter_headers,
+)
+from core.mcp_2026_protocol import (
+    MAX_SSE_BYTES,
+    MCP2026ProtocolError,
+    build_parameter_headers,
+    encode_header_value,
+    parse_json_bytes,
+    parse_sse_jsonrpc_response,
+    validate_meta_object,
+    validate_call_tool_result,
+    validate_schema_instance,
+    validate_tool_schemas,
+    validate_json_value,
 )
 from core import drift_evidence
 
@@ -215,15 +227,63 @@ def _mcp_post_kwargs(
     return kwargs
 
 
-def _require_modern_json_response(response: Any, profile: str) -> None:
+def _decode_upstream_response(response: Any, profile: str, request_id: str) -> Any:
+    """Decode JSON or the bounded final response from an MCP 2026 SSE stream."""
     if profile != MCP_UPSTREAM_2026_PROFILE:
-        return
+        try:
+            data = response.json()
+            validate_json_value(data)
+            return data
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise MCPUpstreamResponseError(
+                "upstream_invalid_json", "MCP server returned malformed JSON."
+            ) from exc
+        except MCP2026ProtocolError as exc:
+            raise MCPUpstreamResponseError(
+                "upstream_invalid_json", "MCP server returned malformed JSON."
+            ) from exc
     content_type = str(response.headers.get("content-type") or "").split(";", 1)[0]
-    if content_type.strip().lower() != "application/json":
+    content_type = content_type.strip().lower()
+    if content_type == "application/json":
+        try:
+            data = response.json()
+            validate_json_value(data)
+            return data
+        except (json.JSONDecodeError, ValueError, MCP2026ProtocolError) as exc:
+            raise MCPUpstreamResponseError(
+                "upstream_invalid_json", "MCP server returned malformed JSON."
+            ) from exc
+    if content_type != "text/event-stream":
         raise MCPUpstreamResponseError(
             "unsupported_upstream_response_media_type",
-            "MCP 2026 upstream returned a response media type Interlock does not support.",
+            "MCP 2026 upstream returned an unsupported response media type.",
         )
+    raw = bytes(response.content or b"")
+    try:
+        return parse_sse_jsonrpc_response(raw, request_id)
+    except MCP2026ProtocolError as exc:
+        raise MCPUpstreamResponseError(
+            exc.reason, "MCP 2026 upstream returned an invalid SSE response."
+        ) from exc
+
+
+def _decode_upstream_bytes(
+    raw: bytes, content_type: str, profile: str, request_id: str
+) -> Any:
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    if profile == MCP_UPSTREAM_2026_PROFILE and media_type == "text/event-stream":
+        try:
+            return parse_sse_jsonrpc_response(raw, request_id)
+        except MCP2026ProtocolError as exc:
+            raise MCPUpstreamResponseError(
+                exc.reason, "MCP 2026 upstream returned an invalid SSE response."
+            ) from exc
+    try:
+        return parse_json_bytes(raw)
+    except MCP2026ProtocolError as exc:
+        raise MCPUpstreamResponseError(
+            "upstream_invalid_json", "MCP server returned malformed JSON."
+        ) from exc
 
 
 def _upstream_protocol_profile(server: Optional[Dict[str, Any]]) -> str:
@@ -239,14 +299,7 @@ def _upstream_protocol_profile(server: Optional[Dict[str, Any]]) -> str:
 
 
 def _encode_mcp_header_value(value: str) -> str:
-    sentinel = value.startswith("=?base64?") and value.endswith("?=")
-    plain_ascii = all(
-        character == "\t" or 0x20 <= ord(character) <= 0x7E for character in value
-    )
-    if plain_ascii and value == value.strip() and not sentinel:
-        return value
-    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
-    return f"=?base64?{encoded}?="
+    return encode_header_value(value)
 
 
 def _upstream_request(
@@ -254,6 +307,7 @@ def _upstream_request(
     method: str,
     params: Dict[str, Any],
     request_id: str,
+    tool_schema: Optional[Dict[str, Any]] = None,
 ) -> tuple[Dict[str, Any], Dict[str, str]]:
     request_params = dict(params)
     headers: Dict[str, str] = {}
@@ -270,6 +324,10 @@ def _upstream_request(
         }
         if method == "tools/call":
             headers["Mcp-Name"] = _encode_mcp_header_value(str(params.get("name", "")))
+            if tool_schema is not None:
+                headers.update(
+                    build_parameter_headers(tool_schema, params.get("arguments", {}))
+                )
     return (
         {
             "jsonrpc": "2.0",
@@ -283,12 +341,19 @@ def _upstream_request(
 
 def _validate_modern_result_metadata(result: Dict[str, Any], method: str) -> None:
     meta = result.get("_meta")
-    if meta is not None and not isinstance(meta, dict):
+    if "_meta" in result and not isinstance(meta, dict):
         raise MCPUpstreamResponseError(
             "upstream_invalid_metadata",
             "MCP 2026 upstream returned invalid result metadata.",
         )
     if isinstance(meta, dict):
+        try:
+            validate_meta_object(meta)
+        except MCP2026ProtocolError as exc:
+            raise MCPUpstreamResponseError(
+                "upstream_invalid_metadata",
+                "MCP 2026 upstream returned invalid result metadata.",
+            ) from exc
         server_info = meta.get("io.modelcontextprotocol/serverInfo")
         if server_info is not None and (
             not isinstance(server_info, dict)
@@ -637,14 +702,26 @@ async def _read_bounded_json(
 ):
     """Stream an upstream JSON-RPC response, refusing it past ``max_bytes``.
 
-    Used only when a caller supplies a byte budget, so the default discovery
-    path keeps its existing unstreamed behavior.
+    Used for every modern-profile response and for explicitly bounded legacy
+    discovery, so a streaming upstream cannot force unbounded buffering.
     """
     async with client.stream(
         "POST", server_url, **_mcp_post_kwargs(payload, headers)
     ) as resp:
         resp.raise_for_status()
-        _require_modern_json_response(resp, profile)
+        content_type = str(resp.headers.get("content-type") or "").split(";", 1)[0]
+        if (
+            profile == MCP_UPSTREAM_2026_PROFILE
+            and content_type.strip().lower()
+            not in {
+                "application/json",
+                "text/event-stream",
+            }
+        ):
+            raise MCPUpstreamResponseError(
+                "unsupported_upstream_response_media_type",
+                "MCP 2026 upstream returned an unsupported response media type.",
+            )
         declared = resp.headers.get("content-length")
         if declared and declared.isdigit() and int(declared) > max_bytes:
             return None
@@ -653,7 +730,11 @@ async def _read_bounded_json(
             if len(body) + len(chunk) > max_bytes:
                 return None
             body.extend(chunk)
-    return json.loads(bytes(body).decode("utf-8"))
+    if not body:
+        raise MCPUpstreamResponseError(
+            "upstream_empty_response", "MCP server returned an empty response."
+        )
+    return _decode_upstream_bytes(bytes(body), content_type, profile, payload["id"])
 
 
 async def _fetch_tool_list_payload(
@@ -669,9 +750,9 @@ async def _fetch_tool_list_payload(
     writes anything. Never raises — every failure maps to an
     {"ok": False, "error", "message"} dict with the reason.
 
-    ``max_response_bytes`` bounds the upstream body when the caller needs a
-    hard memory budget (the CI boundary review does). Left unset, the
-    response is read exactly as before.
+    ``max_response_bytes`` bounds the upstream body when the caller supplies
+    a stricter budget (the CI boundary review does). Modern-profile responses
+    are always streamed with a finite default budget.
     """
     profile = MCP_UPSTREAM_LEGACY_PROFILE
     try:
@@ -695,13 +776,21 @@ async def _fetch_tool_list_payload(
                     profile, method, {}, request_id
                 )
                 headers = {**auth_headers, **protocol_headers}
-                if max_response_bytes is not None:
+                if (
+                    max_response_bytes is not None
+                    or profile == MCP_UPSTREAM_2026_PROFILE
+                ):
+                    response_budget = (
+                        max(0, int(max_response_bytes))
+                        if max_response_bytes is not None
+                        else MAX_SSE_BYTES
+                    )
                     data = await _read_bounded_json(
                         client,
                         server_url,
                         payload,
                         headers,
-                        int(max_response_bytes),
+                        response_budget,
                         profile,
                     )
                     if data is None:
@@ -714,8 +803,7 @@ async def _fetch_tool_list_payload(
                         server_url, **_mcp_post_kwargs(payload, headers)
                     )
                     resp.raise_for_status()
-                    _require_modern_json_response(resp, profile)
-                    data = resp.json()
+                    data = _decode_upstream_response(resp, profile, request_id)
                 return _complete_upstream_result(data, request_id, profile, method)
 
             if profile == MCP_UPSTREAM_2026_PROFILE:
@@ -739,8 +827,7 @@ async def _fetch_tool_list_payload(
                 "upstream_invalid_envelope",
                 "MCP 2026 tools/list result is missing tools.",
             )
-        next_cursor = result.get("nextCursor")
-        if next_cursor not in (None, ""):
+        if "nextCursor" in result:
             raise MCPUpstreamResponseError(
                 "unsupported_upstream_pagination",
                 "MCP upstream returned a paginated tool surface, which Interlock does not yet baseline safely.",
@@ -753,6 +840,19 @@ async def _fetch_tool_list_payload(
                 "message": "MCP tools/list result.tools must be a list.",
                 "server_url": server_url,
             }
+        if profile == MCP_UPSTREAM_2026_PROFILE:
+            schema_valid_tools = []
+            for tool in tools:
+                try:
+                    validate_tool_schemas(tool)
+                except MCP2026ProtocolError:
+                    # The 2026 HTTP profile requires clients to exclude an
+                    # invalid parameter-header definition. Treat every invalid
+                    # modern tool schema the same way so it cannot enter an
+                    # approved surface or become callable.
+                    continue
+                schema_valid_tools.append(tool)
+            tools = schema_valid_tools
 
         seen_tool_names = set()
         duplicate_tool_names = set()
@@ -778,6 +878,7 @@ async def _fetch_tool_list_payload(
             "server_url": server_url,
             "registered": registered,
             "registry_server_id": registry_server_id,
+            "upstream_protocol_profile": profile,
             "tools": tools,
         }
     except OutboundUrlRejected as exc:
@@ -847,8 +948,10 @@ async def fetch_candidate_tool_surface(
     validated_tools = []
     blocked = []
     for tool in tools:
-        if isinstance(tool, dict) and uses_mcp_parameter_headers(
-            tool.get("inputSchema")
+        if (
+            fetched.get("upstream_protocol_profile") == MCP_UPSTREAM_LEGACY_PROFILE
+            and isinstance(tool, dict)
+            and uses_mcp_parameter_headers(tool.get("inputSchema"))
         ):
             blocked.append(
                 {
@@ -916,11 +1019,13 @@ async def discover_mcp_tools(
         return fetched
     server_url = fetched["server_url"]
     registry_server_id = fetched["registry_server_id"]
+    profile = fetched["upstream_protocol_profile"]
     tools = fetched["tools"]
     try:
         validation_results = []
         safe_tools = []
         blocked_tools = []
+        server_drift_summary = []
 
         # ── Server-level drift check (tool additions / removals) ──────────
         # Must run BEFORE upsert so previous_names still reflects prior state.
@@ -945,6 +1050,16 @@ async def discover_mcp_tools(
                     current_tool_defs,
                 )
                 for finding in server_findings:
+                    finding_action = (
+                        "quarantine" if finding["severity"] == "critical" else "deny"
+                    )
+                    summary = {
+                        "type": finding["type"],
+                        "severity": finding["severity"],
+                        "tool_name": finding["tool_name"],
+                        "action": finding_action,
+                    }
+                    server_drift_summary.append(summary)
                     is_critical_added = (
                         finding["type"] == "tool_added"
                         and finding["severity"] == "critical"
@@ -966,21 +1081,13 @@ async def discover_mcp_tools(
                         {
                             "server_id": registry_server_id,
                             "tool_name": finding["tool_name"],
-                            "action": (
-                                "quarantine"
-                                if finding["severity"] == "critical"
-                                else "deny"
-                            ),
+                            "action": finding_action,
                             "role": "system",
                             "reason": finding["reason"],
                             "matched_rule": finding["type"],
                             "drift_status": finding["type"],
                             "drift_severity": finding["severity"],
-                            "drift_action": (
-                                "quarantine"
-                                if finding["severity"] == "critical"
-                                else "deny"
-                            ),
+                            "drift_action": finding_action,
                             "drift_types": [finding["type"]],
                             "drift_reasons": [finding["reason"]],
                             "scan_time_ms": _elapsed_ms(),
@@ -988,8 +1095,10 @@ async def discover_mcp_tools(
                     )
 
         for tool in tools:
-            if isinstance(tool, dict) and uses_mcp_parameter_headers(
-                tool.get("inputSchema")
+            if (
+                profile == MCP_UPSTREAM_LEGACY_PROFILE
+                and isinstance(tool, dict)
+                and uses_mcp_parameter_headers(tool.get("inputSchema"))
             ):
                 blocked_tools.append(
                     {
@@ -1084,6 +1193,7 @@ async def discover_mcp_tools(
             "tools": safe_tools,
             "blocked": blocked_tools,
             "validations": validation_results,
+            "server_drift": server_drift_summary,
         }
     except Exception as e:
         return {"ok": False, "error": str(e)[:200], "server_url": server_url}
@@ -1229,7 +1339,11 @@ async def proxy_mcp_tool_call(
         server_id, tool_name
     )
     stored_definition = (stored_tool or {}).get("raw_tool_definition") or {}
-    if uses_mcp_parameter_headers(stored_definition.get("inputSchema")):
+    profile = _upstream_protocol_profile(server)
+    input_schema = stored_definition.get("inputSchema")
+    if uses_mcp_parameter_headers(input_schema) and (
+        profile != MCP_UPSTREAM_2026_PROFILE
+    ):
         saved = _log_mcp_gateway_audit(
             server_id=server_id,
             tool_name=tool_name,
@@ -1250,6 +1364,28 @@ async def proxy_mcp_tool_call(
             "message": "Tool requires unsupported MCP parameter headers.",
             "audit": _audit_ref(saved),
         }
+    if profile == MCP_UPSTREAM_2026_PROFILE:
+        try:
+            validate_tool_schemas(stored_definition)
+            validate_schema_instance(input_schema, arguments)
+        except MCP2026ProtocolError:
+            saved = _log_mcp_gateway_audit(
+                server_id=server_id,
+                tool_name=tool_name,
+                role=role,
+                principal_id=principal_id,
+                action="deny",
+                matched_rule="invalid_mcp_tool_arguments",
+                reason="Tool arguments do not satisfy the approved MCP schema.",
+                arguments=arguments,
+                blocked_by="invalid_mcp_tool_arguments",
+            )
+            return {
+                "ok": False,
+                "error": "invalid_mcp_tool_arguments",
+                "message": "Tool arguments do not satisfy the approved MCP schema.",
+                "audit": _audit_ref(saved),
+            }
     stored_metadata = (stored_tool or {}).get("normalized_metadata")
     tool_metadata = db.merge_stored_and_runtime_metadata(
         stored_metadata or {}, runtime_metadata
@@ -1539,7 +1675,6 @@ async def proxy_mcp_tool_call(
     try:
         server_url = ensure_safe_outbound_url(server["url"], context="MCP server")
         auth_headers = _resolve_upstream_auth_headers(server)
-        profile = _upstream_protocol_profile(server)
         async with httpx.AsyncClient(timeout=30.0) as client:
             request_id = uuid.uuid4().hex
             payload, protocol_headers = _upstream_request(
@@ -1547,35 +1682,68 @@ async def proxy_mcp_tool_call(
                 "tools/call",
                 {"name": tool_name, "arguments": arguments},
                 request_id,
+                input_schema if profile == MCP_UPSTREAM_2026_PROFILE else None,
             )
             headers = {**auth_headers, **protocol_headers}
             # The inbound EMA bearer credential never enters this header map.
             # Mark the separately configured downstream identity only at the
             # actual forwarding boundary.
             mark_authority_downstream_attempt()
-            resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
-            resp.raise_for_status()
-            _require_modern_json_response(resp, profile)
-            if hasattr(resp, "content") and resp.content == b"":
-                raise MCPUpstreamResponseError(
-                    "upstream_empty_response", "MCP server returned an empty response."
+            if profile == MCP_UPSTREAM_2026_PROFILE:
+                configured_max = max(
+                    0, int(key_config.get("max_response_bytes", 50_000))
                 )
-            try:
-                data = resp.json()
-            except (json.JSONDecodeError, ValueError) as exc:
-                raise MCPUpstreamResponseError(
-                    "upstream_invalid_json", "MCP server returned malformed JSON."
-                ) from exc
+                data = await _read_bounded_json(
+                    client,
+                    server_url,
+                    payload,
+                    headers,
+                    configured_max + 256 * 1024,
+                    profile,
+                )
+                if data is None:
+                    raise MCPUpstreamResponseError(
+                        "response_too_large",
+                        "MCP response exceeded the configured response byte budget.",
+                    )
+            else:
+                resp = await client.post(
+                    server_url, **_mcp_post_kwargs(payload, headers)
+                )
+                resp.raise_for_status()
+                if hasattr(resp, "content") and resp.content == b"":
+                    raise MCPUpstreamResponseError(
+                        "upstream_empty_response",
+                        "MCP server returned an empty response.",
+                    )
+                data = _decode_upstream_response(resp, profile, request_id)
             result_payload = _complete_upstream_result(
                 data, request_id, profile, "tools/call"
             )
-            if profile == MCP_UPSTREAM_2026_PROFILE and not isinstance(
-                result_payload.get("content"), list
-            ):
-                raise MCPUpstreamResponseError(
-                    "upstream_invalid_envelope",
-                    "MCP 2026 tools/call result is missing content.",
-                )
+            if profile == MCP_UPSTREAM_2026_PROFILE:
+                try:
+                    validate_call_tool_result(result_payload)
+                except MCP2026ProtocolError as exc:
+                    raise MCPUpstreamResponseError(
+                        "upstream_invalid_tool_result",
+                        "MCP 2026 upstream returned an invalid tool result.",
+                    ) from exc
+            output_schema = stored_definition.get("outputSchema")
+            if profile == MCP_UPSTREAM_2026_PROFILE and output_schema is not None:
+                if "structuredContent" not in result_payload:
+                    raise MCPUpstreamResponseError(
+                        "upstream_output_schema_mismatch",
+                        "MCP 2026 upstream omitted declared structured content.",
+                    )
+                try:
+                    validate_schema_instance(
+                        output_schema, result_payload["structuredContent"]
+                    )
+                except MCP2026ProtocolError as exc:
+                    raise MCPUpstreamResponseError(
+                        "upstream_output_schema_mismatch",
+                        "MCP 2026 upstream returned invalid structured content.",
+                    ) from exc
 
             # 6. Scan the response — MCP06 (injection) then MCP10 (PII + volume).
             # Scan only the tool result payload, never the JSON-RPC envelope.
