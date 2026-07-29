@@ -88,6 +88,7 @@ interlock-web/.vercel/
 # Local-only demo scripts and scratch files (kept on disk, never tracked)
 demo/populate_live_demo.py
 demo/valtown-mcp-mock.js
+demo/offline/evaluator-artifacts/
 interlock-web/interlock-landing-reference.html
 interlock-web/public/interlock-landing-reference.html
 

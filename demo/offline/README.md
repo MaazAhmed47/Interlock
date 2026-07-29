@@ -29,6 +29,20 @@ What it proves (and nothing more): the two **live-proven** drift classes.
 
 ## Quickstart
 
+For the complete fresh-clone evaluator journey—including sanitized artifacts,
+an independent upstream non-execution counter, and a real approve/reject/
+rebaseline choice—follow
+[`docs/evaluator-quickstart.md`](../../docs/evaluator-quickstart.md). Its focused
+runner is:
+
+```bash
+docker compose up -d --build
+docker compose run --rm evaluator-runner run
+docker compose run --rm evaluator-runner decide reject
+```
+
+The broader maintainer proof suite remains available below.
+
 ```bash
 cd demo/offline
 docker compose up -d --build     # gateway + mock + dashboard + auto-seed
