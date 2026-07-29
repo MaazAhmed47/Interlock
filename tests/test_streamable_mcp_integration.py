@@ -87,10 +87,7 @@ class _SanitizedWireCapture:
 
         await self.app(scope, captured_receive, captured_send)
         parsed_request = json.loads(request_body) if request_body else None
-        if parsed_request and parsed_request.get("method") in {
-            "server/discover",
-            "initialize",
-        }:
+        if parsed_request and isinstance(parsed_request.get("method"), str):
             headers = {
                 key.decode("latin-1").lower(): value.decode("latin-1")
                 for key, value in scope["headers"]
@@ -112,6 +109,25 @@ class _SanitizedWireCapture:
                     },
                 }
             )
+
+
+class _TestCredentialInjector:
+    """Inject the fixture credential for an auth-unaware conformance client."""
+
+    def __init__(self, app: Any, key: str) -> None:
+        self.app = app
+        self.key = key.encode("ascii")
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        scoped = dict(scope)
+        scoped["headers"] = [
+            *(item for item in scope["headers"] if item[0].lower() != b"x-api-key"),
+            (b"x-api-key", self.key),
+        ]
+        await self.app(scoped, receive, send)
 
 
 def _tool(name: str) -> dict[str, Any]:
@@ -198,14 +214,27 @@ def live_transport(tmp_path_factory):
             if document_id == "pii-response"
             else f"safe result from {name}"
         )
+        result = {
+            "content": [{"type": "text", "text": text}],
+            "isError": False,
+        }
+        if document_id == "spoof-identity":
+            result.update(
+                {
+                    "resultType": "input_required",
+                    "_meta": {
+                        "io.modelcontextprotocol/serverInfo": {
+                            "name": "untrusted-upstream",
+                            "version": "leak",
+                        }
+                    },
+                }
+            )
         return JSONResponse(
             {
                 "jsonrpc": "2.0",
                 "id": message.get("id"),
-                "result": {
-                    "content": [{"type": "text", "text": text}],
-                    "isError": False,
-                },
+                "result": result,
             }
         )
 
@@ -318,69 +347,61 @@ def test_discover_list_and_allowed_call_are_stateless(live_transport):
     assert len(live_transport["upstream_calls"]) == 1
 
 
-def _official_sdk_b2_python() -> str:
-    python = os.environ.get("INTERLOCK_MCP_SDK_B2_PYTHON")
+def _official_sdk_python_2() -> str:
+    python = os.environ.get("INTERLOCK_MCP_SDK_PYTHON")
     if not python:
         pytest.skip(
-            "set INTERLOCK_MCP_SDK_B2_PYTHON to an isolated interpreter with "
-            "mcp==2.0.0b2 and mcp-types==2.0.0b2"
+            "set INTERLOCK_MCP_SDK_PYTHON to an isolated interpreter with mcp==2.0.0"
         )
     version_check = subprocess.run(
         [
             python,
             "-c",
-            "import importlib.metadata as m; "
-            "print(m.version('mcp') + ',' + m.version('mcp-types'))",
+            "import importlib.metadata as m; print(m.version('mcp'))",
         ],
         check=True,
         capture_output=True,
         text=True,
         timeout=10,
     )
-    assert version_check.stdout.strip() == "2.0.0b2,2.0.0b2"
+    assert version_check.stdout.strip() == "2.0.0"
     return python
 
 
-def _run_official_sdk_b2_probe(
-    python: str, url: str, *, api_key: str | None = None
+def _official_sdk_node_2() -> tuple[str, str]:
+    node = os.environ.get("INTERLOCK_MCP_SDK_NODE") or "node"
+    root = os.environ.get("INTERLOCK_MCP_SDK_NODE_ROOT")
+    if not root:
+        pytest.skip(
+            "set INTERLOCK_MCP_SDK_NODE_ROOT to an isolated npm root with "
+            "@modelcontextprotocol/client==2.0.0"
+        )
+    version_check = subprocess.run(
+        [
+            node,
+            "-e",
+            "const p=require(process.argv[1]); process.stdout.write(p.version)",
+            str(Path(root) / "node_modules/@modelcontextprotocol/client/package.json"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert version_check.stdout == "2.0.0"
+    return node, root
+
+
+def _run_sdk_probe(
+    command: list[str], url: str, key: str, *, node_root: str | None = None
 ) -> dict[str, Any]:
-    program = r"""
-import asyncio
-import json
-import os
-import httpx2
-from mcp.client.client import Client
-from mcp.client.streamable_http import streamable_http_client
-from mcp_types import Implementation
-
-async def main():
-    headers = {"X-API-Key": os.environ["SDK_PROBE_KEY"]} if os.environ.get("SDK_PROBE_KEY") else {}
-    async with httpx2.AsyncClient(headers=headers) as http_client:
-        transport = streamable_http_client(os.environ["SDK_PROBE_URL"], http_client=http_client)
-        try:
-            async with Client(
-                transport,
-                mode="auto",
-                client_info=Implementation(name="interlock-sdk-profile-test", version="2.0.0b2"),
-            ) as client:
-                outcome = {
-                    "connected": True,
-                    "server_name": client.server_info.name if client.server_info else None,
-                }
-        except BaseException as exc:
-            outcome = {"connected": False, "error_type": type(exc).__name__}
-    print(json.dumps(outcome, sort_keys=True))
-
-asyncio.run(main())
-"""
     env = os.environ.copy()
     env["SDK_PROBE_URL"] = url
-    if api_key is not None:
-        env["SDK_PROBE_KEY"] = api_key
-    else:
-        env.pop("SDK_PROBE_KEY", None)
+    env["SDK_PROBE_KEY"] = key
+    if node_root is not None:
+        env["SDK_NODE_ROOT"] = node_root
     completed = subprocess.run(
-        [python, "-c", program],
+        command,
         check=True,
         capture_output=True,
         env=env,
@@ -390,87 +411,208 @@ asyncio.run(main())
     return json.loads(completed.stdout)
 
 
-def test_official_python_sdk_2_0_0b2_rejects_current_draft_discover(
-    live_transport,
-):
-    """Pin the known b2 profile mismatch without changing Interlock's response."""
-    python = _official_sdk_b2_python()
+def _assert_modern_sdk_exchange(
+    exchange: dict[str, Any], method: str, client_name: str
+) -> None:
+    request = exchange["request"]
+    assert request["headers"]["accept"] == "application/json, text/event-stream"
+    assert request["headers"]["content-type"] == "application/json"
+    assert request["headers"]["mcp-protocol-version"] == PROTOCOL_VERSION
+    assert request["headers"]["mcp-method"] == method
+    meta = request["body"]["params"]["_meta"]
+    assert meta["io.modelcontextprotocol/protocolVersion"] == PROTOCOL_VERSION
+    assert meta["io.modelcontextprotocol/clientInfo"]["name"] == client_name
+    assert isinstance(meta["io.modelcontextprotocol/clientCapabilities"], dict)
+
+
+def test_official_python_sdk_2_0_0_modern_discovery_and_operations(live_transport):
+    python = _official_sdk_python_2()
     exchanges: list[dict[str, Any]] = []
+    script = Path(__file__).parent / "sdk_interop/python_client_probe.py"
 
     with _serve(_SanitizedWireCapture(proxy.app, exchanges)) as base_url:
-        outcome = _run_official_sdk_b2_probe(
-            python,
+        outcome = _run_sdk_probe(
+            [python, str(script), "auto"],
             f"{base_url}/mcp/stream/{SERVER_ID}",
-            api_key=live_transport["key"],
+            live_transport["key"],
         )
 
-    assert outcome == {"connected": False, "error_type": "ExceptionGroup"}
+    assert outcome == {
+        "call_is_error": False,
+        "connected": True,
+        "server_name": "interlock-mcp-gateway",
+        "tool_names": ["read_document"],
+    }
     assert [item["request"]["body"]["method"] for item in exchanges] == [
         "server/discover",
-        "initialize",
+        "tools/list",
+        "tools/call",
     ]
-    discover, fallback = exchanges
-    assert discover["request"]["headers"]["mcp-protocol-version"] == PROTOCOL_VERSION
-    assert discover["request"]["headers"]["mcp-method"] == "server/discover"
-    assert discover["request"]["body"]["params"]["_meta"] == {
-        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
-        "io.modelcontextprotocol/clientInfo": {
-            "name": "interlock-sdk-profile-test",
-            "version": "2.0.0b2",
-        },
-        "io.modelcontextprotocol/clientCapabilities": {},
-    }
-    discover_result = discover["response"]["body"]["result"]
-    assert discover["response"]["status"] == 200
-    assert discover_result["resultType"] == "complete"
-    assert discover_result["ttlMs"] > 0
-    assert discover_result["cacheScope"] == "private"
-    assert "serverInfo" not in discover_result
-    assert "io.modelcontextprotocol/serverInfo" in discover_result["_meta"]
-    assert "mcp-protocol-version" not in fallback["request"]["headers"]
-    assert fallback["request"]["body"]["params"]["protocolVersion"] == "2025-11-25"
-    assert fallback["response"]["status"] == 400
-    assert fallback["response"]["body"]["error"]["code"] == -32022
+    for exchange, method in zip(
+        exchanges, ("server/discover", "tools/list", "tools/call"), strict=True
+    ):
+        _assert_modern_sdk_exchange(exchange, method, "interlock-python-sdk-probe")
 
 
-def test_official_python_sdk_2_0_0b2_accepts_its_embedded_discover_profile():
-    """Test-only server proves the older body-serverInfo profile b2 implements."""
-    python = _official_sdk_b2_python()
-    methods: list[str] = []
-    sdk_profile_server = FastAPI()
+def test_official_python_sdk_2_0_0_explicit_pin_has_no_legacy_handshake(
+    live_transport,
+):
+    python = _official_sdk_python_2()
+    exchanges: list[dict[str, Any]] = []
+    script = Path(__file__).parent / "sdk_interop/python_client_probe.py"
 
-    @sdk_profile_server.post("/mcp")
-    async def sdk_profile(request: Request):
-        message = await request.json()
-        methods.append(message["method"])
-        assert request.headers["Mcp-Protocol-Version"] == PROTOCOL_VERSION
-        assert request.headers["Mcp-Method"] == "server/discover"
-        return JSONResponse(
-            {
-                "jsonrpc": "2.0",
-                "id": message["id"],
-                "result": {
-                    "resultType": "complete",
-                    "supportedVersions": [PROTOCOL_VERSION],
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {
-                        "name": "sdk-b2-profile-fixture",
-                        "version": "2.0.0b2",
-                    },
-                    "ttlMs": 0,
-                    "cacheScope": "private",
-                },
-            }
+    with _serve(_SanitizedWireCapture(proxy.app, exchanges)) as base_url:
+        outcome = _run_sdk_probe(
+            [python, str(script), PROTOCOL_VERSION],
+            f"{base_url}/mcp/stream/{SERVER_ID}",
+            live_transport["key"],
         )
 
-    with _serve(sdk_profile_server) as base_url:
-        outcome = _run_official_sdk_b2_probe(python, f"{base_url}/mcp")
+    assert outcome["connected"] is True
+    assert [item["request"]["body"]["method"] for item in exchanges] == [
+        "tools/list",
+        "tools/call",
+    ]
+    assert all(item["request"]["body"]["method"] != "initialize" for item in exchanges)
+
+
+def test_official_typescript_sdk_2_0_0_pinned_discovery_and_operations(
+    live_transport,
+):
+    node, node_root = _official_sdk_node_2()
+    exchanges: list[dict[str, Any]] = []
+    script = Path(__file__).parent / "sdk_interop/typescript_client_probe.mjs"
+
+    with _serve(_SanitizedWireCapture(proxy.app, exchanges)) as base_url:
+        outcome = _run_sdk_probe(
+            [node, str(script)],
+            f"{base_url}/mcp/stream/{SERVER_ID}",
+            live_transport["key"],
+            node_root=node_root,
+        )
 
     assert outcome == {
         "connected": True,
-        "server_name": "sdk-b2-profile-fixture",
+        "server_name": "interlock-mcp-gateway",
+        "tool_names": ["read_document"],
+        "call_is_error": False,
     }
-    assert methods == ["server/discover"]
+    assert [item["request"]["body"]["method"] for item in exchanges] == [
+        "server/discover",
+        "tools/list",
+        "tools/call",
+    ]
+    for exchange, method in zip(
+        exchanges, ("server/discover", "tools/list", "tools/call"), strict=True
+    ):
+        _assert_modern_sdk_exchange(exchange, method, "interlock-typescript-sdk-probe")
+
+
+def test_official_sdk_explicit_pins_do_not_fall_back_after_protocol_rejection():
+    python = _official_sdk_python_2()
+    node, node_root = _official_sdk_node_2()
+    python_script = Path(__file__).parent / "sdk_interop/python_client_probe.py"
+    typescript_script = (
+        Path(__file__).parent / "sdk_interop/typescript_client_probe.mjs"
+    )
+    reject_app = FastAPI()
+
+    @reject_app.post("/mcp")
+    async def reject_modern(request: Request):
+        message = await request.json()
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": message.get("id"),
+                "error": {"code": -32601, "message": "Method not found"},
+            },
+            status_code=404,
+        )
+
+    python_exchanges: list[dict[str, Any]] = []
+    with _serve(_SanitizedWireCapture(reject_app, python_exchanges)) as base_url:
+        python_outcome = _run_sdk_probe(
+            [python, str(python_script), PROTOCOL_VERSION],
+            f"{base_url}/mcp",
+            "not-a-real-secret",
+        )
+
+    typescript_exchanges: list[dict[str, Any]] = []
+    with _serve(_SanitizedWireCapture(reject_app, typescript_exchanges)) as base_url:
+        typescript_outcome = _run_sdk_probe(
+            [node, str(typescript_script)],
+            f"{base_url}/mcp",
+            "not-a-real-secret",
+            node_root=node_root,
+        )
+
+    assert python_outcome["connected"] is False
+    assert typescript_outcome["connected"] is False
+    assert [item["request"]["body"]["method"] for item in python_exchanges] == [
+        "tools/list"
+    ]
+    assert [item["request"]["body"]["method"] for item in typescript_exchanges] == [
+        "server/discover"
+    ]
+
+
+def test_official_alpha_conformance_scoped_stateless_evidence(live_transport, tmp_path):
+    conformance_js = os.environ.get("INTERLOCK_MCP_CONFORMANCE_JS")
+    if not conformance_js:
+        pytest.skip(
+            "set INTERLOCK_MCP_CONFORMANCE_JS to the isolated official "
+            "0.2.0-alpha.10 CLI dist/index.js"
+        )
+    conformance_key = db.generate_key(
+        "enterprise",
+        label="mcp-conformance-alpha",
+        scopes=["mcp.call"],
+        role="admin_agent",
+    )["raw_key"]
+    with _serve(_TestCredentialInjector(proxy.app, conformance_key)) as base_url:
+        completed = subprocess.run(
+            [
+                os.environ.get("INTERLOCK_MCP_SDK_NODE") or "node",
+                conformance_js,
+                "server",
+                "--url",
+                f"{base_url}/mcp/stream/{SERVER_ID}",
+                "--scenario",
+                "server-stateless",
+                "--spec-version",
+                PROTOCOL_VERSION,
+                "--output-dir",
+                str(tmp_path),
+                "--verbose",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    check_files = list(tmp_path.rglob("checks.json"))
+    assert check_files, completed.stdout + completed.stderr
+    checks = json.loads(check_files[0].read_text(encoding="utf-8"))
+    by_id = {check["id"]: check for check in checks}
+    expected_successes = {
+        "sep-2575-request-meta-invalid-missing-meta",
+        "sep-2575-request-meta-invalid-missing-protocol-version",
+        "sep-2575-request-meta-invalid-missing-client-capabilities",
+        "sep-2575-request-meta-client-info-optional",
+        "sep-2575-server-implements-discover",
+        "sep-2575-server-identifies-in-result-meta",
+        "sep-2575-server-unsupported-version-error",
+        "sep-2575-http-server-unsupported-version-400",
+        "sep-2575-http-server-header-mismatch-400",
+        "sep-2575-http-server-method-not-found-404-initialize",
+        "sep-2575-http-server-method-not-found-404-ping",
+        "sep-2575-http-server-method-not-found-404-logging-setlevel",
+        "sep-2575-http-server-method-not-found-404",
+    }
+    assert expected_successes <= by_id.keys()
+    assert {check_id: by_id[check_id]["status"] for check_id in expected_successes} == {
+        check_id: "SUCCESS" for check_id in expected_successes
+    }
 
 
 def test_upstream_result_cannot_replace_gateway_identity_or_result_type():
@@ -492,6 +634,27 @@ def test_upstream_result_cannot_replace_gateway_identity_or_result_type():
     assert '"resultType":"complete"' in payload
     assert '"name":"interlock-mcp-gateway"' in payload
     assert "untrusted-upstream" not in payload
+
+
+def test_live_upstream_result_cannot_replace_gateway_identity(live_transport):
+    response = _post(
+        live_transport,
+        "tools/call",
+        9,
+        name="read_document",
+        arguments={"document_id": "spoof-identity"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["resultType"] == "complete"
+    assert result["_meta"] == {
+        "io.modelcontextprotocol/serverInfo": {
+            "name": "interlock-mcp-gateway",
+            "version": "0.2.0-alpha.1",
+        }
+    }
+    assert "untrusted-upstream" not in response.text
 
 
 def test_removed_lifecycle_methods_do_not_activate_or_forward(live_transport):
@@ -517,7 +680,7 @@ def test_removed_lifecycle_methods_do_not_activate_or_forward(live_transport):
             _message("tools/call", 22, name="read_document", arguments={}),
             -32020,
         ),
-        ({"MCP-Protocol-Version": "2025-11-25"}, _message("tools/list", 23), -32022),
+        ({"MCP-Protocol-Version": "2025-11-25"}, _message("tools/list", 23), -32020),
     ],
 )
 def test_standard_header_mismatches_fail_closed(live_transport, headers, message, code):
@@ -540,10 +703,22 @@ def test_missing_or_conflicting_per_request_meta_is_rejected(live_transport):
     conflicting["params"]["_meta"][
         "io.modelcontextprotocol/protocolVersion"
     ] = "2025-11-25"
-    for message, expected in ((missing, -32602), (conflicting, -32022)):
+    unsupported = _message("tools/list", 32)
+    unsupported["params"]["_meta"][
+        "io.modelcontextprotocol/protocolVersion"
+    ] = "2025-11-25"
+    for message, expected, version in (
+        (missing, -32602, PROTOCOL_VERSION),
+        (conflicting, -32020, PROTOCOL_VERSION),
+        (unsupported, -32022, "2025-11-25"),
+    ):
         response = httpx.post(
             live_transport["url"],
-            headers=_headers(live_transport["key"], "tools/list"),
+            headers=_headers(
+                live_transport["key"],
+                "tools/list",
+                **{"MCP-Protocol-Version": version},
+            ),
             json=message,
             timeout=5,
         )
@@ -586,7 +761,11 @@ def test_ineligible_tools_stay_hidden_and_gateway_controls_remain(live_transport
         start=41,
     ):
         denied = _post(live_transport, "tools/call", index, name=name, arguments={})
-        assert denied.json()["result"]["isError"] is True
+        assert denied.status_code == 200
+        assert denied.json()["error"] == {
+            "code": -32602,
+            "message": "Unknown or unavailable tool",
+        }
     assert [tool["name"] for tool in listed.json()["result"]["tools"]] == [
         "read_document"
     ]

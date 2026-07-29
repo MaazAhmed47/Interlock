@@ -21,7 +21,7 @@ from core import db
 from core.http_body import TOO_LARGE, read_bounded_body
 from core.http_credentials import single_api_credential
 from core.mcp_gateway import proxy_mcp_tool_call
-from core.mcp_tool_eligibility import list_streamable_tools
+from core.mcp_tool_eligibility import evaluate_streamable_tool, list_streamable_tools
 
 router = APIRouter()
 
@@ -182,6 +182,15 @@ def _header_error(
 ) -> Optional[JSONResponse]:
     request_id = message.get("id")
     version = request.headers.get("mcp-protocol-version")
+    params = message.get("params")
+    meta = params.get("_meta") if isinstance(params, dict) else None
+    body_version = (
+        meta.get("io.modelcontextprotocol/protocolVersion")
+        if isinstance(meta, dict)
+        else None
+    )
+    if isinstance(body_version, str) and version != body_version:
+        return _json_error(request_id, -32020, "Header mismatch", status_code=400)
     if version != _PROTOCOL_VERSION:
         return _json_error(
             request_id,
@@ -298,6 +307,13 @@ async def streamable_http_post(server_id: str, request: Request):
         arguments = params.get("arguments", {})
         if not isinstance(tool_name, str) or not isinstance(arguments, dict):
             return _json_error(request_id, -32602, "Invalid params")
+        eligibility = evaluate_streamable_tool(server_id, tool_name)
+        if not eligibility.eligible:
+            return _json_error(
+                request_id,
+                -32602,
+                "Unknown or unavailable tool",
+            )
         result = await proxy_mcp_tool_call(
             server_id=server_id,
             tool_name=tool_name,
@@ -309,6 +325,20 @@ async def streamable_http_post(server_id: str, request: Request):
         )
         if result.get("ok") and isinstance(result.get("result"), dict):
             return _json_result(request_id, result["result"])
+        if result.get("error") in {
+            "tool_blocked",
+            "tool_not_allowed",
+            "tool_metadata_missing",
+            "tool_metadata_untrusted",
+            "tool_not_active",
+            "tool_quarantined",
+            "unsupported_mcp_parameter_header",
+        }:
+            return _json_error(
+                request_id,
+                -32602,
+                "Unknown or unavailable tool",
+            )
         return _json_result(
             request_id,
             {
