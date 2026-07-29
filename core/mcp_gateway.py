@@ -1025,6 +1025,7 @@ async def discover_mcp_tools(
         validation_results = []
         safe_tools = []
         blocked_tools = []
+        server_drift_summary = []
 
         # ── Server-level drift check (tool additions / removals) ──────────
         # Must run BEFORE upsert so previous_names still reflects prior state.
@@ -1049,6 +1050,16 @@ async def discover_mcp_tools(
                     current_tool_defs,
                 )
                 for finding in server_findings:
+                    finding_action = (
+                        "quarantine" if finding["severity"] == "critical" else "deny"
+                    )
+                    summary = {
+                        "type": finding["type"],
+                        "severity": finding["severity"],
+                        "tool_name": finding["tool_name"],
+                        "action": finding_action,
+                    }
+                    server_drift_summary.append(summary)
                     is_critical_added = (
                         finding["type"] == "tool_added"
                         and finding["severity"] == "critical"
@@ -1070,21 +1081,13 @@ async def discover_mcp_tools(
                         {
                             "server_id": registry_server_id,
                             "tool_name": finding["tool_name"],
-                            "action": (
-                                "quarantine"
-                                if finding["severity"] == "critical"
-                                else "deny"
-                            ),
+                            "action": finding_action,
                             "role": "system",
                             "reason": finding["reason"],
                             "matched_rule": finding["type"],
                             "drift_status": finding["type"],
                             "drift_severity": finding["severity"],
-                            "drift_action": (
-                                "quarantine"
-                                if finding["severity"] == "critical"
-                                else "deny"
-                            ),
+                            "drift_action": finding_action,
                             "drift_types": [finding["type"]],
                             "drift_reasons": [finding["reason"]],
                             "scan_time_ms": _elapsed_ms(),
@@ -1190,6 +1193,7 @@ async def discover_mcp_tools(
             "tools": safe_tools,
             "blocked": blocked_tools,
             "validations": validation_results,
+            "server_drift": server_drift_summary,
         }
     except Exception as e:
         return {"ok": False, "error": str(e)[:200], "server_url": server_url}

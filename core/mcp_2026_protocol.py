@@ -84,10 +84,14 @@ def _reject_json_constant(_value: str) -> None:
 
 def parse_json_bytes(raw: bytes) -> Any:
     """Decode strict UTF-8 JSON and reject non-standard numeric constants."""
+    failed = False
     try:
         value = json.loads(raw.decode("utf-8"), parse_constant=_reject_json_constant)
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-        raise MCP2026ProtocolError("invalid_json") from exc
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        failed = True
+        value = None
+    if failed:
+        raise MCP2026ProtocolError("invalid_json")
     validate_json_value(value)
     return value
 
@@ -196,10 +200,13 @@ def validate_json_schema(schema: Any, *, require_object_root: bool = False) -> N
     dialect = schema.get("$schema")
     if dialect is not None and dialect not in _DRAFT_2020_12_URIS:
         raise MCP2026ProtocolError("unsupported_json_schema_dialect")
+    invalid_schema = False
     try:
         Draft202012Validator.check_schema(schema)
-    except SchemaError as exc:
-        raise MCP2026ProtocolError("invalid_json_schema") from exc
+    except SchemaError:
+        invalid_schema = True
+    if invalid_schema:
+        raise MCP2026ProtocolError("invalid_json_schema")
     if require_object_root and schema.get("type") != "object":
         raise MCP2026ProtocolError("tool_input_schema_must_be_object")
 
@@ -209,14 +216,17 @@ def validate_schema_instance(schema: Any, instance: Any) -> None:
     validate_json_schema(schema)
     for _current, _depth in _walk_bounded(instance, max_nodes=MAX_VALUE_NODES):
         pass
+    failure_reason = None
     try:
         Draft202012Validator(schema).validate(instance)
-    except ValidationError as exc:
-        raise MCP2026ProtocolError("schema_validation_failed") from exc
-    except Exception as exc:
+    except ValidationError:
+        failure_reason = "schema_validation_failed"
+    except Exception:
         # Local references can still be unresolved. Never permit the resolver
         # to turn that into an outbound retrieval or an uncaught gateway error.
-        raise MCP2026ProtocolError("schema_resolution_failed") from exc
+        failure_reason = "schema_resolution_failed"
+    if failure_reason is not None:
+        raise MCP2026ProtocolError(failure_reason)
 
 
 def _all_parameter_annotations(value: Any) -> int:
@@ -324,10 +334,15 @@ def decode_header_value(value: str) -> str:
             raise MCP2026ProtocolError("invalid_header_value")
         return value
     encoded = value[len("=?base64?") : -len("?=")]
+    failed = False
     try:
-        return base64.b64decode(encoded, validate=True).decode("utf-8")
-    except (binascii.Error, ValueError, UnicodeDecodeError) as exc:
-        raise MCP2026ProtocolError("invalid_header_value") from exc
+        decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        failed = True
+        decoded = ""
+    if failed:
+        raise MCP2026ProtocolError("invalid_header_value")
+    return decoded
 
 
 def build_parameter_headers(
@@ -356,10 +371,14 @@ def validate_parameter_headers(
     }
     supplied: dict[str, str] = {}
     for raw_name, raw_value in raw_headers:
+        failed_name = False
         try:
             name = raw_name.decode("ascii").lower()
-        except UnicodeDecodeError as exc:
-            raise MCP2026ProtocolError("invalid_parameter_header_name") from exc
+        except UnicodeDecodeError:
+            failed_name = True
+            name = ""
+        if failed_name:
+            raise MCP2026ProtocolError("invalid_parameter_header_name")
         if not name.startswith("mcp-param-"):
             continue
         if name in supplied or name not in bindings:
@@ -389,10 +408,14 @@ def parse_sse_jsonrpc_response(raw: bytes, request_id: str | int) -> dict[str, A
     """Parse one bounded SSE exchange and return its sole matching response."""
     if len(raw) > MAX_SSE_BYTES:
         raise MCP2026ProtocolError("upstream_response_too_large")
+    failed_decode = False
     try:
         text = raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise MCP2026ProtocolError("upstream_invalid_sse") from exc
+    except UnicodeDecodeError:
+        failed_decode = True
+        text = ""
+    if failed_decode:
+        raise MCP2026ProtocolError("upstream_invalid_sse")
 
     final: dict[str, Any] | None = None
     data_lines: list[str] = []
@@ -401,10 +424,14 @@ def parse_sse_jsonrpc_response(raw: bytes, request_id: str | int) -> dict[str, A
         nonlocal final, data_lines
         if not data_lines:
             return
+        failed_event = False
         try:
             message = parse_json_bytes("\n".join(data_lines).encode("utf-8"))
-        except MCP2026ProtocolError as exc:
-            raise MCP2026ProtocolError("upstream_invalid_sse") from exc
+        except MCP2026ProtocolError:
+            failed_event = True
+            message = None
+        if failed_event:
+            raise MCP2026ProtocolError("upstream_invalid_sse")
         data_lines = []
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
             raise MCP2026ProtocolError("upstream_invalid_sse_message")

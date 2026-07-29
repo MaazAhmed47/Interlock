@@ -88,6 +88,12 @@ values:
 Existing SQLite and Postgres rows migrate to `legacy`. This default preserves
 behavior and avoids silently treating previously registered servers as modern.
 
+Discovery responses include a `server_drift` operation summary for tool
+additions and removals. Its `action` is derived from the same finding used for
+the audit decision, so the immediate API result and persisted audit record do
+not disagree. The registry and hash-chained audit remain the durable evidence
+after the response lifetime.
+
 ## Claim boundary
 
 The proven claim is: Interlock implements a tested scoped MCP 2026-07-28 core

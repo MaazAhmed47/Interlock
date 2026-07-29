@@ -1,6 +1,8 @@
 """Focused mandatory MCP 2026-07-28 protocol helper tests."""
 
+import base64
 import json
+import traceback
 
 import pytest
 
@@ -8,6 +10,7 @@ from core.mcp_2026_protocol import (
     MAX_SAFE_INTEGER,
     MCP2026ProtocolError,
     build_parameter_headers,
+    decode_header_value,
     parameter_header_bindings,
     parse_json_bytes,
     parse_sse_jsonrpc_response,
@@ -18,6 +21,54 @@ from core.mcp_2026_protocol import (
     validate_request_meta,
     validate_schema_instance,
 )
+
+
+def _assert_reason_only_failure(call, expected_reason: str, sentinel: str) -> None:
+    with pytest.raises(MCP2026ProtocolError) as captured:
+        call()
+    error = captured.value
+    assert str(error) == expected_reason
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    exception_surface = repr(
+        {
+            "error": error,
+            "args": error.args,
+            "cause": error.__cause__,
+            "context": error.__context__,
+        }
+    )
+    formatted = "".join(traceback.format_exception(error))
+    assert sentinel not in exception_surface
+    assert sentinel not in formatted
+
+
+def test_reason_only_schema_failure_retains_no_raw_exception_content():
+    sentinel = "PRIVATE_SCHEMA_SENTINEL"
+    _assert_reason_only_failure(
+        lambda: validate_json_schema({"type": sentinel}),
+        "invalid_json_schema",
+        sentinel,
+    )
+
+
+def test_reason_only_sse_failure_retains_no_raw_exception_content():
+    sentinel = "PRIVATE_SSE_SENTINEL"
+    _assert_reason_only_failure(
+        lambda: parse_sse_jsonrpc_response(sentinel.encode() + b"\xff", "request-1"),
+        "upstream_invalid_sse",
+        sentinel,
+    )
+
+
+def test_reason_only_parameter_header_failure_retains_no_raw_exception_content():
+    sentinel = "PRIVATE_HEADER_SENTINEL"
+    encoded = base64.b64encode(sentinel.encode() + b"\xff").decode()
+    _assert_reason_only_failure(
+        lambda: decode_header_value(f"=?base64?{encoded}?="),
+        "invalid_header_value",
+        sentinel,
+    )
 
 
 def _schema(annotation: str = "Tenant") -> dict:

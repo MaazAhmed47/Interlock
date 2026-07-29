@@ -77,3 +77,37 @@ python -m pytest \
 The SDK-marked tests additionally require the exact disposable environment
 variables documented in `docs/mcp-2026-compatibility.md`; absent SDK tools are
 reported as skips and therefore do not constitute interoperability evidence.
+
+## Reproducible gateway, drift, receipt, and security gate
+
+With the same pinned SDK environment variables, the exact broader selection is:
+
+```bash
+python -m pytest -q \
+  tests/test_mcp_2026_core_profile.py \
+  tests/test_mcp_upstream_profiles.py \
+  tests/test_streamable_mcp_2026_eligibility.py \
+  tests/test_streamable_mcp_integration.py \
+  tests/test_mcp_gateway.py \
+  tests/test_mcp_gateway_upstream_errors.py \
+  tests/test_mcp_drift.py \
+  tests/test_chain_drift.py \
+  tests/test_chain_drift_route.py \
+  tests/test_drift_evidence.py \
+  tests/test_drift_description_exfil.py \
+  tests/test_drift_depth.py \
+  tests/test_drift_adversarial.py \
+  tests/test_drift_record_schema.py \
+  tests/test_effect_drift.py \
+  tests/test_effect_drift_runtime.py \
+  tests/test_response_drift.py \
+  tests/test_response_drift_runtime.py \
+  tests/test_external_reach_drift.py \
+  tests/test_security_receipt.py \
+  tests/test_receipt_replay.py \
+  tests/test_receipt_claims.py
+```
+
+PR #41 follow-up result: `458 passed, 1 skipped, 6 xfailed`. The one skip is
+the separately invoked alpha conformance evidence test; it is not counted as a
+passing interoperability probe.

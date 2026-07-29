@@ -703,6 +703,22 @@ def test_discovery_removed_tool_is_quarantined():
         assert stored["drift_severity"] == "critical"
         assert stored["drift_action"] == "quarantine"
         assert "tool_removed" in stored["drift_types"]
+        assert discovery["server_drift"] == [
+            {
+                "type": "tool_removed",
+                "severity": "critical",
+                "tool_name": "read_profile",
+                "action": "quarantine",
+            }
+        ]
+        audit_rows = [
+            row
+            for row in db.list_mcp_audit_logs(limit=20)
+            if row.get("server_id") == server_id
+            and row.get("matched_rule") == "tool_removed"
+        ]
+        assert len(audit_rows) == 1
+        assert audit_rows[0]["action"] == discovery["server_drift"][0]["action"]
     finally:
         db.unregister_mcp_server(server_id)
 
