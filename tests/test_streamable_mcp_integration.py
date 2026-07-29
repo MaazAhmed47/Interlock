@@ -56,8 +56,54 @@ def _serve(app: Any) -> Iterator[str]:
         thread.join(timeout=10)
 
 
-class _SanitizedWireCapture:
-    """Capture only protocol fields needed for the SDK profile regression."""
+def _json_value_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return "unknown"
+
+
+def _structural_request_body(message: dict[str, Any]) -> dict[str, Any]:
+    params = message.get("params")
+    params = params if isinstance(params, dict) else {}
+    meta = params.get("_meta")
+    meta = meta if isinstance(meta, dict) else {}
+    client_info = meta.get("io.modelcontextprotocol/clientInfo")
+    client_info = client_info if isinstance(client_info, dict) else {}
+    capabilities = meta.get("io.modelcontextprotocol/clientCapabilities")
+    return {
+        "jsonrpc": message.get("jsonrpc"),
+        "hasId": "id" in message,
+        "idType": _json_value_type(message.get("id")),
+        "method": message.get("method"),
+        "params": {
+            "_meta": {
+                "protocolVersion": meta.get("io.modelcontextprotocol/protocolVersion"),
+                "clientInfo": {
+                    "present": "io.modelcontextprotocol/clientInfo" in meta,
+                    "nameType": _json_value_type(client_info.get("name")),
+                    "versionType": _json_value_type(client_info.get("version")),
+                },
+                "clientCapabilities": {
+                    "present": "io.modelcontextprotocol/clientCapabilities" in meta,
+                    "isObject": isinstance(capabilities, dict),
+                },
+            }
+        },
+    }
+
+
+class _StructuralWireCapture:
+    """Retain an allowlisted structural view of SDK protocol exchanges."""
 
     def __init__(self, app: Any, exchanges: list[dict[str, Any]]) -> None:
         self.app = app
@@ -68,7 +114,6 @@ class _SanitizedWireCapture:
             await self.app(scope, receive, send)
             return
         request_body = bytearray()
-        response_body = bytearray()
         response_status = 0
 
         async def captured_receive():
@@ -81,8 +126,6 @@ class _SanitizedWireCapture:
             nonlocal response_status
             if message["type"] == "http.response.start":
                 response_status = message["status"]
-            elif message["type"] == "http.response.body":
-                response_body.extend(message.get("body", b""))
             await send(message)
 
         await self.app(scope, captured_receive, captured_send)
@@ -97,16 +140,15 @@ class _SanitizedWireCapture:
                     "content-type",
                     "mcp-method",
                     "mcp-protocol-version",
-                    "user-agent",
                 }
             }
             self.exchanges.append(
                 {
-                    "request": {"headers": headers, "body": parsed_request},
-                    "response": {
-                        "status": response_status,
-                        "body": json.loads(response_body) if response_body else None,
+                    "request": {
+                        "headers": headers,
+                        "body": _structural_request_body(parsed_request),
                     },
+                    "response": {"status": response_status},
                 }
             )
 
@@ -128,6 +170,103 @@ class _TestCredentialInjector:
             (b"x-api-key", self.key),
         ]
         await self.app(scoped, receive, send)
+
+
+def test_wire_capture_retains_structure_without_arguments_or_secrets():
+    exchanges: list[dict[str, Any]] = []
+    capture_target = FastAPI()
+
+    @capture_target.post("/mcp")
+    async def capture_probe(request: Request):
+        await request.body()
+        return JSONResponse({"result": {"text": "raw-response-secret"}})
+
+    request = {
+        "jsonrpc": "2.0",
+        "id": "raw-id-secret",
+        "method": "tools/call",
+        "params": {
+            "name": "raw-tool-name-secret",
+            "arguments": {"token": "raw-argument-secret"},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+                "io.modelcontextprotocol/clientInfo": {
+                    "name": "raw-client-name-secret",
+                    "version": "raw-client-version-secret",
+                },
+                "io.modelcontextprotocol/clientCapabilities": {
+                    "raw-capability-secret": {"token": "nested-secret"}
+                },
+                "unknown": "raw-unknown-meta-secret",
+            },
+        },
+    }
+    with _serve(_StructuralWireCapture(capture_target, exchanges)) as base_url:
+        response = httpx.post(
+            f"{base_url}/mcp",
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+                "Mcp-Method": "tools/call",
+                "MCP-Protocol-Version": PROTOCOL_VERSION,
+                "Authorization": "Bearer raw-authorization-secret",
+                "X-API-Key": "raw-api-key-secret",
+                "User-Agent": "raw-user-agent-secret",
+            },
+            json=request,
+            timeout=5,
+        )
+
+    assert response.status_code == 200
+    retained = json.dumps(exchanges, sort_keys=True)
+    for secret in (
+        "raw-id-secret",
+        "raw-tool-name-secret",
+        "raw-argument-secret",
+        "raw-client-name-secret",
+        "raw-client-version-secret",
+        "raw-capability-secret",
+        "nested-secret",
+        "raw-unknown-meta-secret",
+        "raw-authorization-secret",
+        "raw-api-key-secret",
+        "raw-user-agent-secret",
+        "raw-response-secret",
+    ):
+        assert secret not in retained
+    assert exchanges == [
+        {
+            "request": {
+                "headers": {
+                    "accept": "application/json, text/event-stream",
+                    "content-type": "application/json",
+                    "mcp-method": "tools/call",
+                    "mcp-protocol-version": PROTOCOL_VERSION,
+                },
+                "body": {
+                    "jsonrpc": "2.0",
+                    "hasId": True,
+                    "idType": "string",
+                    "method": "tools/call",
+                    "params": {
+                        "_meta": {
+                            "protocolVersion": PROTOCOL_VERSION,
+                            "clientInfo": {
+                                "present": True,
+                                "nameType": "string",
+                                "versionType": "string",
+                            },
+                            "clientCapabilities": {
+                                "present": True,
+                                "isObject": True,
+                            },
+                        }
+                    },
+                },
+            },
+            "response": {"status": 200},
+        }
+    ]
 
 
 def _tool(name: str) -> dict[str, Any]:
@@ -411,18 +550,20 @@ def _run_sdk_probe(
     return json.loads(completed.stdout)
 
 
-def _assert_modern_sdk_exchange(
-    exchange: dict[str, Any], method: str, client_name: str
-) -> None:
+def _assert_modern_sdk_exchange(exchange: dict[str, Any], method: str) -> None:
     request = exchange["request"]
     assert request["headers"]["accept"] == "application/json, text/event-stream"
     assert request["headers"]["content-type"] == "application/json"
     assert request["headers"]["mcp-protocol-version"] == PROTOCOL_VERSION
     assert request["headers"]["mcp-method"] == method
     meta = request["body"]["params"]["_meta"]
-    assert meta["io.modelcontextprotocol/protocolVersion"] == PROTOCOL_VERSION
-    assert meta["io.modelcontextprotocol/clientInfo"]["name"] == client_name
-    assert isinstance(meta["io.modelcontextprotocol/clientCapabilities"], dict)
+    assert meta["protocolVersion"] == PROTOCOL_VERSION
+    assert meta["clientInfo"] == {
+        "present": True,
+        "nameType": "string",
+        "versionType": "string",
+    }
+    assert meta["clientCapabilities"] == {"present": True, "isObject": True}
 
 
 def test_official_python_sdk_2_0_0_modern_discovery_and_operations(live_transport):
@@ -430,7 +571,7 @@ def test_official_python_sdk_2_0_0_modern_discovery_and_operations(live_transpor
     exchanges: list[dict[str, Any]] = []
     script = Path(__file__).parent / "sdk_interop/python_client_probe.py"
 
-    with _serve(_SanitizedWireCapture(proxy.app, exchanges)) as base_url:
+    with _serve(_StructuralWireCapture(proxy.app, exchanges)) as base_url:
         outcome = _run_sdk_probe(
             [python, str(script), "auto"],
             f"{base_url}/mcp/stream/{SERVER_ID}",
@@ -451,7 +592,7 @@ def test_official_python_sdk_2_0_0_modern_discovery_and_operations(live_transpor
     for exchange, method in zip(
         exchanges, ("server/discover", "tools/list", "tools/call"), strict=True
     ):
-        _assert_modern_sdk_exchange(exchange, method, "interlock-python-sdk-probe")
+        _assert_modern_sdk_exchange(exchange, method)
 
 
 def test_official_python_sdk_2_0_0_explicit_pin_has_no_legacy_handshake(
@@ -461,7 +602,7 @@ def test_official_python_sdk_2_0_0_explicit_pin_has_no_legacy_handshake(
     exchanges: list[dict[str, Any]] = []
     script = Path(__file__).parent / "sdk_interop/python_client_probe.py"
 
-    with _serve(_SanitizedWireCapture(proxy.app, exchanges)) as base_url:
+    with _serve(_StructuralWireCapture(proxy.app, exchanges)) as base_url:
         outcome = _run_sdk_probe(
             [python, str(script), PROTOCOL_VERSION],
             f"{base_url}/mcp/stream/{SERVER_ID}",
@@ -483,7 +624,7 @@ def test_official_typescript_sdk_2_0_0_pinned_discovery_and_operations(
     exchanges: list[dict[str, Any]] = []
     script = Path(__file__).parent / "sdk_interop/typescript_client_probe.mjs"
 
-    with _serve(_SanitizedWireCapture(proxy.app, exchanges)) as base_url:
+    with _serve(_StructuralWireCapture(proxy.app, exchanges)) as base_url:
         outcome = _run_sdk_probe(
             [node, str(script)],
             f"{base_url}/mcp/stream/{SERVER_ID}",
@@ -505,7 +646,7 @@ def test_official_typescript_sdk_2_0_0_pinned_discovery_and_operations(
     for exchange, method in zip(
         exchanges, ("server/discover", "tools/list", "tools/call"), strict=True
     ):
-        _assert_modern_sdk_exchange(exchange, method, "interlock-typescript-sdk-probe")
+        _assert_modern_sdk_exchange(exchange, method)
 
 
 def test_official_sdk_explicit_pins_do_not_fall_back_after_protocol_rejection():
@@ -530,7 +671,7 @@ def test_official_sdk_explicit_pins_do_not_fall_back_after_protocol_rejection():
         )
 
     python_exchanges: list[dict[str, Any]] = []
-    with _serve(_SanitizedWireCapture(reject_app, python_exchanges)) as base_url:
+    with _serve(_StructuralWireCapture(reject_app, python_exchanges)) as base_url:
         python_outcome = _run_sdk_probe(
             [python, str(python_script), PROTOCOL_VERSION],
             f"{base_url}/mcp",
@@ -538,7 +679,7 @@ def test_official_sdk_explicit_pins_do_not_fall_back_after_protocol_rejection():
         )
 
     typescript_exchanges: list[dict[str, Any]] = []
-    with _serve(_SanitizedWireCapture(reject_app, typescript_exchanges)) as base_url:
+    with _serve(_StructuralWireCapture(reject_app, typescript_exchanges)) as base_url:
         typescript_outcome = _run_sdk_probe(
             [node, str(typescript_script)],
             f"{base_url}/mcp",
