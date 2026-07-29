@@ -3,7 +3,7 @@ Unit tests for the offline demo mock MCP server's phase logic.
 
 The mock backs the two live-proven drift classes without any network:
 
-  /docs — capability drift: phase 1 serves a clean read-only read_document
+  /docs — capability drift: phase 1 serves a clean read-only read_file
           (plus a list_documents control tool that never changes); phase 2
           serves the same tool NAME with a broader export/PII surface.
   /crm  — behavioral drift: the update_record schema is IDENTICAL in both
@@ -44,15 +44,18 @@ def test_compose_gateway_explicitly_allowlists_the_bundled_mock_host():
 
 def test_compose_publishes_demo_ports_on_loopback_only():
     compose = yaml.safe_load(COMPOSE_YML.read_text(encoding="utf-8"))
-    expected_ports = {
-        "gateway": ["127.0.0.1:8001:8001"],
-        "dashboard": ["127.0.0.1:8080:80"],
-        "mcp-mock": ["127.0.0.1:9100:9100"],
-    }
-
-    assert {
-        service: compose["services"][service]["ports"] for service in expected_ports
-    } == expected_ports
+    assert compose["services"]["host-proxy"]["ports"] == [
+        "127.0.0.1:8001:8001",
+        "127.0.0.1:8080:8080",
+        "127.0.0.1:9100:9100",
+    ]
+    for service in ("gateway", "dashboard", "mcp-mock", "evaluator-runner"):
+        assert "ports" not in compose["services"][service]
+        assert compose["services"][service]["networks"] == ["demo-net"]
+    assert compose["services"]["host-proxy"]["networks"] == [
+        "demo-net",
+        "host-edge",
+    ]
 
 
 def test_compose_demo_runner_waits_for_successful_seeding():
@@ -68,17 +71,17 @@ def test_compose_demo_runner_waits_for_successful_seeding():
 
 def test_docs_phase1_is_clean_read_only():
     tools = mock.tools_for("/docs", 1)
-    assert _tool_names(tools) == ["list_documents", "read_document"]
-    read_doc = next(t for t in tools if t["name"] == "read_document")
+    assert _tool_names(tools) == ["list_documents", "read_file"]
+    read_doc = next(t for t in tools if t["name"] == "read_file")
     assert read_doc["annotations"]["readOnlyHint"] is True
     assert "email" not in read_doc["inputSchema"]["properties"]
     assert "_meta" not in read_doc
 
 
-def test_docs_phase2_mutates_read_document_same_name():
+def test_docs_phase2_mutates_read_file_same_name():
     tools = mock.tools_for("/docs", 2)
-    assert _tool_names(tools) == ["list_documents", "read_document"]
-    read_doc = next(t for t in tools if t["name"] == "read_document")
+    assert _tool_names(tools) == ["list_documents", "read_file"]
+    read_doc = next(t for t in tools if t["name"] == "read_file")
     assert read_doc["annotations"]["readOnlyHint"] is False
     assert "email" in read_doc["inputSchema"]["properties"]
     meta = read_doc["_meta"]["interlock"]
@@ -100,11 +103,30 @@ def test_docs_control_tool_never_changes():
 
 
 def test_docs_calls_succeed():
+    mock.reset_call_counts()
     status, body = mock.call_result("/docs", "list_documents", {}, 1)
     assert status == 200
     assert "result" in body
-    status, body = mock.call_result("/docs", "read_document", {"doc_id": "a"}, 1)
+    status, body = mock.call_result("/docs", "read_file", {"doc_id": "a"}, 1)
     assert status == 200
+    assert mock.call_counts()["total"] == 2
+
+
+def test_mock_execution_counter_records_no_arguments_or_headers():
+    mock.reset_call_counts()
+    secret_arguments = {"doc_id": "sensitive-value", "email": "private@example.test"}
+
+    mock.call_result("/docs", "read_file", secret_arguments, 1)
+    counts = mock.call_counts()
+
+    assert counts == {
+        "total": 1,
+        "calls": [{"path": "/docs", "tool": "read_file", "count": 1}],
+    }
+    assert "sensitive-value" not in str(counts)
+    assert "private@example.test" not in str(counts)
+    mock.reset_call_counts()
+    assert mock.call_counts() == {"total": 0, "calls": []}
 
 
 # ── /crm behavioral drift (same schema, 403 -> 200) ──────────────────────────

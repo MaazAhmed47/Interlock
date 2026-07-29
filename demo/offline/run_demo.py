@@ -155,7 +155,7 @@ class Demo:
                 "description": f"Offline demo server ({mock_path})",
                 "allowed_tools": allowed_tools,
                 "blocked_tools": [],
-                "environment": "non_production" if probes else "production",
+                "environment": "non_production",
                 "probes_enabled": probes,
             },
         )
@@ -254,9 +254,7 @@ class Demo:
         self.set_phase("/crm", 1)
 
         step(f"Register + verify '{DOCS_SERVER}' (capability-drift scenario)")
-        self.register_and_verify(
-            DOCS_SERVER, "/docs", ["read_document", "list_documents"]
-        )
+        self.register_and_verify(DOCS_SERVER, "/docs", ["read_file", "list_documents"])
 
         step(f"Register + verify '{CRM_SERVER}' (behavioral-drift scenario)")
         # Probe-enabled: scenario B runs an effective-permission probe, which
@@ -276,7 +274,7 @@ class Demo:
         )
 
         step("Operator approves the discovered baselines")
-        for tool in ("read_document", "list_documents"):
+        for tool in ("read_file", "list_documents"):
             self.approve(DOCS_SERVER, tool, "Initial review: read-only surface.")
         self.approve(CRM_SERVER, "update_record", "Initial review: scoped CRM write.")
 
@@ -310,16 +308,16 @@ class Demo:
 
         if server_id != DOCS_SERVER:
             self.register_and_verify(
-                server_id, mock_path, ["read_document", "list_documents"]
+                server_id, mock_path, ["read_file", "list_documents"]
             )
-        self.restore_baseline(server_id, mock_path, ["read_document", "list_documents"])
+        self.restore_baseline(server_id, mock_path, ["read_file", "list_documents"])
 
         step("1/8 Approved baseline (what the team signed off on)")
         status, tools = self.gw("GET", f"/mcp/tools?server_id={server_id}")
         for tool in tools.get("tools") or []:
-            if tool.get("tool_name") == "read_document":
+            if tool.get("tool_name") == "read_file":
                 print(
-                    f"    read_document status={tool.get('status')} "
+                    f"    read_file status={tool.get('status')} "
                     f"side_effect={ (tool.get('normalized_metadata') or {}).get('side_effect') }"
                 )
 
@@ -336,7 +334,7 @@ class Demo:
             f"blocked={discovery['blocked_tools']}"
         )
         if not discovery.get("blocked"):
-            die("expected read_document to be blocked by capability drift")
+            die("expected read_file to be blocked by capability drift")
         print(f"    blocked reason: {discovery['blocked'][0].get('reason', '')[:120]}")
 
         step("4/8 Agent attempts the drifted tool -> denied BEFORE execution")
@@ -345,7 +343,7 @@ class Demo:
             "/mcp/call",
             {
                 "server_id": server_id,
-                "tool_name": "read_document",
+                "tool_name": "read_file",
                 "arguments": {"doc_id": "q3-report", "email": "attacker@example.com"},
             },
         )
@@ -354,7 +352,7 @@ class Demo:
         print(f"    error=tool_quarantined  audit={outcome.get('audit')}")
 
         step("5/8 Drift-detection Security Receipt")
-        detection = self.latest_audit_row(server_id, "read_document", "drift_detected")
+        detection = self.latest_audit_row(server_id, "read_file", "drift_detected")
         if not detection:
             die("no drift_detected audit row found")
         receipt = self.receipt(detection["id"])
