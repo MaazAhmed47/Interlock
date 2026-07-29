@@ -386,6 +386,7 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     auth_type       TEXT    NOT NULL DEFAULT 'none',
     auth_header     TEXT    NOT NULL DEFAULT '',
     auth_token_env  TEXT    NOT NULL DEFAULT '',
+    upstream_protocol_profile TEXT NOT NULL DEFAULT 'legacy',
     verified        INTEGER NOT NULL DEFAULT 0,
     environment     TEXT    NOT NULL DEFAULT 'production',
     probes_enabled  INTEGER NOT NULL DEFAULT 0,
@@ -835,6 +836,12 @@ def init_db() -> None:
         _ensure_column(conn, "mcp_servers", "auth_header", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(
             conn, "mcp_servers", "auth_token_env", "TEXT NOT NULL DEFAULT ''"
+        )
+        _ensure_column(
+            conn,
+            "mcp_servers",
+            "upstream_protocol_profile",
+            "TEXT NOT NULL DEFAULT 'legacy'",
         )
         # Pre-existing servers migrate to production + probes disabled so
         # effective-permission probes fail closed until an admin explicitly
@@ -1593,6 +1600,7 @@ API_KEY_SCOPES = {
 }
 DEFAULT_API_KEY_SCOPES = ["mcp.call", "mcp.read"]
 MCP_SERVER_ENVIRONMENTS = {"production", "non_production"}
+MCP_UPSTREAM_PROTOCOL_PROFILES = {"legacy", "2026-07-28"}
 API_KEY_ROLES = {
     "support_agent",
     "devops_agent",
@@ -2940,6 +2948,7 @@ def _mcp_row_to_dict(row) -> Dict[str, Any]:
     d["verified"] = bool(d.get("verified", 0))
     d["environment"] = str(d.get("environment") or "production")
     d["probes_enabled"] = bool(d.get("probes_enabled", 0))
+    d["upstream_protocol_profile"] = str(d.get("upstream_protocol_profile") or "legacy")
     return _classify_mcp_server(d)
 
 
@@ -3097,10 +3106,23 @@ def _normalize_mcp_server_environment(environment: Any) -> str:
     return value
 
 
+def _normalize_mcp_upstream_protocol_profile(profile: Any) -> str:
+    value = str(profile or "legacy").strip().lower()
+    if value not in MCP_UPSTREAM_PROTOCOL_PROFILES:
+        raise ValueError(
+            f"Unknown MCP upstream protocol profile '{profile}'. "
+            f"Valid: {sorted(MCP_UPSTREAM_PROTOCOL_PROFILES)}"
+        )
+    return value
+
+
 def register_mcp_server(server_id: str, config: dict) -> bool:
     """Insert a new MCP server. Returns False if server_id already exists."""
     validate_mcp_registration_target(server_id, str(config.get("url") or ""))
     environment = _normalize_mcp_server_environment(config.get("environment"))
+    upstream_protocol_profile = _normalize_mcp_upstream_protocol_profile(
+        config.get("upstream_protocol_profile")
+    )
     probes_enabled = bool(config.get("probes_enabled"))
     try:
         with _db_lock, get_conn() as conn:
@@ -3109,8 +3131,8 @@ def register_mcp_server(server_id: str, config: dict) -> bool:
                 INSERT INTO mcp_servers
                   (server_id, url, description, allowed_tools, blocked_tools,
                    rate_limit, auth_type, auth_header, auth_token_env, verified,
-                   environment, probes_enabled, registered_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   upstream_protocol_profile, environment, probes_enabled, registered_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     server_id,
@@ -3123,6 +3145,7 @@ def register_mcp_server(server_id: str, config: dict) -> bool:
                     config.get("auth_header", ""),
                     config.get("auth_token_env", ""),
                     False,
+                    upstream_protocol_profile,
                     environment,
                     probes_enabled,
                     datetime.now(timezone.utc).isoformat(),

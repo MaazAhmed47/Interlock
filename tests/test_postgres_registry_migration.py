@@ -33,7 +33,8 @@ pytestmark = pytest.mark.skipif(
 
 LEGACY_SERVER = "legacy-pg-server"
 
-# The pre-upgrade mcp_servers table: no environment / probes_enabled columns.
+# The pre-upgrade mcp_servers table has no environment, probe, or upstream
+# protocol-profile columns.
 LEGACY_SCHEMA = """
 DROP TABLE IF EXISTS mcp_tool_metadata CASCADE;
 DROP TABLE IF EXISTS mcp_servers CASCADE;
@@ -117,6 +118,7 @@ def test_migration_backfills_existing_server_to_production_probes_disabled(pg_db
     assert server is not None
     assert server["environment"] == "production"
     assert server["probes_enabled"] is False
+    assert server["upstream_protocol_profile"] == "legacy"
 
 
 def test_normal_startup_does_not_seed_demo_registry_on_postgres(pg_db, monkeypatch):
@@ -147,16 +149,19 @@ def test_register_and_lookup_round_trip_probe_state_on_postgres(pg_db):
             "blocked_tools": [],
             "environment": "non_production",
             "probes_enabled": True,
+            "upstream_protocol_profile": "2026-07-28",
         },
     )
     server = pg_db.lookup_mcp_server("_pg_probe_enabled")
 
     assert server["environment"] == "non_production"
     assert server["probes_enabled"] is True
+    assert server["upstream_protocol_profile"] == "2026-07-28"
 
     listed = {s["server_id"]: s for s in pg_db.list_mcp_servers()}
     assert listed["_pg_probe_enabled"]["probes_enabled"] is True
     assert listed[LEGACY_SERVER]["probes_enabled"] is False
+    assert listed[LEGACY_SERVER]["upstream_protocol_profile"] == "legacy"
 
 
 def test_admin_environment_update_round_trips_on_postgres(pg_db):

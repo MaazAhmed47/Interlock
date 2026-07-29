@@ -1,3 +1,4 @@
+import base64
 import re
 import json
 import os
@@ -30,7 +31,10 @@ from core.response_drift import (
     response_profile_hash,
 )
 from core.mcp_drift import classify_server_drift
-from core.mcp_tool_eligibility import evaluate_streamable_tool
+from core.mcp_tool_eligibility import (
+    evaluate_streamable_tool,
+    uses_mcp_parameter_headers,
+)
 from core import drift_evidence
 
 # Per-operation start time for gateway-path latency. Set at the top of each
@@ -84,6 +88,20 @@ TRUSTED_MCP_SERVERS = {
 
 UPSTREAM_AUTH_TYPES = {"none", "bearer", "x-api-key"}
 AUTH_HEADER_RE = re.compile(r"^[A-Za-z0-9-]+$")
+MCP_UPSTREAM_LEGACY_PROFILE = "legacy"
+MCP_UPSTREAM_2026_PROFILE = "2026-07-28"
+MCP_UPSTREAM_PROTOCOL_PROFILES = {
+    MCP_UPSTREAM_LEGACY_PROFILE,
+    MCP_UPSTREAM_2026_PROFILE,
+}
+_MCP_2026_CLIENT_INFO = {"name": "interlock", "version": "0.2.0-alpha.1"}
+_RESERVED_UPSTREAM_HEADERS = {
+    "accept",
+    "content-type",
+    "mcp-protocol-version",
+    "mcp-method",
+    "mcp-name",
+}
 
 # Interlock-internal secrets and infrastructure credentials. Never usable as
 # upstream MCP auth tokens, even when an operator allowlists them by mistake.
@@ -154,6 +172,13 @@ def _normalize_upstream_auth_config(config: Optional[Dict[str, Any]]) -> Dict[st
     _validate_upstream_token_env(auth_token_env)
     if not auth_header or not AUTH_HEADER_RE.fullmatch(auth_header):
         raise UpstreamAuthConfigError("Upstream auth_header is invalid.")
+    lowered_header = auth_header.lower()
+    if lowered_header in _RESERVED_UPSTREAM_HEADERS or lowered_header.startswith(
+        "mcp-param-"
+    ):
+        raise UpstreamAuthConfigError(
+            "Upstream auth_header conflicts with an MCP transport header."
+        )
 
     return {
         "auth_type": auth_type,
@@ -188,6 +213,103 @@ def _mcp_post_kwargs(
     if headers:
         kwargs["headers"] = headers
     return kwargs
+
+
+def _upstream_protocol_profile(server: Optional[Dict[str, Any]]) -> str:
+    profile = str(
+        (server or {}).get("upstream_protocol_profile") or MCP_UPSTREAM_LEGACY_PROFILE
+    ).strip()
+    if profile not in MCP_UPSTREAM_PROTOCOL_PROFILES:
+        raise MCPUpstreamResponseError(
+            "unsupported_upstream_protocol_profile",
+            "Registered MCP server has an unsupported upstream protocol profile.",
+        )
+    return profile
+
+
+def _encode_mcp_header_value(value: str) -> str:
+    sentinel = value.startswith("=?base64?") and value.endswith("?=")
+    plain_ascii = all(
+        character == "\t" or 0x20 <= ord(character) <= 0x7E for character in value
+    )
+    if plain_ascii and value == value.strip() and not sentinel:
+        return value
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    return f"=?base64?{encoded}?="
+
+
+def _upstream_request(
+    profile: str,
+    method: str,
+    params: Dict[str, Any],
+    request_id: str,
+) -> tuple[Dict[str, Any], Dict[str, str]]:
+    request_params = dict(params)
+    headers: Dict[str, str] = {}
+    if profile == MCP_UPSTREAM_2026_PROFILE:
+        request_params["_meta"] = {
+            "io.modelcontextprotocol/protocolVersion": MCP_UPSTREAM_2026_PROFILE,
+            "io.modelcontextprotocol/clientInfo": dict(_MCP_2026_CLIENT_INFO),
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }
+        headers = {
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": MCP_UPSTREAM_2026_PROFILE,
+            "Mcp-Method": method,
+        }
+        if method == "tools/call":
+            headers["Mcp-Name"] = _encode_mcp_header_value(str(params.get("name", "")))
+    return (
+        {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": request_params,
+        },
+        headers,
+    )
+
+
+def _complete_upstream_result(data: Any, request_id: str, profile: str) -> Any:
+    if not isinstance(data, dict):
+        raise MCPUpstreamResponseError(
+            "upstream_invalid_envelope",
+            "MCP server returned a non-object JSON-RPC envelope.",
+        )
+    if "error" in data:
+        upstream_error = data.get("error")
+        captured = upstream_error if isinstance(upstream_error, dict) else {}
+        raise MCPUpstreamResponseError(
+            "upstream_jsonrpc_error",
+            "MCP server returned a JSON-RPC error.",
+            {
+                "code": captured.get("code"),
+                "message": str(captured.get("message") or "")[:200],
+            },
+        )
+    invalid_id = (
+        data.get("id") != request_id
+        if profile == MCP_UPSTREAM_2026_PROFILE or "id" in data
+        else False
+    )
+    if data.get("jsonrpc", "2.0") != "2.0" or invalid_id:
+        raise MCPUpstreamResponseError(
+            "upstream_invalid_envelope",
+            "MCP server returned an invalid JSON-RPC response envelope.",
+        )
+    result = data.get("result")
+    if not isinstance(result, (dict, list)):
+        raise MCPUpstreamResponseError(
+            "upstream_invalid_envelope",
+            "MCP JSON-RPC result must be an object or array.",
+        )
+    if profile == MCP_UPSTREAM_2026_PROFILE:
+        if not isinstance(result, dict) or result.get("resultType") != "complete":
+            raise MCPUpstreamResponseError(
+                "unsupported_upstream_result_type",
+                "MCP 2026 upstream did not return a complete result.",
+            )
+    return result
 
 
 # ── MCP Tool Definition Validation ────────────────────────────────────────────
@@ -481,6 +603,7 @@ async def _fetch_tool_list_payload(
     hard memory budget (the CI boundary review does). Left unset, the
     response is read exactly as before.
     """
+    profile = MCP_UPSTREAM_LEGACY_PROFILE
     try:
         server_url = ensure_safe_outbound_url(server_url, context="MCP discovery")
         registered = (
@@ -491,51 +614,65 @@ async def _fetch_tool_list_payload(
         registry_server_id = server_id or (
             registered.get("server_id") if registered else None
         )
-        headers = _resolve_upstream_auth_headers(registered)
+        auth_headers = _resolve_upstream_auth_headers(registered)
+        profile = _upstream_protocol_profile(registered)
 
         async with httpx.AsyncClient(timeout=timeout) as client:
-            payload = {
-                "jsonrpc": "2.0",
-                "id": uuid.uuid4().hex,
-                "method": "tools/list",
-                "params": {},
-            }
-            if max_response_bytes is not None:
-                data = await _read_bounded_json(
-                    client, server_url, payload, headers, int(max_response_bytes)
-                )
-                if data is None:
-                    return {
-                        "ok": False,
-                        "error": "response_too_large",
-                        "message": (
-                            "MCP tools/list response exceeded the configured "
-                            "boundary-review byte budget."
-                        ),
-                        "server_url": server_url,
-                    }
-            else:
-                resp = await client.post(
-                    server_url, **_mcp_post_kwargs(payload, headers)
-                )
-                resp.raise_for_status()
-                data = resp.json()
-        if not isinstance(data, dict):
-            return {
-                "ok": False,
-                "error": "mcp_discovery_error",
-                "message": "MCP server returned a non-object JSON-RPC response.",
-                "server_url": server_url,
-            }
-        if data.get("error"):
-            return {
-                "ok": False,
-                "error": "mcp_discovery_error",
-                "message": str(data["error"])[:200],
-                "server_url": server_url,
-            }
 
-        result = data.get("result") or {}
+            async def send(method: str) -> Dict[str, Any]:
+                request_id = uuid.uuid4().hex
+                payload, protocol_headers = _upstream_request(
+                    profile, method, {}, request_id
+                )
+                headers = {**auth_headers, **protocol_headers}
+                if max_response_bytes is not None:
+                    data = await _read_bounded_json(
+                        client,
+                        server_url,
+                        payload,
+                        headers,
+                        int(max_response_bytes),
+                    )
+                    if data is None:
+                        raise MCPUpstreamResponseError(
+                            "response_too_large",
+                            "MCP response exceeded the configured boundary-review byte budget.",
+                        )
+                else:
+                    resp = await client.post(
+                        server_url, **_mcp_post_kwargs(payload, headers)
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                return _complete_upstream_result(data, request_id, profile)
+
+            if profile == MCP_UPSTREAM_2026_PROFILE:
+                discovered = await send("server/discover")
+                supported = discovered.get("supportedVersions")
+                capabilities = discovered.get("capabilities")
+                if (
+                    not isinstance(supported, list)
+                    or MCP_UPSTREAM_2026_PROFILE not in supported
+                    or not isinstance(capabilities, dict)
+                    or not isinstance(capabilities.get("tools"), dict)
+                ):
+                    raise MCPUpstreamResponseError(
+                        "upstream_protocol_mismatch",
+                        "Declared MCP 2026 upstream did not advertise the pinned version and tools capability.",
+                    )
+            result = await send("tools/list")
+
+        if profile == MCP_UPSTREAM_2026_PROFILE and "tools" not in result:
+            raise MCPUpstreamResponseError(
+                "upstream_invalid_envelope",
+                "MCP 2026 tools/list result is missing tools.",
+            )
+        next_cursor = result.get("nextCursor")
+        if next_cursor not in (None, ""):
+            raise MCPUpstreamResponseError(
+                "unsupported_upstream_pagination",
+                "MCP upstream returned a paginated tool surface, which Interlock does not yet baseline safely.",
+            )
         tools = result.get("tools", []) if isinstance(result, dict) else []
         if not isinstance(tools, list):
             return {
@@ -580,6 +717,22 @@ async def _fetch_tool_list_payload(
             "message": str(exc),
             "server_url": server_url,
         }
+    except MCPUpstreamResponseError as exc:
+        error = exc.error
+        message = exc.message
+        if profile == MCP_UPSTREAM_LEGACY_PROFILE and error in {
+            "upstream_jsonrpc_error",
+            "upstream_invalid_envelope",
+        }:
+            error = "mcp_discovery_error"
+            if exc.upstream_error:
+                message = str(exc.upstream_error)[:200]
+        return {
+            "ok": False,
+            "error": error,
+            "message": message,
+            "server_url": server_url,
+        }
     except httpx.TimeoutException:
         return {"ok": False, "error": "MCP server timeout", "server_url": server_url}
     except Exception as e:
@@ -622,6 +775,20 @@ async def fetch_candidate_tool_surface(
     validated_tools = []
     blocked = []
     for tool in tools:
+        if isinstance(tool, dict) and uses_mcp_parameter_headers(
+            tool.get("inputSchema")
+        ):
+            blocked.append(
+                {
+                    "tool_name": tool.get("name"),
+                    "reason": (
+                        "Interlock does not yet validate and forward x-mcp-header "
+                        "tool parameters."
+                    ),
+                    "threat_type": "MCP_UNSUPPORTED_PARAMETER_HEADER",
+                }
+            )
+            continue
         validation = validate_mcp_tool_definition(tool)
         if validation.is_threat:
             blocked.append(
@@ -749,6 +916,21 @@ async def discover_mcp_tools(
                     )
 
         for tool in tools:
+            if isinstance(tool, dict) and uses_mcp_parameter_headers(
+                tool.get("inputSchema")
+            ):
+                blocked_tools.append(
+                    {
+                        "tool": tool.get("name"),
+                        "reason": (
+                            "Interlock does not yet validate and forward "
+                            "x-mcp-header tool parameters."
+                        ),
+                        "threat_level": "high",
+                        "threat_type": "MCP_UNSUPPORTED_PARAMETER_HEADER",
+                    }
+                )
+                continue
             validation = validate_mcp_tool_definition(tool)
             registry = {"persisted": False, "reason": "server_id_not_registered"}
             tool_name = tool.get("name", "").strip() if isinstance(tool, dict) else ""
@@ -974,6 +1156,28 @@ async def proxy_mcp_tool_call(
     stored_tool = strict_stored_tool or db.lookup_mcp_tool_metadata(
         server_id, tool_name
     )
+    stored_definition = (stored_tool or {}).get("raw_tool_definition") or {}
+    if uses_mcp_parameter_headers(stored_definition.get("inputSchema")):
+        saved = _log_mcp_gateway_audit(
+            server_id=server_id,
+            tool_name=tool_name,
+            role=role,
+            principal_id=principal_id,
+            action="deny",
+            matched_rule="unsupported_mcp_parameter_header",
+            reason=(
+                "Tool requires x-mcp-header forwarding, which Interlock does "
+                "not currently support."
+            ),
+            arguments=arguments,
+            blocked_by="unsupported_mcp_parameter_header",
+        )
+        return {
+            "ok": False,
+            "error": "unsupported_mcp_parameter_header",
+            "message": "Tool requires unsupported MCP parameter headers.",
+            "audit": _audit_ref(saved),
+        }
     stored_metadata = (stored_tool or {}).get("normalized_metadata")
     tool_metadata = db.merge_stored_and_runtime_metadata(
         stored_metadata or {}, runtime_metadata
@@ -1262,15 +1466,17 @@ async def proxy_mcp_tool_call(
     # 5. Forward to actual MCP server
     try:
         server_url = ensure_safe_outbound_url(server["url"], context="MCP server")
-        headers = _resolve_upstream_auth_headers(server)
+        auth_headers = _resolve_upstream_auth_headers(server)
+        profile = _upstream_protocol_profile(server)
         async with httpx.AsyncClient(timeout=30.0) as client:
             request_id = uuid.uuid4().hex
-            payload = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": "tools/call",
-                "params": {"name": tool_name, "arguments": arguments},
-            }
+            payload, protocol_headers = _upstream_request(
+                profile,
+                "tools/call",
+                {"name": tool_name, "arguments": arguments},
+                request_id,
+            )
+            headers = {**auth_headers, **protocol_headers}
             # The inbound EMA bearer credential never enters this header map.
             # Mark the separately configured downstream identity only at the
             # actual forwarding boundary.
@@ -1287,41 +1493,13 @@ async def proxy_mcp_tool_call(
                 raise MCPUpstreamResponseError(
                     "upstream_invalid_json", "MCP server returned malformed JSON."
                 ) from exc
-            if not isinstance(data, dict):
+            result_payload = _complete_upstream_result(data, request_id, profile)
+            if profile == MCP_UPSTREAM_2026_PROFILE and not isinstance(
+                result_payload.get("content"), list
+            ):
                 raise MCPUpstreamResponseError(
                     "upstream_invalid_envelope",
-                    "MCP server returned a non-object JSON-RPC envelope.",
-                )
-            if "error" in data:
-                upstream_error = data.get("error")
-                captured = upstream_error if isinstance(upstream_error, dict) else {}
-                raise MCPUpstreamResponseError(
-                    "upstream_jsonrpc_error",
-                    "MCP server returned a JSON-RPC error.",
-                    {
-                        "code": captured.get("code"),
-                        "message": str(captured.get("message") or "")[:200],
-                    },
-                )
-            if "result" not in data:
-                raise MCPUpstreamResponseError(
-                    "upstream_invalid_envelope",
-                    "MCP JSON-RPC response is missing a result.",
-                )
-            if not isinstance(data.get("result"), (dict, list)):
-                raise MCPUpstreamResponseError(
-                    "upstream_invalid_envelope",
-                    "MCP JSON-RPC result must be an object or array.",
-                )
-            if data.get("jsonrpc", "2.0") != "2.0":
-                raise MCPUpstreamResponseError(
-                    "upstream_invalid_envelope",
-                    "MCP server returned an invalid JSON-RPC version.",
-                )
-            if "id" in data and data.get("id") != request_id:
-                raise MCPUpstreamResponseError(
-                    "upstream_invalid_envelope",
-                    "MCP server returned a mismatched JSON-RPC request id.",
+                    "MCP 2026 tools/call result is missing content.",
                 )
 
             # 6. Scan the response — MCP06 (injection) then MCP10 (PII + volume).
@@ -1329,7 +1507,6 @@ async def proxy_mcp_tool_call(
             # The envelope `id` is a unix-timestamp integer that the PII scanner
             # matches as a phone number and redacts, which would corrupt the
             # JSON we later re-parse. Only the result payload is real tool output.
-            result_payload = data.get("result")
             response_text = json.dumps(result_payload)
 
             inj_result = scan_injection(response_text)

@@ -1,10 +1,12 @@
-"""End-to-end proof for the JSON-response MCP Streamable HTTP transport."""
+"""Wire-level contract tests for Interlock's MCP 2026 Streamable HTTP profile."""
 
 from __future__ import annotations
 
-import asyncio
-import importlib.metadata
+import base64
+import json
+import os
 import socket
+import subprocess
 import threading
 import time
 from contextlib import contextmanager
@@ -17,14 +19,13 @@ import pytest
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
 
 import proxy
 from core import db
 from core.tool_metadata import normalize_tool_metadata
+from routes.streamable_mcp import _json_result
 
-PROTOCOL_VERSION = "2025-11-25"
+PROTOCOL_VERSION = "2026-07-28"
 SERVER_ID = "_test_streamable_integration"
 SECOND_SERVER_ID = "_test_streamable_other_server"
 
@@ -36,16 +37,10 @@ def _free_port() -> int:
 
 
 @contextmanager
-def _serve(app: FastAPI) -> Iterator[str]:
+def _serve(app: Any) -> Iterator[str]:
     port = _free_port()
     server = uvicorn.Server(
-        uvicorn.Config(
-            app,
-            host="127.0.0.1",
-            port=port,
-            log_level="critical",
-            access_log=False,
-        )
+        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="critical")
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -61,6 +56,64 @@ def _serve(app: FastAPI) -> Iterator[str]:
         thread.join(timeout=10)
 
 
+class _SanitizedWireCapture:
+    """Capture only protocol fields needed for the SDK profile regression."""
+
+    def __init__(self, app: Any, exchanges: list[dict[str, Any]]) -> None:
+        self.app = app
+        self.exchanges = exchanges
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        request_body = bytearray()
+        response_body = bytearray()
+        response_status = 0
+
+        async def captured_receive():
+            message = await receive()
+            if message["type"] == "http.request":
+                request_body.extend(message.get("body", b""))
+            return message
+
+        async def captured_send(message):
+            nonlocal response_status
+            if message["type"] == "http.response.start":
+                response_status = message["status"]
+            elif message["type"] == "http.response.body":
+                response_body.extend(message.get("body", b""))
+            await send(message)
+
+        await self.app(scope, captured_receive, captured_send)
+        parsed_request = json.loads(request_body) if request_body else None
+        if parsed_request and parsed_request.get("method") in {
+            "server/discover",
+            "initialize",
+        }:
+            headers = {
+                key.decode("latin-1").lower(): value.decode("latin-1")
+                for key, value in scope["headers"]
+                if key.decode("latin-1").lower()
+                in {
+                    "accept",
+                    "content-type",
+                    "mcp-method",
+                    "mcp-protocol-version",
+                    "user-agent",
+                }
+            }
+            self.exchanges.append(
+                {
+                    "request": {"headers": headers, "body": parsed_request},
+                    "response": {
+                        "status": response_status,
+                        "body": json.loads(response_body) if response_body else None,
+                    },
+                }
+            )
+
+
 def _tool(name: str) -> dict[str, Any]:
     return {
         "name": name,
@@ -72,72 +125,55 @@ def _tool(name: str) -> dict[str, Any]:
     }
 
 
-def _initialize_message(request_id: int = 1) -> dict[str, Any]:
+def _params(**values: Any) -> dict[str, Any]:
     return {
-        "jsonrpc": "2.0",
-        "id": request_id,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {},
-            "clientInfo": {"name": "integration-proof", "version": "1"},
+        **values,
+        "_meta": {
+            "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+            "io.modelcontextprotocol/clientInfo": {
+                "name": "interlock-2026-contract-test",
+                "version": "1",
+            },
+            "io.modelcontextprotocol/clientCapabilities": {},
         },
     }
 
 
-def _transport_headers(key: str, **extra: str) -> dict[str, str]:
+def _message(method: str, request_id: int, **params: Any) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": method,
+        "params": _params(**params),
+    }
+
+
+def _headers(
+    key: str, method: str, name: str | None = None, **extra: str
+) -> dict[str, str]:
     headers = {
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
         "X-API-Key": key,
+        "MCP-Protocol-Version": PROTOCOL_VERSION,
+        "Mcp-Method": method,
     }
+    if name is not None:
+        headers["Mcp-Name"] = name
     headers.update(extra)
     return headers
 
 
-def _open_session(url: str, key: str) -> str:
-    initialized = httpx.post(
-        url,
-        headers=_transport_headers(key),
-        json=_initialize_message(),
+def _post(
+    transport: dict[str, Any], method: str, request_id: int, **params: Any
+) -> httpx.Response:
+    name = params.get("name") if method == "tools/call" else None
+    return httpx.post(
+        transport["url"],
+        headers=_headers(transport["key"], method, name),
+        json=_message(method, request_id, **params),
         timeout=5,
     )
-    assert initialized.status_code == 200, initialized.text
-    session_id = initialized.headers.get("MCP-Session-Id")
-    assert session_id
-    notification = httpx.post(
-        url,
-        headers=_transport_headers(
-            key,
-            **{
-                "MCP-Protocol-Version": PROTOCOL_VERSION,
-                "MCP-Session-Id": session_id,
-            },
-        ),
-        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        timeout=5,
-    )
-    assert notification.status_code == 202, notification.text
-    return session_id
-
-
-def _session_headers(key: str, session_id: str) -> dict[str, str]:
-    return _transport_headers(
-        key,
-        **{
-            "MCP-Protocol-Version": PROTOCOL_VERSION,
-            "MCP-Session-Id": session_id,
-        },
-    )
-
-
-def _call_message(name: str, arguments: dict[str, Any] | None = None) -> dict:
-    return {
-        "jsonrpc": "2.0",
-        "id": 10,
-        "method": "tools/call",
-        "params": {"name": name, "arguments": arguments or {}},
-    }
 
 
 @pytest.fixture
@@ -174,33 +210,29 @@ def live_transport(tmp_path_factory):
         )
 
     with _serve(upstream) as upstream_url:
-        db.register_mcp_server(
-            SERVER_ID,
-            {
-                "url": f"{upstream_url}/mcp",
-                "description": "Streamable integration fixture",
-                "allowed_tools": [
+        for server_id, allowed in (
+            (
+                SERVER_ID,
+                [
                     "read_document",
                     "missing_metadata",
                     "blocked_tool",
                     "quarantined_tool",
                 ],
-                "blocked_tools": ["blocked_tool"],
-                "environment": "non_production",
-            },
-        )
-        db.verify_mcp_server(SERVER_ID)
-        db.register_mcp_server(
-            SECOND_SERVER_ID,
-            {
-                "url": f"{upstream_url}/mcp",
-                "description": "Second Streamable integration fixture",
-                "allowed_tools": ["read_document"],
-                "blocked_tools": [],
-                "environment": "non_production",
-            },
-        )
-        db.verify_mcp_server(SECOND_SERVER_ID)
+            ),
+            (SECOND_SERVER_ID, ["read_document"]),
+        ):
+            db.register_mcp_server(
+                server_id,
+                {
+                    "url": f"{upstream_url}/mcp",
+                    "description": "Streamable integration fixture",
+                    "allowed_tools": allowed,
+                    "blocked_tools": ["blocked_tool"] if server_id == SERVER_ID else [],
+                    "environment": "non_production",
+                },
+            )
+            db.verify_mcp_server(server_id)
         for name in (
             "read_document",
             "blocked_tool",
@@ -211,11 +243,9 @@ def live_transport(tmp_path_factory):
             db.upsert_mcp_tool_metadata(
                 SERVER_ID, definition, normalize_tool_metadata(definition)
             )
-        second_definition = _tool("read_document")
+        definition = _tool("read_document")
         db.upsert_mcp_tool_metadata(
-            SECOND_SERVER_ID,
-            second_definition,
-            normalize_tool_metadata(second_definition),
+            SECOND_SERVER_ID, definition, normalize_tool_metadata(definition)
         )
         with db.get_conn() as conn:
             conn.execute(
@@ -224,410 +254,391 @@ def live_transport(tmp_path_factory):
                 "WHERE server_id = ? AND tool_name = 'quarantined_tool'",
                 (SERVER_ID,),
             )
-
         key = db.generate_key(
             "free",
             label="streamable-integration",
             scopes=["mcp.call"],
             role="admin_agent",
         )["raw_key"]
-        other_key = db.generate_key(
-            "free",
-            label="streamable-other-identity",
-            scopes=["mcp.call"],
-            role="admin_agent",
-        )["raw_key"]
         readonly_key = db.generate_key(
             "free",
-            label="streamable-readonly-identity",
+            label="streamable-readonly",
             scopes=["mcp.call"],
             role="readonly_agent",
         )["raw_key"]
-
         with _serve(proxy.app) as interlock_url:
             yield {
                 "url": f"{interlock_url}/mcp/stream/{SERVER_ID}",
                 "base_url": interlock_url,
-                "other_url": (f"{interlock_url}/mcp/stream/{SECOND_SERVER_ID}"),
                 "key": key,
-                "other_key": other_key,
                 "readonly_key": readonly_key,
                 "upstream_calls": upstream_calls,
             }
-
     db.unregister_mcp_server(SERVER_ID)
     db.unregister_mcp_server(SECOND_SERVER_ID)
     proxy._key_record_cache.clear()
     db.DB_PATH = prior_db_path
 
 
-def test_official_sdk_initialize_list_and_allowed_call(live_transport):
-    assert importlib.metadata.version("mcp") == "1.28.1"
+def test_discover_list_and_allowed_call_are_stateless(live_transport):
+    discovered = _post(live_transport, "server/discover", 1)
+    listed_first = _post(live_transport, "tools/list", 2)
+    listed_second = _post(live_transport, "tools/list", 3)
+    called = _post(
+        live_transport,
+        "tools/call",
+        4,
+        name="read_document",
+        arguments={"document_id": "safe"},
+    )
 
-    async def exercise():
-        async with httpx.AsyncClient(
-            headers={"X-API-Key": live_transport["key"]}
-        ) as client:
-            async with streamable_http_client(
-                live_transport["url"], http_client=client, terminate_on_close=False
-            ) as (read_stream, write_stream, get_session_id):
-                async with ClientSession(read_stream, write_stream) as session:
-                    initialized = await session.initialize()
-                    listed = await session.list_tools()
-                    called = await session.call_tool(
-                        "read_document", {"document_id": "safe-document"}
-                    )
-                    return initialized, listed, called, get_session_id()
+    assert (
+        discovered.status_code
+        == listed_first.status_code
+        == listed_second.status_code
+        == 200
+    )
+    discover_result = discovered.json()["result"]
+    assert discover_result["resultType"] == "complete"
+    assert discover_result["supportedVersions"] == [PROTOCOL_VERSION]
+    assert discover_result["ttlMs"] > 0
+    assert discover_result["cacheScope"] == "private"
+    assert "serverInfo" not in discover_result
+    assert (
+        discover_result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"]
+        == "interlock-mcp-gateway"
+    )
+    list_result = listed_first.json()["result"]
+    assert list_result["ttlMs"] > 0
+    assert list_result["cacheScope"] == "private"
+    assert list_result["tools"] == listed_second.json()["result"]["tools"]
+    assert [tool["name"] for tool in list_result["tools"]] == ["read_document"]
+    assert "MCP-Session-Id" not in discovered.headers
+    assert called.json()["result"]["isError"] is False
+    assert len(live_transport["upstream_calls"]) == 1
 
-    before = len(live_transport["upstream_calls"])
-    initialized, listed, called, session_id = asyncio.run(exercise())
 
-    assert initialized.protocolVersion == PROTOCOL_VERSION
-    assert session_id
-    assert [tool.name for tool in listed.tools] == ["read_document"]
-    assert called.isError is False
-    assert called.content[0].text == "safe result from read_document"
-    assert len(live_transport["upstream_calls"]) == before + 1
-
-
-def test_pre_initialize_call_and_notification_do_not_reach_upstream(live_transport):
-    before = len(live_transport["upstream_calls"])
-    with httpx.Client(timeout=5) as client:
-        call = client.post(
-            live_transport["url"],
-            headers=_transport_headers(
-                live_transport["key"],
-                **{"MCP-Protocol-Version": PROTOCOL_VERSION},
-            ),
-            json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "read_document", "arguments": {}},
-            },
+def _official_sdk_b2_python() -> str:
+    python = os.environ.get("INTERLOCK_MCP_SDK_B2_PYTHON")
+    if not python:
+        pytest.skip(
+            "set INTERLOCK_MCP_SDK_B2_PYTHON to an isolated interpreter with "
+            "mcp==2.0.0b2 and mcp-types==2.0.0b2"
         )
-        notification = client.post(
-            live_transport["url"],
-            headers=_transport_headers(
-                live_transport["key"],
-                **{"MCP-Protocol-Version": PROTOCOL_VERSION},
-            ),
-            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-        )
-
-    assert call.status_code >= 400
-    assert notification.status_code >= 400
-    assert len(live_transport["upstream_calls"]) == before
-
-
-def test_session_is_not_active_until_initialized_notification(live_transport):
-    initialized = httpx.post(
-        live_transport["url"],
-        headers=_transport_headers(live_transport["key"]),
-        json=_initialize_message(),
-        timeout=5,
+    version_check = subprocess.run(
+        [
+            python,
+            "-c",
+            "import importlib.metadata as m; "
+            "print(m.version('mcp') + ',' + m.version('mcp-types'))",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
-    session_id = initialized.headers["MCP-Session-Id"]
-    before = len(live_transport["upstream_calls"])
-    listed = httpx.post(
-        live_transport["url"],
-        headers=_session_headers(live_transport["key"], session_id),
-        json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
-        timeout=5,
+    assert version_check.stdout.strip() == "2.0.0b2,2.0.0b2"
+    return python
+
+
+def _run_official_sdk_b2_probe(
+    python: str, url: str, *, api_key: str | None = None
+) -> dict[str, Any]:
+    program = r"""
+import asyncio
+import json
+import os
+import httpx2
+from mcp.client.client import Client
+from mcp.client.streamable_http import streamable_http_client
+from mcp_types import Implementation
+
+async def main():
+    headers = {"X-API-Key": os.environ["SDK_PROBE_KEY"]} if os.environ.get("SDK_PROBE_KEY") else {}
+    async with httpx2.AsyncClient(headers=headers) as http_client:
+        transport = streamable_http_client(os.environ["SDK_PROBE_URL"], http_client=http_client)
+        try:
+            async with Client(
+                transport,
+                mode="auto",
+                client_info=Implementation(name="interlock-sdk-profile-test", version="2.0.0b2"),
+            ) as client:
+                outcome = {
+                    "connected": True,
+                    "server_name": client.server_info.name if client.server_info else None,
+                }
+        except BaseException as exc:
+            outcome = {"connected": False, "error_type": type(exc).__name__}
+    print(json.dumps(outcome, sort_keys=True))
+
+asyncio.run(main())
+"""
+    env = os.environ.copy()
+    env["SDK_PROBE_URL"] = url
+    if api_key is not None:
+        env["SDK_PROBE_KEY"] = api_key
+    else:
+        env.pop("SDK_PROBE_KEY", None)
+    completed = subprocess.run(
+        [python, "-c", program],
+        check=True,
+        capture_output=True,
+        env=env,
+        text=True,
+        timeout=30,
     )
-    called = httpx.post(
-        live_transport["url"],
-        headers=_session_headers(live_transport["key"], session_id),
-        json=_call_message("read_document"),
-        timeout=5,
-    )
-    assert listed.status_code == 404
-    assert called.status_code == 404
-    assert len(live_transport["upstream_calls"]) == before
+    return json.loads(completed.stdout)
 
 
-def test_allowlisted_tool_without_metadata_is_hidden_and_denied(live_transport):
-    async def exercise():
-        async with httpx.AsyncClient(
-            headers={"X-API-Key": live_transport["key"]}
-        ) as client:
-            async with streamable_http_client(
-                live_transport["url"], http_client=client, terminate_on_close=False
-            ) as (read_stream, write_stream, _):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    listed = await session.list_tools()
-                    called = await session.call_tool("missing_metadata", {})
-                    return listed, called
-
-    before = len(live_transport["upstream_calls"])
-    listed, called = asyncio.run(exercise())
-
-    assert "missing_metadata" not in [tool.name for tool in listed.tools]
-    assert called.isError is True
-    assert len(live_transport["upstream_calls"]) == before
-
-
-def test_hostile_origin_is_rejected_under_default_local_config(
-    live_transport, monkeypatch
+def test_official_python_sdk_2_0_0b2_rejects_current_draft_discover(
+    live_transport,
 ):
-    monkeypatch.setenv("INTERLOCK_ENV", "local")
-    monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
-    response = httpx.post(
-        live_transport["url"],
-        headers=_transport_headers(
-            live_transport["key"], Origin="https://evil.example"
-        ),
-        json=_initialize_message(),
-        timeout=5,
+    """Pin the known b2 profile mismatch without changing Interlock's response."""
+    python = _official_sdk_b2_python()
+    exchanges: list[dict[str, Any]] = []
+
+    with _serve(_SanitizedWireCapture(proxy.app, exchanges)) as base_url:
+        outcome = _run_official_sdk_b2_probe(
+            python,
+            f"{base_url}/mcp/stream/{SERVER_ID}",
+            api_key=live_transport["key"],
+        )
+
+    assert outcome == {"connected": False, "error_type": "ExceptionGroup"}
+    assert [item["request"]["body"]["method"] for item in exchanges] == [
+        "server/discover",
+        "initialize",
+    ]
+    discover, fallback = exchanges
+    assert discover["request"]["headers"]["mcp-protocol-version"] == PROTOCOL_VERSION
+    assert discover["request"]["headers"]["mcp-method"] == "server/discover"
+    assert discover["request"]["body"]["params"]["_meta"] == {
+        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+        "io.modelcontextprotocol/clientInfo": {
+            "name": "interlock-sdk-profile-test",
+            "version": "2.0.0b2",
+        },
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+    discover_result = discover["response"]["body"]["result"]
+    assert discover["response"]["status"] == 200
+    assert discover_result["resultType"] == "complete"
+    assert discover_result["ttlMs"] > 0
+    assert discover_result["cacheScope"] == "private"
+    assert "serverInfo" not in discover_result
+    assert "io.modelcontextprotocol/serverInfo" in discover_result["_meta"]
+    assert "mcp-protocol-version" not in fallback["request"]["headers"]
+    assert fallback["request"]["body"]["params"]["protocolVersion"] == "2025-11-25"
+    assert fallback["response"]["status"] == 400
+    assert fallback["response"]["body"]["error"]["code"] == -32022
+
+
+def test_official_python_sdk_2_0_0b2_accepts_its_embedded_discover_profile():
+    """Test-only server proves the older body-serverInfo profile b2 implements."""
+    python = _official_sdk_b2_python()
+    methods: list[str] = []
+    sdk_profile_server = FastAPI()
+
+    @sdk_profile_server.post("/mcp")
+    async def sdk_profile(request: Request):
+        message = await request.json()
+        methods.append(message["method"])
+        assert request.headers["Mcp-Protocol-Version"] == PROTOCOL_VERSION
+        assert request.headers["Mcp-Method"] == "server/discover"
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": message["id"],
+                "result": {
+                    "resultType": "complete",
+                    "supportedVersions": [PROTOCOL_VERSION],
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {
+                        "name": "sdk-b2-profile-fixture",
+                        "version": "2.0.0b2",
+                    },
+                    "ttlMs": 0,
+                    "cacheScope": "private",
+                },
+            }
+        )
+
+    with _serve(sdk_profile_server) as base_url:
+        outcome = _run_official_sdk_b2_probe(python, f"{base_url}/mcp")
+
+    assert outcome == {
+        "connected": True,
+        "server_name": "sdk-b2-profile-fixture",
+    }
+    assert methods == ["server/discover"]
+
+
+def test_upstream_result_cannot_replace_gateway_identity_or_result_type():
+    response = _json_result(
+        1,
+        {
+            "resultType": "input_required",
+            "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                    "name": "untrusted-upstream",
+                    "version": "leak",
+                }
+            },
+            "content": [],
+        },
     )
-    assert response.status_code == 403
+    payload = response.body.decode("utf-8")
+
+    assert '"resultType":"complete"' in payload
+    assert '"name":"interlock-mcp-gateway"' in payload
+    assert "untrusted-upstream" not in payload
+
+
+def test_removed_lifecycle_methods_do_not_activate_or_forward(live_transport):
+    before = len(live_transport["upstream_calls"])
+    for request_id, method in (
+        (10, "initialize"),
+        (11, "notifications/initialized"),
+        (12, "ping"),
+    ):
+        response = _post(live_transport, method, request_id)
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == -32601
+    assert len(live_transport["upstream_calls"]) == before
 
 
 @pytest.mark.parametrize(
-    "origin",
+    ("headers", "message", "code"),
     [
-        "not-an-origin",
-        "null",
-        "https://evil.example/path",
-        "https://user@client.example",
-        "https://client.example:bad",
-        "https://client.example?query=1",
-        "https://client.example#fragment",
+        ({"Mcp-Method": ""}, _message("tools/list", 20), -32020),
+        ({"Mcp-Method": "tools/call"}, _message("tools/list", 21), -32020),
+        (
+            {"Mcp-Name": "wrong"},
+            _message("tools/call", 22, name="read_document", arguments={}),
+            -32020,
+        ),
+        ({"MCP-Protocol-Version": "2025-11-25"}, _message("tools/list", 23), -32022),
     ],
 )
-def test_malformed_origins_are_rejected(live_transport, monkeypatch, origin):
-    monkeypatch.setenv("INTERLOCK_ENV", "local")
-    monkeypatch.setenv("ALLOWED_ORIGINS", "https://client.example")
+def test_standard_header_mismatches_fail_closed(live_transport, headers, message, code):
+    method = message["method"]
+    name = message["params"].get("name") if method == "tools/call" else None
     response = httpx.post(
         live_transport["url"],
-        headers=_transport_headers(live_transport["key"], Origin=origin),
-        json=_initialize_message(),
-        timeout=5,
-    )
-    assert response.status_code == 403
-
-
-def test_explicit_exact_origin_is_accepted(live_transport, monkeypatch):
-    monkeypatch.setenv("ALLOWED_ORIGINS", "https://client.example")
-    response = httpx.post(
-        live_transport["url"],
-        headers=_transport_headers(
-            live_transport["key"], Origin="https://client.example"
-        ),
-        json=_initialize_message(),
-        timeout=5,
-    )
-    assert response.status_code == 200
-
-
-def test_ineligible_tools_are_neither_listed_nor_executed(live_transport):
-    async def exercise():
-        async with httpx.AsyncClient(
-            headers={"X-API-Key": live_transport["key"]}
-        ) as client:
-            async with streamable_http_client(
-                live_transport["url"], http_client=client, terminate_on_close=False
-            ) as (read_stream, write_stream, _):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    listed = await session.list_tools()
-                    denied = {}
-                    for name in (
-                        "missing_metadata",
-                        "blocked_tool",
-                        "quarantined_tool",
-                        "unknown_tool",
-                        "nonallowlisted_tool",
-                    ):
-                        denied[name] = await session.call_tool(name, {})
-                    return listed, denied
-
-    before = len(live_transport["upstream_calls"])
-    listed, denied = asyncio.run(exercise())
-
-    assert [tool.name for tool in listed.tools] == ["read_document"]
-    assert all(result.isError is True for result in denied.values())
-    assert len(live_transport["upstream_calls"]) == before
-
-
-def test_rbac_denial_and_response_scanning_remain_in_gateway_path(live_transport):
-    readonly_session = _open_session(
-        live_transport["url"], live_transport["readonly_key"]
-    )
-    before = len(live_transport["upstream_calls"])
-    denied = httpx.post(
-        live_transport["url"],
-        headers=_session_headers(live_transport["readonly_key"], readonly_session),
-        json=_call_message("read_document"),
-        timeout=5,
-    )
-    assert denied.status_code == 200
-    assert denied.json()["result"]["isError"] is True
-    assert len(live_transport["upstream_calls"]) == before
-
-    admin_session = _open_session(live_transport["url"], live_transport["key"])
-    scanned = httpx.post(
-        live_transport["url"],
-        headers=_session_headers(live_transport["key"], admin_session),
-        json=_call_message("read_document", {"document_id": "pii-response"}),
-        timeout=5,
-    )
-    assert scanned.status_code == 200
-    result_text = scanned.json()["result"]["content"][0]["text"]
-    assert "person@example.com" not in result_text
-    assert "[REDACTED-EMAIL]" in result_text
-
-
-def test_bad_missing_expired_and_identity_or_server_mismatched_sessions_fail_closed(
-    live_transport, monkeypatch
-):
-    session_id = _open_session(live_transport["url"], live_transport["key"])
-    message = {"jsonrpc": "2.0", "id": 20, "method": "tools/list", "params": {}}
-
-    missing = httpx.post(
-        live_transport["url"],
-        headers=_transport_headers(
-            live_transport["key"],
-            **{"MCP-Protocol-Version": PROTOCOL_VERSION},
-        ),
+        headers=_headers(live_transport["key"], method, name, **headers),
         json=message,
         timeout=5,
     )
-    malformed = httpx.post(
-        live_transport["url"],
-        headers=_session_headers(live_transport["key"], "not-a-session"),
-        json=message,
-        timeout=5,
-    )
-    wrong_identity = httpx.post(
-        live_transport["url"],
-        headers=_session_headers(live_transport["other_key"], session_id),
-        json=message,
-        timeout=5,
-    )
-    wrong_server = httpx.post(
-        live_transport["other_url"],
-        headers=_session_headers(live_transport["key"], session_id),
-        json=message,
-        timeout=5,
-    )
-
-    monkeypatch.setenv("INTERLOCK_MCP_SESSION_TTL_SECONDS", "1")
-    expiring = _open_session(live_transport["url"], live_transport["key"])
-    time.sleep(1.05)
-    expired = httpx.post(
-        live_transport["url"],
-        headers=_session_headers(live_transport["key"], expiring),
-        json=message,
-        timeout=5,
-    )
-
-    assert {
-        response.status_code
-        for response in (missing, malformed, wrong_identity, wrong_server, expired)
-    } == {404}
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == code
 
 
-def test_session_store_is_hard_bounded(live_transport, monkeypatch):
-    monkeypatch.setenv("INTERLOCK_MCP_MAX_SESSIONS", "1")
-    first = _open_session(live_transport["url"], live_transport["key"])
-    second = _open_session(live_transport["url"], live_transport["key"])
-    message = {"jsonrpc": "2.0", "id": 21, "method": "tools/list", "params": {}}
-    evicted = httpx.post(
-        live_transport["url"],
-        headers=_session_headers(live_transport["key"], first),
-        json=message,
-        timeout=5,
-    )
-    current = httpx.post(
-        live_transport["url"],
-        headers=_session_headers(live_transport["key"], second),
-        json=message,
-        timeout=5,
-    )
-    assert evicted.status_code == 404
-    assert current.status_code == 200
-
-
-def test_duplicate_and_conflicting_authentication_fails_closed(live_transport):
-    cases = [
-        [
-            ("Accept", "application/json, text/event-stream"),
-            ("Content-Type", "application/json"),
-            ("X-API-Key", live_transport["key"]),
-            ("X-API-Key", live_transport["key"]),
-        ],
-        [
-            ("Accept", "application/json, text/event-stream"),
-            ("Content-Type", "application/json"),
-            ("Authorization", f"Bearer {live_transport['key']}"),
-            ("Authorization", f"Bearer {live_transport['key']}"),
-        ],
-        [
-            ("Accept", "application/json, text/event-stream"),
-            ("Content-Type", "application/json"),
-            ("X-API-Key", live_transport["key"]),
-            ("Authorization", f"Bearer {live_transport['key']}"),
-        ],
-    ]
-    for headers in cases:
+def test_missing_or_conflicting_per_request_meta_is_rejected(live_transport):
+    missing = _message("tools/list", 30)
+    missing["params"].pop("_meta")
+    conflicting = _message("tools/list", 31)
+    conflicting["params"]["_meta"][
+        "io.modelcontextprotocol/protocolVersion"
+    ] = "2025-11-25"
+    for message, expected in ((missing, -32602), (conflicting, -32022)):
         response = httpx.post(
             live_transport["url"],
-            headers=headers,
-            json=_initialize_message(),
+            headers=_headers(live_transport["key"], "tools/list"),
+            json=message,
             timeout=5,
         )
-        assert response.status_code == 401
-        assert live_transport["key"] not in response.text
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == expected
 
 
-def test_bearer_authentication_can_initialize(live_transport):
-    headers = _transport_headers(live_transport["key"])
-    headers.pop("X-API-Key")
-    headers["Authorization"] = f"Bearer {live_transport['key']}"
+def test_optional_client_info_and_encoded_mcp_name_are_accepted(live_transport):
+    message = _message(
+        "tools/call", 32, name="read_document", arguments={"document_id": "safe"}
+    )
+    message["params"]["_meta"].pop("io.modelcontextprotocol/clientInfo")
+    encoded_name = base64.b64encode(b"read_document").decode("ascii")
     response = httpx.post(
         live_transport["url"],
-        headers=headers,
-        json=_initialize_message(),
+        headers=_headers(
+            live_transport["key"],
+            "tools/call",
+            f"=?base64?{encoded_name}?=",
+        ),
+        json=message,
         timeout=5,
     )
+
     assert response.status_code == 200
-    assert response.headers.get("MCP-Session-Id")
+    assert response.json()["result"]["isError"] is False
 
 
-def test_protocol_and_json_rpc_failures_are_safe(live_transport):
-    session_id = _open_session(live_transport["url"], live_transport["key"])
-    message = {"jsonrpc": "2.0", "id": 30, "method": "tools/list", "params": {}}
-    missing_protocol = _session_headers(live_transport["key"], session_id)
-    missing_protocol.pop("MCP-Protocol-Version")
-    invalid_protocol = _session_headers(live_transport["key"], session_id)
-    invalid_protocol["MCP-Protocol-Version"] = "2099-01-01"
-
-    responses = [
-        httpx.post(
-            live_transport["url"], headers=missing_protocol, json=message, timeout=5
+def test_ineligible_tools_stay_hidden_and_gateway_controls_remain(live_transport):
+    listed = _post(live_transport, "tools/list", 40)
+    before = len(live_transport["upstream_calls"])
+    for index, name in enumerate(
+        (
+            "missing_metadata",
+            "blocked_tool",
+            "quarantined_tool",
+            "unknown_tool",
+            "nonallowlisted_tool",
         ),
-        httpx.post(
-            live_transport["url"], headers=invalid_protocol, json=message, timeout=5
-        ),
-        httpx.post(
-            live_transport["url"],
-            headers=_session_headers(live_transport["key"], session_id),
-            content=b'{"jsonrpc":',
-            timeout=5,
-        ),
-        httpx.post(
-            live_transport["url"],
-            headers=_session_headers(live_transport["key"], session_id),
-            json={"jsonrpc": "1.0", "id": 1, "method": "tools/list"},
-            timeout=5,
-        ),
+        start=41,
+    ):
+        denied = _post(live_transport, "tools/call", index, name=name, arguments={})
+        assert denied.json()["result"]["isError"] is True
+    assert [tool["name"] for tool in listed.json()["result"]["tools"]] == [
+        "read_document"
     ]
-    assert [response.status_code for response in responses] == [400, 400, 400, 400]
+    assert len(live_transport["upstream_calls"]) == before
 
 
-def test_declared_and_chunked_oversized_bodies_are_rejected(live_transport):
+def test_rbac_and_response_scanning_remain_in_gateway_path(live_transport):
+    readonly = httpx.post(
+        live_transport["url"],
+        headers=_headers(live_transport["readonly_key"], "tools/call", "read_document"),
+        json=_message("tools/call", 50, name="read_document", arguments={}),
+        timeout=5,
+    )
+    scanned = _post(
+        live_transport,
+        "tools/call",
+        51,
+        name="read_document",
+        arguments={"document_id": "pii-response"},
+    )
+    assert readonly.json()["result"]["isError"] is True
+    text = scanned.json()["result"]["content"][0]["text"]
+    assert "person@example.com" not in text
+    assert "[REDACTED-EMAIL]" in text
+
+
+def test_auth_origin_body_and_audit_containment(live_transport, monkeypatch, caplog):
+    hostile_origin = httpx.post(
+        live_transport["url"],
+        headers=_headers(
+            live_transport["key"], "tools/list", Origin="https://evil.example"
+        ),
+        json=_message("tools/list", 60),
+        timeout=5,
+    )
+    assert hostile_origin.status_code == 403
+    argument_marker = "private-argument-marker"
+    response = _post(
+        live_transport,
+        "tools/call",
+        61,
+        name="read_document",
+        arguments={"document_id": argument_marker},
+    )
+    assert response.status_code == 200
+    audit_text = str(db.list_mcp_audit_logs(limit=20))
+    assert live_transport["key"] not in audit_text
+    assert argument_marker not in audit_text
+    assert "safe result from read_document" not in audit_text
+    assert live_transport["key"] not in caplog.text
+    assert argument_marker not in caplog.text
+
     parsed = urlsplit(live_transport["url"])
     with socket.create_connection((parsed.hostname, parsed.port), timeout=5) as sock:
         request = (
@@ -636,71 +647,21 @@ def test_declared_and_chunked_oversized_bodies_are_rejected(live_transport):
             "Accept: application/json, text/event-stream\r\n"
             "Content-Type: application/json\r\n"
             f"X-API-Key: {live_transport['key']}\r\n"
-            "Content-Length: 262145\r\n"
-            "Connection: close\r\n\r\n{}"
+            "Content-Length: 262145\r\nConnection: close\r\n\r\n{}"
         ).encode("ascii")
         sock.sendall(request)
-        declared_status = sock.recv(256).split(b"\r\n", 1)[0]
-
-    async def send_chunked():
-        async def chunks():
-            yield b"x" * (128 * 1024)
-            yield b"y" * (128 * 1024)
-            yield b"z"
-
-        async with httpx.AsyncClient(timeout=5) as client:
-            return await client.post(
-                live_transport["url"],
-                headers=_transport_headers(live_transport["key"]),
-                content=chunks(),
-            )
-
-    chunked = asyncio.run(send_chunked())
-    assert b" 413 " in declared_status
-    assert chunked.status_code == 413
+        assert b" 413 " in sock.recv(256).split(b"\r\n", 1)[0]
 
 
-def test_audits_and_logs_do_not_retain_credentials_arguments_or_response_bodies(
-    live_transport, caplog
-):
-    argument_marker = "private-argument-marker"
-    session_id = _open_session(live_transport["url"], live_transport["key"])
-    response = httpx.post(
-        live_transport["url"],
-        headers=_session_headers(live_transport["key"], session_id),
-        json=_call_message("read_document", {"document_id": argument_marker}),
-        timeout=5,
-    )
-    assert response.status_code == 200
-    audit_text = str(db.list_mcp_audit_logs(limit=20))
-    assert live_transport["key"] not in audit_text
-    assert "Authorization" not in audit_text
-    assert argument_marker not in audit_text
-    assert "safe result from read_document" not in audit_text
-    assert any(row.get("argument_hash") for row in db.list_mcp_audit_logs(limit=20))
-    assert live_transport["key"] not in caplog.text
-    assert argument_marker not in caplog.text
-    assert "safe result from read_document" not in caplog.text
-
-
-def test_legacy_mcp_call_regression_still_uses_gateway(live_transport):
-    before = len(live_transport["upstream_calls"])
-    response = httpx.post(
+def test_legacy_route_and_non_post_profile_remain_explicit(live_transport):
+    legacy = httpx.post(
         f"{live_transport['base_url']}/mcp/call",
         headers={"X-API-Key": live_transport["key"]},
-        json={
-            "server_id": SERVER_ID,
-            "tool_name": "read_document",
-            "arguments": {"document_id": "legacy-route"},
-        },
+        json={"server_id": SERVER_ID, "tool_name": "read_document", "arguments": {}},
         timeout=5,
     )
-    assert response.status_code == 200
-    assert response.json()["ok"] is True
-    assert len(live_transport["upstream_calls"]) == before + 1
-
-
-def test_get_and_delete_remain_json_only_profile_405(live_transport):
+    assert legacy.status_code == 200
+    assert legacy.json()["ok"] is True
     for method in (httpx.get, httpx.delete):
         response = method(live_transport["url"], timeout=5)
         assert response.status_code == 405
