@@ -215,6 +215,17 @@ def _mcp_post_kwargs(
     return kwargs
 
 
+def _require_modern_json_response(response: Any, profile: str) -> None:
+    if profile != MCP_UPSTREAM_2026_PROFILE:
+        return
+    content_type = str(response.headers.get("content-type") or "").split(";", 1)[0]
+    if content_type.strip().lower() != "application/json":
+        raise MCPUpstreamResponseError(
+            "unsupported_upstream_response_media_type",
+            "MCP 2026 upstream returned a response media type Interlock does not support.",
+        )
+
+
 def _upstream_protocol_profile(server: Optional[Dict[str, Any]]) -> str:
     profile = str(
         (server or {}).get("upstream_protocol_profile") or MCP_UPSTREAM_LEGACY_PROFILE
@@ -270,14 +281,69 @@ def _upstream_request(
     )
 
 
-def _complete_upstream_result(data: Any, request_id: str, profile: str) -> Any:
+def _validate_modern_result_metadata(result: Dict[str, Any], method: str) -> None:
+    meta = result.get("_meta")
+    if meta is not None and not isinstance(meta, dict):
+        raise MCPUpstreamResponseError(
+            "upstream_invalid_metadata",
+            "MCP 2026 upstream returned invalid result metadata.",
+        )
+    if isinstance(meta, dict):
+        server_info = meta.get("io.modelcontextprotocol/serverInfo")
+        if server_info is not None and (
+            not isinstance(server_info, dict)
+            or not isinstance(server_info.get("name"), str)
+            or not isinstance(server_info.get("version"), str)
+        ):
+            raise MCPUpstreamResponseError(
+                "upstream_invalid_server_identity",
+                "MCP 2026 upstream returned invalid server identity metadata.",
+            )
+
+    if method not in {"server/discover", "tools/list"}:
+        return
+    ttl_ms = result.get("ttlMs")
+    cache_scope = result.get("cacheScope")
+    if (
+        isinstance(ttl_ms, bool)
+        or not isinstance(ttl_ms, int)
+        or ttl_ms < 0
+        or cache_scope not in {"public", "private"}
+    ):
+        raise MCPUpstreamResponseError(
+            "upstream_invalid_cache_hint",
+            "MCP 2026 upstream returned invalid or missing cache hints.",
+        )
+
+
+def _complete_upstream_result(
+    data: Any, request_id: str, profile: str, method: str
+) -> Any:
     if not isinstance(data, dict):
         raise MCPUpstreamResponseError(
             "upstream_invalid_envelope",
             "MCP server returned a non-object JSON-RPC envelope.",
         )
+    if profile == MCP_UPSTREAM_2026_PROFILE and (
+        data.get("jsonrpc") != "2.0" or data.get("id") != request_id
+    ):
+        raise MCPUpstreamResponseError(
+            "upstream_invalid_envelope",
+            "MCP server returned an invalid JSON-RPC response envelope.",
+        )
     if "error" in data:
         upstream_error = data.get("error")
+        if profile == MCP_UPSTREAM_2026_PROFILE and (
+            "result" in data
+            or not isinstance(upstream_error, dict)
+            or isinstance(upstream_error.get("code"), bool)
+            or not isinstance(upstream_error.get("code"), int)
+            or not isinstance(upstream_error.get("message"), str)
+        ):
+            raise MCPUpstreamResponseError(
+                "upstream_invalid_envelope",
+                "MCP server returned an invalid JSON-RPC error envelope.",
+            )
         captured = upstream_error if isinstance(upstream_error, dict) else {}
         raise MCPUpstreamResponseError(
             "upstream_jsonrpc_error",
@@ -309,6 +375,7 @@ def _complete_upstream_result(data: Any, request_id: str, profile: str) -> Any:
                 "unsupported_upstream_result_type",
                 "MCP 2026 upstream did not return a complete result.",
             )
+        _validate_modern_result_metadata(result, method)
     return result
 
 
@@ -565,7 +632,9 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
 
 
 # ── MCP Server Discovery ──────────────────────────────────────────────────────
-async def _read_bounded_json(client, server_url, payload, headers, max_bytes: int):
+async def _read_bounded_json(
+    client, server_url, payload, headers, max_bytes: int, profile: str
+):
     """Stream an upstream JSON-RPC response, refusing it past ``max_bytes``.
 
     Used only when a caller supplies a byte budget, so the default discovery
@@ -575,6 +644,7 @@ async def _read_bounded_json(client, server_url, payload, headers, max_bytes: in
         "POST", server_url, **_mcp_post_kwargs(payload, headers)
     ) as resp:
         resp.raise_for_status()
+        _require_modern_json_response(resp, profile)
         declared = resp.headers.get("content-length")
         if declared and declared.isdigit() and int(declared) > max_bytes:
             return None
@@ -632,6 +702,7 @@ async def _fetch_tool_list_payload(
                         payload,
                         headers,
                         int(max_response_bytes),
+                        profile,
                     )
                     if data is None:
                         raise MCPUpstreamResponseError(
@@ -643,8 +714,9 @@ async def _fetch_tool_list_payload(
                         server_url, **_mcp_post_kwargs(payload, headers)
                     )
                     resp.raise_for_status()
+                    _require_modern_json_response(resp, profile)
                     data = resp.json()
-                return _complete_upstream_result(data, request_id, profile)
+                return _complete_upstream_result(data, request_id, profile, method)
 
             if profile == MCP_UPSTREAM_2026_PROFILE:
                 discovered = await send("server/discover")
@@ -1483,6 +1555,7 @@ async def proxy_mcp_tool_call(
             mark_authority_downstream_attempt()
             resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
             resp.raise_for_status()
+            _require_modern_json_response(resp, profile)
             if hasattr(resp, "content") and resp.content == b"":
                 raise MCPUpstreamResponseError(
                     "upstream_empty_response", "MCP server returned an empty response."
@@ -1493,7 +1566,9 @@ async def proxy_mcp_tool_call(
                 raise MCPUpstreamResponseError(
                     "upstream_invalid_json", "MCP server returned malformed JSON."
                 ) from exc
-            result_payload = _complete_upstream_result(data, request_id, profile)
+            result_payload = _complete_upstream_result(
+                data, request_id, profile, "tools/call"
+            )
             if profile == MCP_UPSTREAM_2026_PROFILE and not isinstance(
                 result_payload.get("content"), list
             ):
