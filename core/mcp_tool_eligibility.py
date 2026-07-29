@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from core import db
+from core.mcp_2026_protocol import (
+    MCP2026ProtocolError,
+    uses_parameter_headers,
+    validate_tool_schemas,
+)
 
 
 @dataclass(frozen=True)
@@ -17,14 +22,8 @@ class ToolEligibility:
 
 
 def uses_mcp_parameter_headers(value: Any) -> bool:
-    """Reject a capability until the gateway can mirror it without leaking it."""
-    if isinstance(value, dict):
-        if "x-mcp-header" in value:
-            return True
-        return any(uses_mcp_parameter_headers(child) for child in value.values())
-    if isinstance(value, list):
-        return any(uses_mcp_parameter_headers(child) for child in value)
-    return False
+    """Compatibility wrapper for callers that only need annotation presence."""
+    return uses_parameter_headers(value)
 
 
 def evaluate_streamable_tool(server_id: str, tool_name: str) -> ToolEligibility:
@@ -71,7 +70,15 @@ def evaluate_streamable_tool(server_id: str, tool_name: str) -> ToolEligibility:
         return ToolEligibility(
             False, "tool_metadata_untrusted", server=server, stored_tool=stored
         )
-    if uses_mcp_parameter_headers(raw["inputSchema"]):
+    try:
+        validate_tool_schemas(raw)
+    except MCP2026ProtocolError:
+        return ToolEligibility(
+            False, "invalid_mcp_tool_schema", server=server, stored_tool=stored
+        )
+    if uses_mcp_parameter_headers(raw["inputSchema"]) and (
+        server.get("upstream_protocol_profile") != "2026-07-28"
+    ):
         return ToolEligibility(
             False,
             "unsupported_mcp_parameter_header",

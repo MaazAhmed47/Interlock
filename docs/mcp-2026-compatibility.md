@@ -1,7 +1,7 @@
 # MCP 2026 compatibility boundary
 
-Interlock implements a deliberately narrow subset of the final MCP
-`2026-07-28` wire profile. This is not a claim of full MCP 2026 compliance. The
+Interlock implements and tests a scoped MCP `2026-07-28` core tools profile.
+This is not a claim of full MCP 2026 conformance. The
 profile is externally evaluable only for gateway-mediated calls; direct client
 connections to an upstream MCP server bypass Interlock entirely.
 
@@ -36,32 +36,38 @@ for the server. None is a production dependency.
 
 ## Support matrix
 
+The normative requirement and test mapping is in
+[`mcp-2026-requirements-matrix.md`](mcp-2026-requirements-matrix.md).
+
 | Direction | Capability | Status | Exact boundary |
 |---|---|---|---|
-| Client to Interlock | Streamable HTTP POST with one JSON-RPC request | Supported | JSON responses only at `/mcp/stream/{server_id}`; Origin, authentication, rate limit, body-size, protocol header, method header, name header, and per-request `_meta` are checked. |
+| Client to Interlock | Streamable HTTP POST with one JSON-RPC request | Supported | JSON responses only at `/mcp/stream/{server_id}`; Origin, authentication, rate limit, body-size, duplicate protocol headers, method/name/parameter headers, and per-request `_meta` are checked. |
 | Client to Interlock | `clientInfo` request metadata | Recommended, optional | Both official SDKs supplied it in tested traffic. Interlock does not require it and validates it when supplied. Protocol version and client capabilities remain required in every request `_meta`. |
 | Client to Interlock | `server/discover` | Supported | Advertises only `2026-07-28` and the tools capability. Server identity is stamped in result `_meta`; required private cache hints are included. |
 | Client to Interlock | `tools/list` | Supported | Returns only verified, active, allowlisted, stored tool definitions that are callable through the gateway. Private cache hints are returned. |
 | Client to Interlock | `tools/call` | Supported | Calls traverse stored-boundary eligibility, authorization, inspection, RBAC, drift holds, upstream forwarding, response scanning, rate limiting, and receipt/audit behavior. |
+| Client to Interlock | JSON Schema and tool arguments | Supported, scoped | Tool input schemas use JSON Schema 2020-12 by default. Invalid schemas, unsupported dialects, and external references fail closed. Arguments are validated before execution; declared structured output is validated before release. |
 | Client to Interlock | Unknown or unavailable tool | Blocked | Returns a generic JSON-RPC `-32602` protocol error without exposing whether the tool was missing, blocked, quarantined, inactive, or excluded for unsupported metadata. No upstream call occurs. |
 | Client to Interlock | Required client capability / `-32021` | Unsupported / unimplemented | Interlock currently declares no tool requiring a client capability. Missing-capability behavior and JSON-RPC `-32021` are therefore not exercised by the current tool surface or SDK probes and are not claimed as supported. |
 | Client to Interlock | Protocol sessions, `initialize`, `notifications/initialized`, GET lifecycle, DELETE lifecycle | Blocked | No session is created. Removed or unsupported RPC methods return HTTP 404 with JSON-RPC `-32601`; GET and DELETE return 405. |
-| Client to Interlock | SSE response streams and resumability | Unsupported | Interlock currently chooses JSON responses only. It does not advertise resumability and never emits `Mcp-Session-Id` or `Last-Event-ID`. |
+| Client to Interlock | SSE response streams and resumability | Not exposed | Interlock chooses JSON responses for its inbound endpoint. It does not advertise resumability and never emits `Mcp-Session-Id` or `Last-Event-ID`. |
 | Client to Interlock | MRTR / `input_required` | Unsupported | Not advertised; no retry state or client-input driver is implemented. |
 | Client to Interlock | `subscriptions/listen` and list-change subscriptions | Unsupported | Not advertised; requests fail closed as unsupported methods. |
 | Client to Interlock | Tasks and other extensions | Unsupported | Not advertised; requests fail closed as unsupported methods. |
 | Interlock to upstream | Existing bare JSON-RPC upstream behavior | Supported | Registration default is the explicit `legacy` profile. Existing single-response `tools/list` and `tools/call` payloads remain unchanged. This does not claim complete legacy Streamable HTTP session support. |
 | Interlock to upstream | Explicit `2026-07-28` profile | Supported, scoped | Admin registration pins the profile. `server/discover`, `tools/list`, and `tools/call` carry the protocol version header, method/name headers, and per-request metadata. A declared modern server is never silently downgraded. |
 | Interlock to upstream | 2026 discovery negotiation | Supported, pinned | Interlock requires `server/discover` to return `resultType: complete`, the pinned version, tools capability, required cache hints, a valid JSON-RPC envelope, and valid optional identity metadata before accepting `tools/list`. |
-| Interlock to upstream | Paginated `tools/list` | Blocked | A non-empty `nextCursor` rejects the observation so Interlock cannot record a partial surface as complete. Pagination is future work. |
-| Interlock to upstream | SSE response parsing | Blocked | Requests send the required dual-value `Accept` header, but non-JSON responses are rejected. SSE parsing is future work, so full transport conformance is unproven. |
+| Interlock to upstream | Paginated `tools/list` | Blocked | Any present `nextCursor`, including an empty string or null, rejects the observation so Interlock cannot record a partial surface as complete. Pagination is future work. |
+| Interlock to upstream | SSE response parsing | Supported, bounded | Modern requests send the required dual-value `Accept` header and accept JSON or bounded SSE. Interlock does not expose notification content, rejects server requests or unrelated responses, and requires one matching final response. Resumability is not implemented. |
 | Interlock to upstream | 2026 MRTR / `input_required` | Blocked | Only `resultType: complete` is accepted. No retry or downgrade occurs. |
-| Both gateway directions | `x-mcp-header` tool parameters | Blocked | Tools containing the annotation are excluded from the inbound advertised surface, rejected from candidate baselines, and denied before upstream invocation. Correct validation and forwarding are future work. |
+| Both gateway directions | `x-mcp-header` tool parameters | Supported for explicit modern upstreams | Interlock accepts only valid statically reachable string, boolean, or safe-integer bindings. It validates client headers against the approved schema/body, then reconstructs downstream headers; arbitrary raw headers are never forwarded. Invalid definitions and all legacy-profile annotations remain blocked. |
 | Both gateway directions | Tasks, subscriptions, roots, prompts, resources, logging, sampling, elicitation | Future | Not part of this release scope and not advertised as supported. |
 
 ## Legacy pagination containment
 
-Any upstream `tools/list` response with a non-empty `nextCursor` is rejected.
+Any upstream `tools/list` response containing `nextCursor` is rejected, including
+an empty string or null. MCP defines an empty cursor as a cursor, not an end
+marker.
 Interlock will not record page one as a complete approved surface.
 
 This applies to legacy and `2026-07-28` upstream profiles and affects
@@ -84,16 +90,21 @@ behavior and avoids silently treating previously registered servers as modern.
 
 ## Claim boundary
 
-The proven claim is: Interlock can expose a scoped stateless MCP 2026 tool
-endpoint and can mediate single-page, JSON-response discovery and complete tool
-calls to an upstream explicitly pinned to the same profile. Authorization,
-approved-boundary comparison, holds, response scanning, and receipt generation
-remain on the Interlock gateway path.
+The proven claim is: Interlock implements a tested scoped MCP 2026-07-28 core
+tools profile for its gateway path. It exposes stateless `server/discover`,
+`tools/list`, and `tools/call`; mediates single-page discovery and complete tool
+calls to an explicitly pinned modern upstream over JSON or bounded SSE; validates
+JSON Schema 2020-12 inputs and declared structured outputs; and safely supports
+valid `x-mcp-header` primitive bindings. Authorization, approved-boundary
+comparison, holds, response scanning, and receipt generation remain on the
+Interlock gateway path.
 
-The following claims remain unproven: full MCP 2026 compliance, compatibility
-with SDK versions other than those pinned below, SSE interoperability,
-paginated surface baselining, MRTR, subscriptions, tasks, extension
-negotiation, or protection of connections that bypass the gateway.
+The following claims remain unproven or explicitly unsupported: full MCP 2026
+conformance, compatibility with SDK versions other than those pinned below,
+paginated surface baselining, MRTR, resources, prompts, elicitation, progress
+delivery, cancellation streams, subscriptions, Tasks, MCP Apps, other extension
+negotiation, the standard OAuth authorization framework, or protection of
+connections that bypass the gateway.
 
 ## Tested SDK interoperability
 
@@ -102,7 +113,8 @@ negotiation, or protection of connections that bypass the gateway.
 | Python `mcp==2.0.0`, `mode="auto"` discovery | SDK client to Interlock | `server/discover`, `tools/list`, `tools/call` | Pass. The SDK parsed `_meta` server identity, required `resultType`, and cache hints. The successful probe emitted no fallback traffic. |
 | Python `mcp==2.0.0`, `mode="2026-07-28"` | SDK client to Interlock | `tools/list`, `tools/call`; rejection path | Pass. This SDK's explicit pin adopts the version without a discovery round trip. A protocol rejection did not produce `initialize`. |
 | TypeScript client `2.0.0`, `versionNegotiation.mode.pin = "2026-07-28"` | SDK client to Interlock | `server/discover`, `tools/list`, `tools/call`; rejection path | Pass. The explicit pin discovered and parsed Interlock's identity; a protocol rejection did not produce `initialize`. |
-| TypeScript server `2.0.0`, `createMcpHandler(..., { legacy: "reject", responseMode: "json" })` | Interlock to SDK server | `server/discover`, `tools/list`, `tools/call` | Pass with an explicit Interlock `2026-07-28` upstream profile. Exact modern headers and request metadata were observed. |
+| Python `mcp==2.0.0` and TypeScript client `2.0.0` | SDK client to Interlock to modern upstream | Valid `x-mcp-header` tool listing and call | Pass. Each SDK supplied the declared primitive parameter header; Interlock validated it and rebuilt the downstream header from the approved schema/body. |
+| TypeScript server `2.0.0`, `createMcpHandler(..., { legacy: "reject", responseMode })` | Interlock to SDK server | `server/discover`, `tools/list`, `tools/call` over forced JSON and forced SSE | Pass with an explicit Interlock `2026-07-28` upstream profile. Exact modern headers and request metadata were observed in both response modes. |
 | Conformance `0.2.0-alpha.10`, `server-stateless` | Alpha conformance client to Interlock | Supported stateless subset | Supporting evidence only: 21 checks succeeded; 4 checks failed because Interlock does not declare the scenario's diagnostic tools. One absent tool is the scenario's required-client-capability probe; because Interlock declares no capability-gated tool, `-32021` remains unimplemented and unexercised. Five subscription checks were skipped because subscriptions are unsupported. This is not a conformance-suite pass. |
 | Python `mcp==2.0.0b2` | Historical only | `server/discover` | Known superseded-beta failure: b2 required top-level `serverInfo`. Interlock still provides no compatibility shim. This result does not qualify the stable `2.0.0` result above. |
 
@@ -110,3 +122,28 @@ These probes do not cover arbitrary servers, every SDK configuration, direct
 upstream connections, or unsupported protocol features. The official SDKs are
 test-only executables in isolated environments; they are not imported by
 Interlock at runtime.
+
+## Reproduce the pinned SDK probes
+
+Create the SDK environments outside the repository. The commands below pin the
+SDK packages under test; the repository requirements remain unchanged.
+
+```bash
+python -m venv /tmp/interlock-mcp-sdk-python
+/tmp/interlock-mcp-sdk-python/bin/python -m pip download --no-deps --only-binary=:all: --dest /tmp/interlock-mcp-wheel mcp==2.0.0
+echo "1cb4c75d2d2c7b8c1d756355e5d82a39f2822cc7f13e22a2051d7ca3592349d6  /tmp/interlock-mcp-wheel/mcp-2.0.0-py3-none-any.whl" | sha256sum --check
+/tmp/interlock-mcp-sdk-python/bin/python -m pip install /tmp/interlock-mcp-wheel/mcp-2.0.0-py3-none-any.whl
+mkdir -p /tmp/interlock-mcp-sdk-node
+npm install --prefix /tmp/interlock-mcp-sdk-node --ignore-scripts --save-exact @modelcontextprotocol/client@2.0.0 @modelcontextprotocol/server@2.0.0
+export INTERLOCK_MCP_SDK_PYTHON=/tmp/interlock-mcp-sdk-python/bin/python
+export INTERLOCK_MCP_SDK_NODE_ROOT=/tmp/interlock-mcp-sdk-node
+python -m pytest tests/test_streamable_mcp_integration.py tests/test_mcp_upstream_profiles.py -q
+```
+
+On PowerShell, use disposable directories of your choice and set the same
+variables with `$env:INTERLOCK_MCP_SDK_PYTHON` and
+`$env:INTERLOCK_MCP_SDK_NODE_ROOT`. Before running pytest, verify the downloaded
+wheel with `Get-FileHash -Algorithm SHA256`, and verify both installed npm
+package versions and the `integrity` values recorded above in the generated
+`package-lock.json`. A skipped SDK-marked test is not a passing interoperability
+probe.

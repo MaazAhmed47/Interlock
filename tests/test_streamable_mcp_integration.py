@@ -340,12 +340,46 @@ def live_transport(tmp_path_factory):
     proxy._key_record_cache.clear()
 
     upstream_calls: list[dict[str, Any]] = []
+    upstream_headers: list[dict[str, str]] = []
     upstream = FastAPI()
 
     @upstream.post("/mcp")
     async def upstream_call(request: Request):
         message = await request.json()
-        upstream_calls.append(message)
+        upstream_calls.append(
+            {
+                "method": message.get("method"),
+                "has_id": "id" in message,
+                "modern_meta_present": (
+                    "io.modelcontextprotocol/protocolVersion"
+                    in message.get("params", {}).get("_meta", {})
+                ),
+            }
+        )
+        arguments = message.get("params", {}).get("arguments", {})
+        tenant = arguments.get("tenant") if isinstance(arguments, dict) else None
+        parameter_header = request.headers.get("mcp-param-tenant")
+        upstream_headers.append(
+            {
+                "protocol_matches_meta": (
+                    request.headers.get("mcp-protocol-version")
+                    == message.get("params", {})
+                    .get("_meta", {})
+                    .get("io.modelcontextprotocol/protocolVersion")
+                ),
+                "method_matches_body": (
+                    request.headers.get("mcp-method") == message.get("method")
+                ),
+                "name_matches_body": (
+                    request.headers.get("mcp-name")
+                    == message.get("params", {}).get("name")
+                ),
+                "parameter_header_present": parameter_header is not None,
+                "parameter_header_matches_body": (
+                    parameter_header is not None and parameter_header == tenant
+                ),
+            }
+        )
         name = message.get("params", {}).get("name", "")
         document_id = message.get("params", {}).get("arguments", {}).get("document_id")
         text = (
@@ -357,6 +391,10 @@ def live_transport(tmp_path_factory):
             "content": [{"type": "text", "text": text}],
             "isError": False,
         }
+        if "io.modelcontextprotocol/protocolVersion" in message.get("params", {}).get(
+            "_meta", {}
+        ):
+            result["resultType"] = "complete"
         if document_id == "spoof-identity":
             result.update(
                 {
@@ -441,6 +479,8 @@ def live_transport(tmp_path_factory):
                 "key": key,
                 "readonly_key": readonly_key,
                 "upstream_calls": upstream_calls,
+                "upstream_headers": upstream_headers,
+                "upstream_url": upstream_url,
             }
     db.unregister_mcp_server(SERVER_ID)
     db.unregister_mcp_server(SECOND_SERVER_ID)
@@ -550,6 +590,35 @@ def _run_sdk_probe(
     return json.loads(completed.stdout)
 
 
+def _configure_modern_parameter_header_tool(live_transport: dict[str, Any]) -> None:
+    definition = {
+        "name": "read_document",
+        "description": "Read one tenant document.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tenant": {"type": "string", "x-mcp-header": "Tenant"},
+                "document_id": {"type": "string"},
+            },
+            "required": ["tenant", "document_id"],
+        },
+    }
+    assert db.unregister_mcp_server(SERVER_ID)
+    assert db.register_mcp_server(
+        SERVER_ID,
+        {
+            "url": f"{live_transport['upstream_url']}/mcp",
+            "allowed_tools": ["read_document"],
+            "upstream_protocol_profile": PROTOCOL_VERSION,
+            "environment": "non_production",
+        },
+    )
+    assert db.verify_mcp_server(SERVER_ID)
+    db.upsert_mcp_tool_metadata(
+        SERVER_ID, definition, normalize_tool_metadata(definition)
+    )
+
+
 def _assert_modern_sdk_exchange(exchange: dict[str, Any], method: str) -> None:
     request = exchange["request"]
     assert request["headers"]["accept"] == "application/json, text/event-stream"
@@ -647,6 +716,41 @@ def test_official_typescript_sdk_2_0_0_pinned_discovery_and_operations(
         exchanges, ("server/discover", "tools/list", "tools/call"), strict=True
     ):
         _assert_modern_sdk_exchange(exchange, method)
+
+
+def test_official_sdk_clients_mirror_valid_parameter_headers(live_transport):
+    python = _official_sdk_python_2()
+    node, node_root = _official_sdk_node_2()
+    _configure_modern_parameter_header_tool(live_transport)
+
+    python_outcome = _run_sdk_probe(
+        [
+            python,
+            str(Path(__file__).parent / "sdk_interop/python_client_probe.py"),
+            PROTOCOL_VERSION,
+            "parameter-header",
+        ],
+        live_transport["url"],
+        live_transport["key"],
+    )
+    typescript_outcome = _run_sdk_probe(
+        [
+            node,
+            str(Path(__file__).parent / "sdk_interop/typescript_client_probe.mjs"),
+            "parameter-header",
+        ],
+        live_transport["url"],
+        live_transport["key"],
+        node_root=node_root,
+    )
+
+    assert python_outcome["connected"] is True
+    assert typescript_outcome["connected"] is True
+    assert [
+        headers["parameter_header_matches_body"]
+        for headers in live_transport["upstream_headers"]
+    ] == [True, True]
+    assert "internal" not in json.dumps(live_transport["upstream_headers"])
 
 
 def test_official_sdk_explicit_pins_do_not_fall_back_after_protocol_rejection():
@@ -848,10 +952,13 @@ def test_missing_or_conflicting_per_request_meta_is_rejected(live_transport):
     unsupported["params"]["_meta"][
         "io.modelcontextprotocol/protocolVersion"
     ] = "2025-11-25"
+    invalid_key = _message("tools/list", 33)
+    invalid_key["params"]["_meta"]["bad prefix/value"] = "opaque"
     for message, expected, version in (
         (missing, -32602, PROTOCOL_VERSION),
         (conflicting, -32020, PROTOCOL_VERSION),
         (unsupported, -32022, "2025-11-25"),
+        (invalid_key, -32602, PROTOCOL_VERSION),
     ):
         response = httpx.post(
             live_transport["url"],
@@ -865,6 +972,130 @@ def test_missing_or_conflicting_per_request_meta_is_rejected(live_transport):
         )
         assert response.status_code == 400
         assert response.json()["error"]["code"] == expected
+
+
+def test_non_standard_json_numbers_are_parse_errors(live_transport):
+    response = httpx.post(
+        live_transport["url"],
+        headers=_headers(live_transport["key"], "tools/list"),
+        content=(
+            b'{"jsonrpc":"2.0","id":34,"method":"tools/list","params":'
+            b'{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28",'
+            b'"io.modelcontextprotocol/clientCapabilities":{},"unknown":NaN}}}'
+        ),
+        timeout=5,
+    )
+    assert response.status_code == 400
+    assert response.json() == {
+        "jsonrpc": "2.0",
+        "id": None,
+        "error": {"code": -32700, "message": "Parse error"},
+    }
+
+
+def test_duplicate_required_headers_malformed_ids_and_unissued_cursors_fail_closed(
+    live_transport,
+):
+    duplicate_headers = list(_headers(live_transport["key"], "tools/list").items()) + [
+        ("MCP-Protocol-Version", PROTOCOL_VERSION)
+    ]
+    duplicate = httpx.post(
+        live_transport["url"],
+        headers=duplicate_headers,
+        json=_message("tools/list", 33),
+        timeout=5,
+    )
+    assert duplicate.status_code == 400
+    assert duplicate.json()["error"]["code"] == -32020
+
+    malformed = _message("tools/list", 34)
+    malformed["id"] = ["attacker-controlled-id"]
+    malformed_response = httpx.post(
+        live_transport["url"],
+        headers=_headers(live_transport["key"], "tools/list"),
+        json=malformed,
+        timeout=5,
+    )
+    assert malformed_response.status_code == 400
+    assert malformed_response.json()["id"] is None
+    assert "attacker-controlled-id" not in malformed_response.text
+
+    cursor = _message("tools/list", 35, cursor="never-issued")
+    cursor_response = httpx.post(
+        live_transport["url"],
+        headers=_headers(live_transport["key"], "tools/list"),
+        json=cursor,
+        timeout=5,
+    )
+    assert cursor_response.json()["error"] == {
+        "code": -32602,
+        "message": "Invalid params",
+    }
+
+
+def test_invalid_tool_arguments_are_held_before_upstream_execution(live_transport):
+    before = len(live_transport["upstream_calls"])
+    response = _post(
+        live_transport,
+        "tools/call",
+        36,
+        name="read_document",
+        arguments={"document_id": 123},
+    )
+    assert response.status_code == 200
+    assert response.json()["result"]["isError"] is True
+    assert len(live_transport["upstream_calls"]) == before
+
+
+def test_valid_parameter_header_is_checked_then_rebuilt_for_modern_upstream(
+    live_transport,
+):
+    _configure_modern_parameter_header_tool(live_transport)
+
+    valid = httpx.post(
+        live_transport["url"],
+        headers=_headers(
+            live_transport["key"],
+            "tools/call",
+            "read_document",
+            **{"Mcp-Param-Tenant": "internal"},
+        ),
+        json=_message(
+            "tools/call",
+            37,
+            name="read_document",
+            arguments={"tenant": "internal", "document_id": "safe"},
+        ),
+        timeout=5,
+    )
+    assert valid.status_code == 200
+    assert valid.json()["result"]["isError"] is False
+    assert (
+        live_transport["upstream_headers"][-1]["parameter_header_matches_body"] is True
+    )
+
+    before = len(live_transport["upstream_calls"])
+    mismatch = httpx.post(
+        live_transport["url"],
+        headers=_headers(
+            live_transport["key"],
+            "tools/call",
+            "read_document",
+            **{"Mcp-Param-Tenant": "wrong"},
+        ),
+        json=_message(
+            "tools/call",
+            38,
+            name="read_document",
+            arguments={"tenant": "internal", "document_id": "safe"},
+        ),
+        timeout=5,
+    )
+    assert mismatch.status_code == 400
+    assert mismatch.json()["error"]["code"] == -32020
+    assert "internal" not in mismatch.text
+    assert "wrong" not in mismatch.text
+    assert len(live_transport["upstream_calls"]) == before
 
 
 def test_optional_client_info_and_encoded_mcp_name_are_accepted(live_transport):

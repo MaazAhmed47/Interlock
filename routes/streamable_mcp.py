@@ -6,9 +6,6 @@ calls. It does not advertise protocol features it cannot enforce.
 
 from __future__ import annotations
 
-import base64
-import binascii
-import json
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
@@ -21,6 +18,14 @@ from core import db
 from core.http_body import TOO_LARGE, read_bounded_body
 from core.http_credentials import single_api_credential
 from core.mcp_gateway import proxy_mcp_tool_call
+from core.mcp_2026_protocol import (
+    MCP2026ProtocolError,
+    decode_header_value,
+    parse_json_bytes,
+    validate_parameter_headers,
+    validate_request_meta,
+    validate_schema_instance,
+)
 from core.mcp_tool_eligibility import evaluate_streamable_tool, list_streamable_tools
 
 router = APIRouter()
@@ -142,38 +147,17 @@ def _request_meta(message: dict[str, Any]) -> Optional[dict[str, Any]]:
     meta = params.get("_meta")
     if not isinstance(meta, dict):
         return None
-    version = meta.get("io.modelcontextprotocol/protocolVersion")
-    client_info = meta.get("io.modelcontextprotocol/clientInfo")
-    capabilities = meta.get("io.modelcontextprotocol/clientCapabilities")
-    if (
-        not isinstance(version, str)
-        or not version
-        or not isinstance(capabilities, dict)
-    ):
-        return None
-    if client_info is not None and (
-        not isinstance(client_info, dict)
-        or not isinstance(client_info.get("name"), str)
-        or not client_info["name"]
-        or not isinstance(client_info.get("version"), str)
-        or not client_info["version"]
-    ):
+    try:
+        validate_request_meta(meta)
+    except MCP2026ProtocolError:
         return None
     return meta
 
 
 def _decode_mcp_header_value(value: str) -> Optional[str]:
-    if not (value.startswith("=?base64?") and value.endswith("?=")):
-        if value != value.strip() or any(
-            character != "\t" and not 0x20 <= ord(character) <= 0x7E
-            for character in value
-        ):
-            return None
-        return value
-    encoded = value[len("=?base64?") : -len("?=")]
     try:
-        return base64.b64decode(encoded, validate=True).decode("utf-8")
-    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return decode_header_value(value)
+    except MCP2026ProtocolError:
         return None
 
 
@@ -181,7 +165,12 @@ def _header_error(
     request: Request, message: dict[str, Any], method: str
 ) -> Optional[JSONResponse]:
     request_id = message.get("id")
-    version = request.headers.get("mcp-protocol-version")
+    versions = request.headers.getlist("mcp-protocol-version")
+    methods = request.headers.getlist("mcp-method")
+    names = request.headers.getlist("mcp-name")
+    if len(versions) != 1 or len(methods) != 1:
+        return _json_error(request_id, -32020, "Header mismatch", status_code=400)
+    version = versions[0]
     params = message.get("params")
     meta = params.get("_meta") if isinstance(params, dict) else None
     body_version = (
@@ -199,18 +188,18 @@ def _header_error(
             status_code=400,
             data={"supported": [_PROTOCOL_VERSION], "requested": version},
         )
-    if request.headers.get("mcp-method") != method:
+    if methods[0] != method:
         return _json_error(request_id, -32020, "Header mismatch", status_code=400)
     params = message.get("params", {})
     if method == "tools/call":
         expected_name = params.get("name") if isinstance(params, dict) else None
-        raw_name = request.headers.get("mcp-name")
+        raw_name = names[0] if len(names) == 1 else None
         header_name = (
             _decode_mcp_header_value(raw_name) if raw_name is not None else None
         )
         if not isinstance(expected_name, str) or header_name != expected_name:
             return _json_error(request_id, -32020, "Header mismatch", status_code=400)
-    elif request.headers.get("mcp-name") is not None:
+    elif names:
         return _json_error(request_id, -32020, "Header mismatch", status_code=400)
     return None
 
@@ -253,8 +242,8 @@ async def streamable_http_post(server_id: str, request: Request):
     if body_error is not None:
         return body_error
     try:
-        message = json.loads(body or b"")
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        message = parse_json_bytes(body or b"")
+    except MCP2026ProtocolError:
         return _json_error(None, -32700, "Parse error", status_code=400)
     if not isinstance(message, dict) or message.get("jsonrpc") != _JSON_RPC_VERSION:
         return _json_error(None, -32600, "Invalid Request", status_code=400)
@@ -268,7 +257,10 @@ async def streamable_http_post(server_id: str, request: Request):
         or isinstance(request_id, bool)
         or not isinstance(request_id, (str, int))
     ):
-        return _json_error(request_id, -32600, "Invalid Request", status_code=400)
+        safe_id = request_id if isinstance(request_id, (str, int)) else None
+        if isinstance(request_id, bool):
+            safe_id = None
+        return _json_error(safe_id, -32600, "Invalid Request", status_code=400)
     header_error = _header_error(request, message, method)
     if header_error is not None:
         return header_error
@@ -291,6 +283,9 @@ async def streamable_http_post(server_id: str, request: Request):
             },
         )
     if method == "tools/list":
+        params = message.get("params", {})
+        if "cursor" in params:
+            return _json_error(request_id, -32602, "Invalid params")
         return _json_result(
             request_id,
             {
@@ -314,6 +309,29 @@ async def streamable_http_post(server_id: str, request: Request):
                 -32602,
                 "Unknown or unavailable tool",
             )
+        stored_definition = (eligibility.stored_tool or {}).get(
+            "raw_tool_definition", {}
+        )
+        try:
+            validate_schema_instance(stored_definition.get("inputSchema"), arguments)
+        except MCP2026ProtocolError:
+            return _json_result(
+                request_id,
+                {
+                    "content": [
+                        {"type": "text", "text": "Interlock denied the tool call."}
+                    ],
+                    "isError": True,
+                },
+            )
+        try:
+            validate_parameter_headers(
+                stored_definition.get("inputSchema"),
+                arguments,
+                request.headers.raw,
+            )
+        except MCP2026ProtocolError:
+            return _json_error(request_id, -32020, "Header mismatch", status_code=400)
         result = await proxy_mcp_tool_call(
             server_id=server_id,
             tool_name=tool_name,
@@ -333,6 +351,8 @@ async def streamable_http_post(server_id: str, request: Request):
             "tool_not_active",
             "tool_quarantined",
             "unsupported_mcp_parameter_header",
+            "invalid_mcp_tool_schema",
+            "invalid_mcp_tool_arguments",
         }:
             return _json_error(
                 request_id,

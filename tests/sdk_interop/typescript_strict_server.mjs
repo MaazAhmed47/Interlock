@@ -7,6 +7,7 @@ const require = createRequire(
 );
 const { McpServer, createMcpHandler } = require("@modelcontextprotocol/server");
 const { z } = require("zod");
+const responseMode = process.env.SDK_RESPONSE_MODE === "sse" ? "sse" : "json";
 
 const handler = createMcpHandler(
   () => {
@@ -27,7 +28,7 @@ const handler = createMcpHandler(
     );
     return server;
   },
-  { legacy: "reject", responseMode: "json" },
+  { legacy: "reject", responseMode },
 );
 
 const server = http.createServer(async (incoming, outgoing) => {
@@ -45,20 +46,45 @@ const server = http.createServer(async (incoming, outgoing) => {
   });
   const parsed = body.length ? JSON.parse(body.toString("utf8")) : null;
   if (parsed?.method) {
-    const selectedHeaders = {};
-    for (const name of [
-      "accept",
-      "content-type",
-      "mcp-protocol-version",
-      "mcp-method",
-      "mcp-name",
-    ]) {
-      if (request.headers.has(name))
-        selectedHeaders[name] = request.headers.get(name);
-    }
-    process.stderr.write(
-      `${JSON.stringify({ headers: selectedHeaders, body: parsed })}\n`,
-    );
+    const params = parsed.params ?? {};
+    const meta = params._meta ?? {};
+    const accept = (request.headers.get("accept") ?? "")
+      .split(",")
+      .map((value) => value.trim().split(";", 1)[0]);
+    const capture = {
+      headers: {
+        acceptsJsonAndSse:
+          accept.includes("application/json") &&
+          accept.includes("text/event-stream"),
+        contentTypeIsJson:
+          request.headers.get("content-type") === "application/json",
+        protocolMatchesMeta:
+          request.headers.get("mcp-protocol-version") ===
+          meta["io.modelcontextprotocol/protocolVersion"],
+        methodMatchesBody: request.headers.get("mcp-method") === parsed.method,
+        nameMatchesBody:
+          parsed.method === "tools/call"
+            ? request.headers.get("mcp-name") === params.name
+            : !request.headers.has("mcp-name"),
+      },
+      body: {
+        jsonrpc: parsed.jsonrpc,
+        hasId: Object.hasOwn(parsed, "id"),
+        idType: typeof parsed.id,
+        method: parsed.method,
+        meta: {
+          protocolVersion: meta["io.modelcontextprotocol/protocolVersion"],
+          clientInfoIsObject:
+            typeof meta["io.modelcontextprotocol/clientInfo"] === "object" &&
+            meta["io.modelcontextprotocol/clientInfo"] !== null,
+          clientCapabilitiesIsObject:
+            typeof meta["io.modelcontextprotocol/clientCapabilities"] ===
+              "object" &&
+            meta["io.modelcontextprotocol/clientCapabilities"] !== null,
+        },
+      },
+    };
+    process.stderr.write(`${JSON.stringify(capture)}\n`);
   }
   const response = await handler.fetch(request);
   outgoing.statusCode = response.status;
