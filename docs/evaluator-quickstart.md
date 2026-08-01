@@ -1,5 +1,26 @@
 # Interlock self-guided evaluator journey
 
+**You do not need to read the main README, and you do not need to know Interlock
+already.** This page is the complete offline evaluation, start to finish.
+
+## What this proof shows
+
+Every command below advances one four-stage chain:
+
+**approved boundary → changed boundary → held call → verified receipt**
+
+| Stage | Plain meaning |
+| --- | --- |
+| Approved boundary | You record what a tool is *allowed* to be: what it reads, what it touches, whether it can reach outside your network. |
+| Changed boundary | The same tool, under the same name, later offers a *wider* boundary. Interlock notices at re-discovery. |
+| Held call | The next call to that tool is stopped at Interlock's gateway, before it reaches the tool. |
+| Verified receipt | Interlock produces a tamper-evident record of that decision, and re-checks it against its own stored audit chain. |
+
+Interlock is not checking whether a tool exists or looks scary. It is checking
+one thing: **is this still the tool you approved?**
+
+Each numbered step below repeats which stage of the chain it covers.
+
 This is a bounded, self-guided **non-production** evaluation of one Interlock
 MCP trust-boundary workflow. It uses the real Interlock gateway APIs, drift
 classifier, quarantine state, audit chain, receipt builder, and receipt verifier
@@ -42,19 +63,10 @@ installation, cloud account, or MCP credential is required.
 
 ## 1. Clone a clean checkout
 
-For the merged/main version of this guide, clone the public repository's
-default branch:
+Clone the public repository's default branch:
 
 ```bash
 git clone https://github.com/MaazAhmed47/Interlock.git
-cd Interlock/demo/offline
-```
-
-Reviewer-only before merge: clone the review branch explicitly. This is not the
-normal evaluator path:
-
-```bash
-git clone --branch agent/evaluator-journey-v2 --single-branch https://github.com/MaazAhmed47/Interlock.git Interlock
 cd Interlock/demo/offline
 ```
 
@@ -107,6 +119,12 @@ mkdir -p evaluator-artifacts
 
 ## 3. Start Interlock and the local MCP example
 
+**What this proof shows here:** nothing yet. This only starts the pieces the
+chain needs — Interlock's gateway, the bundled example MCP server whose tool
+will change, and the dashboard. The chain
+(approved boundary → changed boundary → held call → verified receipt) runs in
+step 4.
+
 ```bash
 docker compose up -d --build
 ```
@@ -133,6 +151,11 @@ sets `INTERLOCK_OFFLINE_DEMO=true`; it is not production configuration.
 
 ## 4. Run the complete evaluator proof
 
+**What this proof shows here:** the whole chain, in one command.
+Steps `[2/7]` establish the **approved boundary**, `[4/7]` introduces the
+**changed boundary**, `[5/7]` produces the **held call**, and `[6/7]` produces
+the **verified receipt**.
+
 Run this in the same shell used for setup. The standard runner command is
 unchanged on every platform:
 
@@ -152,7 +175,15 @@ Expected terminal milestones:
 [7/7] Review artifacts and choose approve, reject, or rebaseline
       result=tool_quarantined forwarded=false upstream_execution_delta=0
       receipt_verified=true artifacts=evaluator-artifacts
+      held_call=read_file (call 2 of 2 through the gateway this run)
+      read evaluator-artifacts/summary.md for the labelled decision facts
 ```
+
+Two calls go through the gateway in this run. **Call 1** uses the approved
+read-only boundary and executes normally. **Call 2** is the one that gets held:
+it asks the same `read_file` tool to also send the document to an external
+recipient and forward its attachments. Whenever this guide says "the held call",
+it means call 2.
 
 Any nonzero exit is a failed evaluation. Do not treat a partial artifact
 directory as proof; the runner removes incomplete packs and resets its mock
@@ -162,13 +193,19 @@ phase/counters on failure.
 
 The runner writes `demo/offline/evaluator-artifacts/` on the host:
 
+**Start with `summary.md`.** It labels, in plain language, the six things this
+evaluation is meant to tell you: the **approved boundary**, the **observed
+boundary**, the **material change** between them, the **exact held call**, the
+**operator decision** in front of you, and **what receipt verification proves**.
+The JSON files are the machine-readable form of the same facts.
+
 | File | Evidence |
 | --- | --- |
+| `summary.md` | The six labelled decision facts, plus the claim boundary. Read this first. |
 | `approved-state.json` | Normalized approved boundary and its real surface hash. |
-| `changed-state.json` | Stored quarantine decision, severity, material change types, and observed surface hash. |
-| `held-call.json` | Gateway hold plus before/after MCP execution counts; delta must be zero. |
-| `receipt-summary.json` | Sanitized receipt decision, integrity hash, chain status, verifier checks, and surface hashes. |
-| `summary.md` | Short human interpretation and claim boundary. |
+| `changed-state.json` | Observed boundary, plain-language material change, stored quarantine decision, severity, change types, and observed surface hash. |
+| `held-call.json` | Which call was held (`held_call`), where it was stopped, why, plus before/after MCP execution counts; delta must be zero. |
+| `receipt-summary.json` | Sanitized receipt decision, integrity hash, chain status, verifier checks, surface hashes, and explicit `verification_proves` / `verification_does_not_prove` lists. |
 | `feedback.md` | The seven evaluator comprehension questions. |
 | `manifest.json` | SHA-256 digest for every other evidence file. |
 
@@ -177,11 +214,47 @@ arguments, upstream URLs, raw server identifiers, receipt binding identity,
 local absolute paths, and raw tool schemas. Hashes and normalized classifications
 remain so an evaluator can distinguish the approved and observed evidence.
 
-Optional UI review: open <http://localhost:8080/dashboard/>. The terminal proof
-is complete without the UI. If prompted in dashboard Settings, use API URL
-`http://localhost:8001` and the explicitly local key `lf-demo-offline-key`.
+### Optional UI review
+
+The terminal proof is complete without the UI. Nothing below is required.
+
+Open <http://localhost:8080/dashboard/>. If prompted in dashboard Settings, use
+API URL `http://localhost:8001` and the explicitly local key
+`lf-demo-offline-key`. Those two fields are all this evaluation uses.
+
+**Browser SSO is optional and is not used by this offline evaluation.** The
+Settings page labels it **Browser SSO (optional)**, and for this run it will
+report `Optional — not configured` alongside a **Supabase Auth Provider
+(optional)** section with an empty Supabase URL and publishable key. That is the
+expected state for this run. Leave those fields blank — Supabase and OIDC are
+needed only for Browser SSO operator sign-in on a deployed dashboard, and this
+offline evaluation uses API-key access instead.
 
 ## 6. Choose the operator action
+
+**What this proof shows here:** what you do *after* the chain has run. The held
+call and verified receipt told you a boundary moved; this step records your
+answer to it.
+
+**You are the operator for this decision.** There is no separate approver to
+escalate to in this evaluation — the choice is yours, and all three options are
+real writes against Interlock's control plane.
+
+| Choice | What it means in plain language | Changes the approved boundary? |
+| --- | --- | --- |
+| `reject` | Reject keeps the tool held. It leaves the approved boundary unchanged and alters nothing upstream. | No |
+| `approve` | Approve accepts the changed boundary for this one tool. That tool's new, wider surface becomes the approved one. | Yes, one tool |
+| `rebaseline` | Rebaseline accepts the whole current server surface, every tool on it, as the new approved boundary. | Yes, whole server |
+
+**If you are unsure whether the change was deliberate, choose `reject`.** A
+vendor or an internal team widening a tool on purpose looks identical, at the
+gateway, to a tool being tampered with — Interlock reports the change, it does
+not guess the intent. Reject is reversible and non-destructive: the tool simply
+stays held. Go confirm with whoever owns the tool, and if the change was
+intended, run `approve` or `rebaseline` afterwards. You can re-hold an approved
+tool later with the same quarantine action `reject` uses, so the stored state is
+recoverable either way. What asking afterwards cannot recover is the window
+between approving and asking, during which the widened tool was allowed to run.
 
 Review the evidence first, then run exactly one command.
 
@@ -205,7 +278,8 @@ docker compose run --rm evaluator-runner decide rebaseline
 
 These are not simulated buttons. They call Interlock's existing authenticated
 approve, quarantine, or compare-and-swap rebaseline APIs. The selected result is
-written as `operator-action.json`, and `manifest.json` is refreshed. “Reject” is
+written as `operator-action.json` — including a plain-language `meaning` and a
+`changes_approved_boundary` flag — and `manifest.json` is refreshed. “Reject” is
 the evaluator language for the product's keep/mark-quarantined action; there is
 no separate `/reject` endpoint.
 
@@ -229,6 +303,10 @@ not publish evaluator artifacts in a public issue.
 
 ## 9. Clean up
 
+**What this proof shows here:** nothing further — the chain is already complete
+and verified. Teardown removes the local services; your evidence pack stays on
+disk.
+
 ```bash
 docker compose down -v
 ```
@@ -244,6 +322,13 @@ production configuration is changed by this journey.
   to a public interface for this evaluation.
 - **A build or pull fails:** verify Docker can reach its image/package sources.
   Runtime is intentionally isolated after images are built.
+- **The build fails with `failed to solve` and `parent snapshot ... does not
+  exist`:** this is a local Docker BuildKit cache fault, not an Interlock
+  failure — it happens before any Interlock service starts. To fix it,
+  restart Docker Desktop (or the Docker daemon on Linux) and retry the same
+  build command. Do not run a global `docker system prune`, and do not use
+  Docker's factory reset, to clear this; both remove unrelated local images,
+  containers, and volumes that have nothing to do with this evaluation.
 - **Seeder did not finish successfully:** run
   `docker compose logs gateway mcp-mock seeder`, then reset with
   `docker compose down -v` before retrying.

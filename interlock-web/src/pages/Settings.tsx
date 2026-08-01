@@ -132,7 +132,7 @@ export default function Settings() {
   return (
     <div className="dash-main">
       <div className="dash-page-header">
-        <div><h1>Settings</h1><p>API connection, customer key, and browser SSO configuration</p></div>
+        <div><h1>Settings</h1><p>API connection, customer key, and optional browser SSO configuration</p></div>
       </div>
 
       <div className="settings-grid">
@@ -156,15 +156,20 @@ export default function Settings() {
         </div>
 
         <div className="settings-section">
-          <div className="settings-section-title">Browser SSO</div>
+          <div className="settings-section-title">Browser SSO (optional)</div>
+          <div className="form-hint" style={{ marginTop: 0, marginBottom: 14 }}>
+            Optional. Supabase or generic OIDC is needed only for Browser SSO operator sign-in.
+            The local and offline evaluator flows use API-key access — the Customer API Key in
+            Gateway Connection — and do not require Browser SSO.
+          </div>
           <div className="sso-status-card">
             <ShieldCheck size={18} />
             <div>
-              <strong>{session ? 'Signed in' : supabaseStatus.configured ? 'Supabase Auth ready' : oidcStatus.configured ? 'Generic OIDC ready' : 'Configuration needed'}</strong>
-              <span>{session ? (session.profile.email || session.profile.subject || 'Admin session active') : 'Supabase Auth is primary. Generic OIDC remains available for Okta/Auth0/Azure later.'}</span>
+              <strong>{session ? 'Signed in' : supabaseStatus.configured ? 'Supabase Auth ready' : oidcStatus.configured ? 'Generic OIDC ready' : 'Optional — not configured'}</strong>
+              <span>{session ? (session.profile.email || session.profile.subject || 'Admin session active') : 'Optional operator sign-in for a deployed dashboard. Supabase Auth is primary. Generic OIDC remains available for Okta/Auth0/Azure later.'}</span>
             </div>
           </div>
-          {!supabaseStatus.configured && <div className="inline-note">Supabase missing: {supabaseStatus.missing.join(', ')}</div>}
+          {!supabaseStatus.configured && <div className="inline-note">Supabase is needed only for Browser SSO. Not configured: {supabaseStatus.missing.join(', ')}</div>}
           {!oidcStatus.configured && <div className="inline-note">Generic OIDC (optional) — not configured. Add authorization + token endpoints to enable Okta/Auth0/Azure.</div>}
           {oidcError && <ErrorCard message={oidcError} />}
           <div className="login-actions">
@@ -175,7 +180,11 @@ export default function Settings() {
       </div>
 
       <div className="settings-section settings-wide">
-        <div className="settings-section-title">Supabase Auth Provider</div>
+        <div className="settings-section-title">Supabase Auth Provider (optional)</div>
+        <div className="form-hint" style={{ marginTop: 0, marginBottom: 14 }}>
+          Needed only for Browser SSO. Leave these fields blank for API-key access, including the
+          local and offline evaluator.
+        </div>
         <div className="oidc-grid">
           <div className="form-group">
             <label className="form-label">Supabase URL</label>
@@ -206,7 +215,11 @@ export default function Settings() {
       </div>
 
       <div className="settings-section settings-wide">
-        <div className="settings-section-title">OIDC Provider</div>
+        <div className="settings-section-title">OIDC Provider (optional)</div>
+        <div className="form-hint" style={{ marginTop: 0, marginBottom: 14 }}>
+          Needed only for Browser SSO. Leave these fields blank for API-key access, including the
+          local and offline evaluator.
+        </div>
         <div className="form-group">
           <label className="form-label">Issuer URL</label>
           <div className="input-action-row">

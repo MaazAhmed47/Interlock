@@ -14,6 +14,11 @@ RUNNER = ROOT / "demo" / "offline" / "evaluator_journey.py"
 FEEDBACK = ROOT / "demo" / "offline" / "EVALUATOR_FEEDBACK.md"
 GUIDE = ROOT / "docs" / "evaluator-quickstart.md"
 COMPOSE = ROOT / "demo" / "offline" / "docker-compose.yml"
+SETTINGS_PAGE = ROOT / "interlock-web" / "src" / "pages" / "Settings.tsx"
+
+# The dashboard status an unconfigured evaluator actually sees. The guide quotes
+# it verbatim, so both sides must keep saying the same thing.
+SSO_OPTIONAL_STATUS = "Optional — not configured"
 
 QUESTIONS = [
     "What did you think Interlock was checking before you ran it?",
@@ -24,6 +29,17 @@ QUESTIONS = [
     "Where did the process confuse or slow you down?",
     "Would you keep Interlock in this workflow? Why or why not?",
 ]
+
+PROOF_CHAIN = "approved boundary → changed boundary → held call → verified receipt"
+PROOF_CHAIN_MARKER = "What this proof shows"
+
+# Every command the guide asks a first-time evaluator to run, in guide order.
+EVALUATOR_COMMANDS = (
+    "docker compose up -d --build",
+    "docker compose run --rm evaluator-runner run",
+    "docker compose run --rm evaluator-runner decide reject",
+    "docker compose down -v",
+)
 
 
 def _load_runner():
@@ -43,6 +59,7 @@ class FakeEvaluatorClient:
         receipt_suffix="a",
         fail_on_changed_discovery=False,
         approved_metadata=None,
+        changed_metadata=None,
     ):
         self.phase = 1
         self.upstream_calls = 0
@@ -56,6 +73,22 @@ class FakeEvaluatorClient:
                 "side_effect": "read_only",
                 "data_classes": ["user_content", "internal"],
                 "externality": "internal",
+                "source": "mcp_annotations",
+            }
+        )
+        # Interlock overwrites normalized_metadata with the observed surface on
+        # drift and keeps the approved one in previous_metadata, so the changed
+        # inventory row is the authoritative observed boundary. These values are
+        # the ones a real offline run observes: `side_effect` stays `read_only`
+        # in this scenario, so the double must not imply an escalation there.
+        self.changed_metadata = (
+            changed_metadata
+            if changed_metadata is not None
+            else {
+                "effects": ["read", "export"],
+                "side_effect": "read_only",
+                "data_classes": ["pii", "user_content"],
+                "externality": "external",
                 "source": "mcp_annotations",
             }
         )
@@ -113,7 +146,11 @@ class FakeEvaluatorClient:
                                 "externality_expanded",
                             ]
                         ),
-                        "normalized_metadata": self.approved_metadata,
+                        "normalized_metadata": (
+                            self.approved_metadata
+                            if self.phase == 1
+                            else self.changed_metadata
+                        ),
                     }
                 ]
             }
@@ -416,6 +453,250 @@ def test_manifest_hashes_every_evidence_file_except_itself(tmp_path):
     }
     for name, digest in manifest["files"].items():
         assert digest == hashlib.sha256((tmp_path / name).read_bytes()).hexdigest()
+
+
+def test_feedback_template_points_at_the_labelled_evidence(tmp_path):
+    runner = _load_runner()
+    runner.run_journey(FakeEvaluatorClient(), tmp_path)
+
+    feedback = (tmp_path / "feedback.md").read_text(encoding="utf-8")
+    assert "summary.md" in feedback
+    # It must point at the artifact pack it is copied into, not at its source
+    # directory in the repository, and must not hardcode a call number that a
+    # future extra gateway call would silently falsify.
+    assert "evaluator-artifacts" in feedback
+    assert '"Held call" section' in feedback
+    assert "call 2 of 2" not in feedback
+
+
+def test_changed_state_records_the_observed_boundary_beside_the_approved_one(
+    tmp_path,
+):
+    runner = _load_runner()
+    runner.run_journey(FakeEvaluatorClient(), tmp_path)
+
+    approved = json.loads((tmp_path / "approved-state.json").read_text())
+    changed = json.loads((tmp_path / "changed-state.json").read_text())
+    assert approved["boundary"] == {
+        "data_classes": ["internal", "user_content"],
+        "effects": ["read"],
+        "externality": "internal",
+        "side_effect": "read_only",
+    }
+    assert changed["boundary"] == {
+        "data_classes": ["pii", "user_content"],
+        "effects": ["export", "read"],
+        "externality": "external",
+        "side_effect": "read_only",
+    }
+    assert changed["boundary_source"] == approved["boundary_source"]
+    assert "external export" in changed["material_change"]
+    # Only widening that actually happened may be reported: this scenario does
+    # not escalate side_effect, so the plain-language line must not say it did.
+    assert "no longer read_only" not in changed["material_change"]
+
+
+def test_material_change_reports_a_read_only_tool_that_becomes_mutating():
+    runner = _load_runner()
+
+    described = runner._material_change_summary(
+        {"side_effect": "read_only"}, {"side_effect": "destructive"}
+    )
+
+    assert "no longer read_only" in described
+    assert "destructive" in described
+
+
+def test_held_call_artifact_identifies_which_call_was_held(tmp_path):
+    runner = _load_runner()
+    client = FakeEvaluatorClient()
+    runner.run_journey(client, tmp_path)
+
+    # Compare the artifact against the calls the client actually received, so
+    # this cannot pass by agreeing with a constant in the runner.
+    observed = [entry for entry in client.requests if entry[2] == "/mcp/call"]
+    held = json.loads((tmp_path / "held-call.json").read_text())["held_call"]
+    assert held["tool"] == "read_file"
+    assert held["calls_attempted_through_gateway"] == len(observed)
+    assert held["call_index"] == len(observed)
+    assert held["held_at"] == "interlock_gateway_before_upstream_tools_call"
+    assert "external" in held["requested_beyond_approved_boundary"]
+    assert "quarantined" in held["held_because"]
+    # The documented journey sends exactly two gateway calls and holds the
+    # second. Adding another one must fail here and force the guide, the
+    # summary prose, and this expectation to be updated together.
+    assert len(observed) == 2
+
+
+def test_held_call_facts_are_derived_from_observed_calls_not_a_constant():
+    runner = _load_runner()
+
+    two_calls = [{"held": False}, {"held": True}]
+    assert runner._held_call_facts(two_calls) == (2, 2)
+    # An extra call after the held one must renumber the total, not stay at 2.
+    assert runner._held_call_facts(two_calls + [{"held": False}]) == (2, 3)
+    # An extra call before it must move the held index too.
+    assert runner._held_call_facts([{"held": False}] + two_calls) == (3, 3)
+
+
+def test_held_call_facts_reject_runs_without_exactly_one_held_call():
+    runner = _load_runner()
+
+    with pytest.raises(runner.JourneyError):
+        runner._held_call_facts([{"held": False}, {"held": False}])
+    with pytest.raises(runner.JourneyError):
+        runner._held_call_facts([{"held": True}, {"held": True}])
+
+
+def test_receipt_summary_states_what_verification_proves_and_does_not(tmp_path):
+    runner = _load_runner()
+    runner.run_journey(FakeEvaluatorClient(), tmp_path)
+
+    receipt = json.loads((tmp_path / "receipt-summary.json").read_text())
+    proves = " ".join(receipt["verification_proves"])
+    does_not = " ".join(receipt["verification_does_not_prove"])
+    assert "integrity hash" in proves
+    assert "chain" in proves
+    assert "this exact call" in proves
+    assert "outside Interlock's gateway" in does_not
+    assert "externally signed" in does_not
+
+
+def test_summary_labels_every_fact_a_newcomer_must_extract(tmp_path):
+    runner = _load_runner()
+    runner.run_journey(FakeEvaluatorClient(), tmp_path)
+
+    summary = (tmp_path / "summary.md").read_text(encoding="utf-8")
+    for heading in (
+        "## Approved boundary",
+        "## Observed boundary",
+        "## Material change",
+        "## Held call",
+        "## Operator decision",
+        "## What receipt verification proves",
+    ):
+        assert heading in summary, heading
+    assert PROOF_CHAIN in summary
+    # The exact held call, stated so an evaluator never has to ask "which call".
+    assert "call 2 of the 2" in summary
+    # Approved and observed must both be legible, and legibly different.
+    assert "externality=internal" in summary
+    assert "externality=external" in summary
+    assert "effects=read;" in summary
+    assert "effects=export,read;" in summary
+    assert "You are the operator" in summary
+
+
+@pytest.mark.parametrize(
+    ("action", "changes_boundary", "phrase"),
+    [
+        ("reject", False, "stays held"),
+        ("approve", True, "this one tool"),
+        ("rebaseline", True, "whole current server surface"),
+    ],
+)
+def test_operator_action_artifact_explains_the_choice_plainly(
+    tmp_path, action, changes_boundary, phrase
+):
+    runner = _load_runner()
+    client = FakeEvaluatorClient()
+    runner.run_journey(client, tmp_path)
+
+    runner.apply_operator_action(client, tmp_path, action)
+
+    outcome = json.loads((tmp_path / "operator-action.json").read_text())
+    assert outcome["changes_approved_boundary"] is changes_boundary
+    assert phrase in outcome["meaning"]
+
+
+def test_runner_final_output_names_the_held_call(tmp_path, capsys):
+    runner = _load_runner()
+    runner.run_journey(FakeEvaluatorClient(), tmp_path)
+
+    printed = capsys.readouterr().out
+    assert "held_call=read_file" in printed
+    assert "call 2 of 2" in printed
+    assert "summary.md" in printed
+
+
+def test_every_evaluator_command_is_preceded_by_the_proof_chain():
+    guide = GUIDE.read_text(encoding="utf-8")
+    assert PROOF_CHAIN in guide
+
+    cursor = 0
+    for command in EVALUATOR_COMMANDS:
+        index = guide.index(command, cursor)
+        assert PROOF_CHAIN_MARKER in guide[cursor:index], command
+        cursor = index
+
+
+def test_guide_separates_reject_from_approve_and_rebaseline_in_plain_language():
+    guide = GUIDE.read_text(encoding="utf-8")
+    for text in (
+        "You are the operator for this decision.",
+        "Reject keeps the tool held",
+        "leaves the approved boundary unchanged",
+        "Reject is reversible",
+        "Approve accepts the changed boundary for this one tool",
+        "Rebaseline accepts the whole current server surface",
+        "confirm with whoever owns the tool",
+    ):
+        assert text in guide, text
+
+
+def test_guide_marks_browser_sso_optional_and_unused_by_this_evaluation():
+    guide = GUIDE.read_text(encoding="utf-8")
+    assert "Browser SSO" in guide
+    assert SSO_OPTIONAL_STATUS in guide
+    assert "not used by this offline evaluation" in guide
+    assert "Leave those fields blank" in guide
+
+
+def test_dashboard_settings_labels_browser_sso_optional():
+    """The cold run stalled here: the page read as if setup were required."""
+    settings = SETTINGS_PAGE.read_text(encoding="utf-8")
+    assert "Browser SSO (optional)" in settings
+    assert SSO_OPTIONAL_STATUS in settings
+    # "Configuration needed" announced a blocking setup step that does not exist.
+    assert "Configuration needed" not in settings
+
+
+def test_dashboard_settings_scopes_supabase_and_oidc_to_browser_sso():
+    settings = SETTINGS_PAGE.read_text(encoding="utf-8")
+    assert "Supabase or generic OIDC is needed only for Browser SSO" in settings
+    assert "Supabase is needed only for Browser SSO." in settings
+    assert "Supabase Auth Provider (optional)" in settings
+    assert "OIDC Provider (optional)" in settings
+
+
+def test_dashboard_settings_points_evaluators_at_api_key_access():
+    settings = SETTINGS_PAGE.read_text(encoding="utf-8")
+    assert "do not require Browser SSO" in settings
+    assert "local and offline evaluator" in settings
+
+
+def test_guide_and_dashboard_agree_on_the_browser_sso_status_string():
+    """Guide prose and dashboard copy drifted apart before; keep them bound."""
+    assert SSO_OPTIONAL_STATUS in GUIDE.read_text(encoding="utf-8")
+    assert SSO_OPTIONAL_STATUS in SETTINGS_PAGE.read_text(encoding="utf-8")
+
+
+def test_guide_recovers_buildkit_snapshot_failures_without_global_docker_resets():
+    guide = GUIDE.read_text(encoding="utf-8")
+    assert "parent snapshot" in guide
+    assert "restart Docker Desktop" in guide
+    assert "Do not run a global `docker system prune`" in guide
+    assert "factory reset" in guide
+
+
+def test_guide_stands_alone_and_the_readme_links_to_it_above_the_fold():
+    guide = GUIDE.read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "You do not need to read the main README" in guide
+    assert readme.index("docs/evaluator-quickstart.md") < readme.index(
+        "## Current limits"
+    )
 
 
 def test_published_guide_is_complete_and_claim_limited():

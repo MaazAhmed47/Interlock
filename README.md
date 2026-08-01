@@ -18,7 +18,14 @@ Current source metadata is `0.2.0-alpha.1`. This identifies the source tree; it 
 
 ## Run the offline proof
 
-The first proof is the bundled MCP drift demo, not the separate prompt-scan path:
+**New to Interlock? Start here instead: [docs/evaluator-quickstart.md](docs/evaluator-quickstart.md).**
+It is a self-contained, step-by-step offline evaluation that explains what is
+being proven before each command, and it does not require reading the rest of
+this README.
+
+The commands below are the maintainer proof suite, for readers who already know
+the product. The first proof is the bundled MCP drift demo, not the separate
+prompt-scan path:
 
 ```bash
 git clone https://github.com/MaazAhmed47/Interlock.git
