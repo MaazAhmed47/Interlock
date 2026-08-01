@@ -1,15 +1,20 @@
-# Interlock v0.1.0 — First Pilot-Ready Release
+# Interlock v0.1.0 — First Tagged Release
 
-First tagged release of Interlock for serious design-partner evaluation.
+Historical notes for the first published tag. The current source metadata and
+compatibility boundary are documented in `README.md`; this file does not
+describe the current tree.
 
-Interlock is a self-hosted runtime security gateway for AI agents and MCP servers. It sits between agents and tools, scans prompts and responses, enforces tool policy, detects MCP drift, and records audit evidence for allow, deny, monitor, and quarantine decisions.
+Interlock is an MCP runtime trust layer for AI agents. In this tag it sat between
+agents and tools, scanned prompts and responses, enforced tool policy, detected
+MCP drift, and recorded audit evidence for allow, deny, monitor, and quarantine
+decisions.
 
 ## What's included
 
 ### Runtime Security Controls
 
 * OpenAI-compatible `/v1/chat/completions` gateway with prompt scanning before provider forwarding
-* MCP tool-call proxy with policy enforcement before execution
+* MCP tool-call proxy with policy enforcement at the gateway before upstream forwarding
 * Response scanning for prompt injection, PII, secrets, and oversized outputs
 * LLM judge path with configurable fail modes
 

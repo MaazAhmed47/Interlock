@@ -9,6 +9,7 @@ import Audit from './pages/Audit'
 import Settings from './pages/Settings'
 import Login from './pages/Login'
 import OIDCCallback from './pages/OIDCCallback'
+import { DASHBOARD_OVERVIEW_PATH, PUBLIC_DASHBOARD_LANDING } from './routePaths'
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   constructor(props: { children: ReactNode }) {
@@ -55,7 +56,8 @@ export default function App() {
     <ErrorBoundary>
       <Routes>
         <Route path="/dashboard" element={<DashLayout />}>
-          <Route index element={<Dashboard />} />
+          <Route index element={<Navigate to={PUBLIC_DASHBOARD_LANDING} replace />} />
+          <Route path={DASHBOARD_OVERVIEW_PATH.replace('/dashboard/', '')} element={<Dashboard />} />
           <Route path="proof" element={<DriftProof />} />
           <Route path="scan" element={<Scan />} />
           <Route path="mcp" element={<MCPGateway />} />
@@ -64,7 +66,7 @@ export default function App() {
           <Route path="login" element={<Login />} />
           <Route path="auth/callback" element={<OIDCCallback />} />
         </Route>
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="*" element={<Navigate to={PUBLIC_DASHBOARD_LANDING} replace />} />
       </Routes>
     </ErrorBoundary>
   )

@@ -26,7 +26,6 @@ services:
     image: interlock:demo
     build:
       context: ../..
-    container_name: interlock-demo-gateway
     restart: unless-stopped
     environment:
       # Local demo posture: non-production, no external judge required.
@@ -60,7 +59,6 @@ services:
     image: interlock-demo-mock:local
     build:
       context: ./mock_server
-    container_name: interlock-demo-mock
     restart: unless-stopped
     networks:
       - demo-net
@@ -72,7 +70,6 @@ services:
       args:
         # Baked into the SPA — this is the gateway URL as seen by the BROWSER.
         VITE_INTERLOCK_API_URL: http://localhost:8001
-    container_name: interlock-demo-dashboard
     restart: unless-stopped
     networks:
       - demo-net
@@ -82,7 +79,6 @@ services:
   # three documented loopback ports.
   host-proxy:
     image: nginx:alpine
-    container_name: interlock-demo-host-proxy
     restart: unless-stopped
     ports:
       - "127.0.0.1:8001:8001"
@@ -111,7 +107,6 @@ services:
   # One-shot: registers, verifies, and approves the demo baseline on `up`.
   seeder:
     image: python:3.12-slim
-    container_name: interlock-demo-seeder
     volumes:
       - .:/demo:ro
     environment:

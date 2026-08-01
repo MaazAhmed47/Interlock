@@ -9,8 +9,8 @@ they are actually done.
 
 ## What's proven today
 
-These paths are implemented, covered by the test suite (500+ tests run as a
-whole directory in CI), and reproducible end-to-end in the offline demo:
+These paths are implemented, covered by the full Python suite in CI, and the
+scoped default surface-drift path is reproducible end-to-end in the offline demo:
 
 - **Capability drift detection.** A registered MCP tool's surface
   (description, input schema, annotations, derived effect metadata) is
@@ -21,8 +21,9 @@ whole directory in CI), and reproducible end-to-end in the offline demo:
   canary probes record what a tool's backing API actually permits. When a
   previously denied action starts succeeding (403 → 200) with the same
   identity and tool surface, the tool is quarantined with receipt evidence.
-- **Quarantine before execution.** Calls to a quarantined or drifted tool
-  are blocked at the gateway before the upstream call is made, and the
+- **Gateway hold after detected material drift.** Subsequent calls to a
+  quarantined or materially drifted tool are blocked at the gateway before an
+  upstream `tools/call` is forwarded, and the
   denial is recorded with binding fields (call id, argument hash, surface
   hashes).
 - **Hash-chained Security Receipts.** Every allow/deny/quarantine decision
@@ -46,8 +47,8 @@ than find them in a pilot.
 - **Effect drift is detected post-execution for the first call.** Outcome
   drift (a "dry-run" tool that suddenly applies changes) is judged from the
   upstream response, so the first drifting call has already executed by the
-  time it is caught. Subsequent calls are blocked by the resulting
-  quarantine. Only surface drift and quarantine state block pre-execution.
+  time it is caught. Subsequent calls to that tool are blocked by the
+  resulting quarantine. Only surface drift and quarantine state block pre-execution.
 - **The audit chain is tamper-evident, not externally anchored.** The hash
   chain uses unkeyed SHA-256 and lives in the same database as the data it
   protects. It detects casual tampering; it does not resist an attacker
@@ -60,11 +61,12 @@ than find them in a pilot.
   `xfail` tests in `tests/test_drift_adversarial.py` (e.g. exfiltration
   verbs outside the heuristic keyword set, indirect auth-scope widening via
   an innocuous-looking parameter).
-- **Not yet protocol-complete against the official MCP SDK.** The gateway
-  speaks the JSON-RPC tool-call subset it needs and is tested against mocks
-  and mock servers, not certified against the official MCP SDK's transports
-  and session semantics (Streamable HTTP, stdio, session lifecycle,
-  notifications).
+- **Tested, pinned official-SDK interoperability; not full MCP conformance.**
+  Official Python `mcp==2.0.0` and TypeScript client `2.0.0` probes cover the
+  scoped stateless `2026-07-28` gateway path, and an official TypeScript server
+  `2.0.0` probe covers pinned JSON/SSE upstream calls. These pins do not prove
+  other SDK versions, stdio, subscriptions, sessionful transports, or full MCP
+  conformance; see `docs/mcp-2026-compatibility.md`.
 - **Single-tenant assumptions.** Per-key data separation exists, but there
   is no hard tenant isolation story (separate schemas/databases,
   per-tenant encryption) for hosting mutually distrusting customers.
@@ -76,10 +78,10 @@ than find them in a pilot.
 
 In rough priority order; each item closes a limitation above.
 
-- **Official MCP SDK adoption and transport completeness.** Build the
-  gateway's MCP surface on the official SDK; support Streamable HTTP and
-  stdio transports and correct session lifecycle handling, verified against
-  SDK-based reference servers.
+- **Broader transport and session interoperability.** Preserve the pinned
+  official-SDK probes while adding explicitly scoped coverage for stdio,
+  subscriptions, and session lifecycle behavior. This remains compatibility
+  work, not a promise of full MCP conformance.
 - **Signed and externally anchored receipts.** Key-based signatures over
   receipt content and periodic anchoring of the chain head outside the
   primary database, so verification does not depend on trusting the

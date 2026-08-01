@@ -32,7 +32,7 @@ Each evaluation scenario should check whether the emitted receipt or audit evide
 | Claim | What the receipt should prove | Why it matters |
 |---|---|---|
 | 1. Approved baseline | The exact capability set, metadata/effect profile, tool identity, and surface hash approved at baseline. | Reviewers need to know what was originally trusted. |
-| 2. Drift finding | The drift detected before execution: schema, metadata, effect, external reach, response exposure, effective permission, provenance, or chain risk. | Reviewers need to know what changed and why it mattered. |
+| 2. Drift finding | The drift evidence and observation point: pre-forward surface/argument checks, controlled probes, or post-response/readback findings. | Reviewers need to know what changed, when it became observable, and why it mattered. |
 | 3. Runtime decision | Whether Interlock allowed, monitored, held, quarantined, denied, or required review/re-approval. | The control outcome must be explicit and auditable. |
 | 4. Boundary crossing | Whether an MCP call was forwarded after the decision; if yes, which approved call crossed the boundary; if no, that no downstream call was forwarded. | Security teams need to distinguish pre-execution quarantine from post-call observation. |
 
@@ -61,7 +61,7 @@ Run one controlled drift at a time. Keep all scenarios evidence-safe and non-pro
 | Auth scope expansion | Scope changes from local/repo-scoped to account/org-scoped, or upstream permission allows a call that used to deny. | `effective_permission_expansion` / `behavioral_scope_drift` when observed through a canary probe. | quarantine for operator review. | Expected `403 denied`, observed `200 allowed`, same manifest/schema/arguments, argument hash, receipt digest. |
 | Response/data exposure drift | A response begins carrying secret-like, policy-sensitive, or broader data than the approved profile. | response/data-exposure drift. | monitor, hold, or quarantine depending on sensitivity. | Approved response profile, current response profile, redaction/evidence hashes, decision. |
 | Same tool name maps to different server/version | The same approved tool name is served by a different server identity, version, endpoint, or provenance. | provenance/server-identity drift. | hold or require re-approval. | Approved server/version identity, current identity, decision, whether call was forwarded. |
-| Chain risk across tools | A planned run reads sensitive repo/config data, then sends it to a CI/action/external tool. | chain drift such as sensitive-read-to-external-effect or secret-to-execution. | deny before execution when the full chain is submitted/observed. | Planned chain hash, risky transition, denied step, no downstream boundary crossing. |
+| Chain risk across tools | A planned run reads sensitive repo/config data, then sends it to a CI/action/external tool. | chain drift such as sensitive-read-to-external-effect or secret-to-execution. | deny before provider forwarding when the full chain is submitted. | Planned chain hash, risky transition, denied step, no downstream boundary crossing. |
 
 ### Scenario evidence status
 
@@ -74,7 +74,7 @@ Use the first-pass scenarios to establish trust before expanding the evaluation.
 | Auth/effective-permission expansion | first-pass proven for observable `403 -> 200` | Yes | Use `python3 demo/run_effective_permission_probe_live.py`; this detects behavioral outcome drift and does not claim provider OAuth introspection. |
 | Response/data exposure drift | proof-suite verified; verify together | Later | Validate against the evaluator's response profile, redaction expectations, and data-class policy. |
 | Same tool name maps to different server/version | design target; verify together | Later | Requires stable server identity, version, endpoint, or provenance metadata from the control plane or MCP server. |
-| Chain risk across tools | proof-suite verified; verify together | Later | Works best when the orchestrator submits or exposes the planned sequence before execution; Interlock cannot infer a chain it never observes. |
+| Chain risk across tools | proof-suite verified; verify together | Later | Works when the orchestrator submits or exposes the planned sequence before forwarding provider calls; Interlock cannot infer a chain it never observes. |
 
 ## Effective-permission proof command
 

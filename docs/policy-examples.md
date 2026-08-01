@@ -33,7 +33,7 @@ curl -X POST http://localhost:8001/inspect/tool-call \
   }'
 ```
 
-Expected: denied by RBAC before execution.
+Expected: denied by RBAC at the gateway before upstream forwarding.
 
 ---
 
@@ -99,6 +99,6 @@ A CTO does not need to understand every regex. The story is:
 
 1. Define what each agent role is allowed to do.
 2. Baseline MCP tools at discovery.
-3. Block risky tool calls before execution.
+3. Block risky gateway-mediated tool calls before upstream forwarding.
 4. Quarantine drift when tools change after approval.
 5. Record the reason so security can review it later.

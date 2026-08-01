@@ -62,7 +62,7 @@ export default function DriftProof() {
 
           <div className="proof-comparison-wrap">
             <table className="proof-comparison">
-              <caption>Approved and current boundaries for the read_document tool</caption>
+              <caption>Approved and current boundaries for the read_file tool</caption>
               <colgroup>
                 <col className="proof-comparison-field" />
                 <col />
@@ -84,9 +84,9 @@ export default function DriftProof() {
               <tbody>
                 <tr>
                   <th scope="row">Tool</th>
-                  <td><code>read_document</code></td>
+                  <td><code>read_file</code></td>
                   <td>
-                    <code>read_document</code>
+                    <code>read_file</code>
                     <span className="proof-unchanged">unchanged identity</span>
                   </td>
                 </tr>
@@ -96,7 +96,6 @@ export default function DriftProof() {
                   <td>
                     <span className="proof-value-neutral">read</span>
                     <span className="proof-value-changed">export</span>
-                    <span className="proof-value-changed">share</span>
                   </td>
                 </tr>
                 <tr>
@@ -109,7 +108,7 @@ export default function DriftProof() {
           </div>
 
           <p className="proof-delta-summary">
-            <strong>Exact difference:</strong> effects expanded by <code>export</code> and <code>share</code>;
+            <strong>Exact difference:</strong> effects expanded by <code>export</code>;
             externality changed from <code>internal</code> to <code>external</code>.
           </p>
         </li>
@@ -119,7 +118,7 @@ export default function DriftProof() {
             <span className="proof-step-number" aria-hidden="true">2</span>
             <div>
               <p className="proof-step-kicker">Runtime decision</p>
-              <h2>Continuation stopped at the gateway boundary</h2>
+              <h2>Continuation stopped for <code>read_file</code> at the gateway boundary</h2>
             </div>
           </div>
           <FixtureLabel />
@@ -129,12 +128,16 @@ export default function DriftProof() {
               <ShieldAlert size={18} aria-hidden="true" />
               Quarantined
             </div>
-            <p>quarantined before continued gateway-mediated execution</p>
+            {/* Single text node on purpose: .proof-decision p is display:flex,
+                which drops whitespace-only nodes between inline children and
+                would render "to read_file held" as "toread_fileheld". */}
+            <p>subsequent gateway-mediated calls to read_file are held before upstream forwarding</p>
           </div>
           <p className="proof-scope-note">
-            This is the decision recorded by Interlock for calls mediated by its gateway. The offline
-            fixture does not independently verify upstream side effects, and traffic that bypasses
-            Interlock is not visible.
+            Quarantine is scoped to this one tool: unrelated approved tools on the same server —
+            the <code>list_documents</code> control — keep working. This is the decision recorded by
+            Interlock for calls mediated by its gateway. The offline fixture does not independently
+            verify upstream side effects, and traffic that bypasses Interlock is not visible.
           </p>
         </li>
 
@@ -168,18 +171,29 @@ export default function DriftProof() {
               <dd>
                 <span className="proof-offline-result">
                   <CheckCircle2 size={15} aria-hidden="true" />
-                  No boundary-crossing call executed after detection
+                  No boundary-crossing call to <code>read_file</code> was forwarded upstream after detection
                 </span>
                 <span className="proof-result-label">Reproducible offline-proof result</span>
               </dd>
             </div>
           </dl>
 
-          <div className="proof-behavior" aria-labelledby="behavior-proof-title">
+          <div
+            className="proof-behavior"
+            id="behavioral-probe-evidence"
+            aria-labelledby="behavior-proof-title"
+          >
             <div className="proof-behavior-heading">
-              <p>Secondary evidence</p>
-              <h3 id="behavior-proof-title">Effective-permission drift <span>— not schema drift</span></h3>
+              <p>Separate advanced proof — not the journey above</p>
+              <h3 id="behavior-proof-title">Controlled effective-permission probe <span>— not schema drift</span></h3>
             </div>
+            <p className="proof-scope-note">
+              The surface-drift journey above never issues this probe. Here a controlled
+              non-production probe is deliberately forwarded upstream, because Interlock needs the
+              upstream response to observe a change the manifest does not declare. The probe itself
+              is answered; the observed 200 is what quarantines that tool, and only later
+              gateway-mediated calls to that same tool are held before forwarding.
+            </p>
             <div className="proof-behavior-row">
               <div>
                 <span>Manifest / schema</span>

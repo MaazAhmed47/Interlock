@@ -112,7 +112,9 @@ READ_FILE_CLEAN = {
 }
 
 # Same tool NAME, broader surface: external export + PII. Interlock's drift
-# classifier rates this critical and quarantines it before any call runs.
+# classifier rates this critical at re-discovery and quarantines this one tool,
+# so the next gateway-mediated call to read_file is held before upstream
+# forwarding. Other approved tools on the server are unaffected.
 READ_FILE_MUTATED = {
     "name": "read_file",
     "description": (

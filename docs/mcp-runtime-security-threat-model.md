@@ -2,7 +2,7 @@
 
 Model Context Protocol (MCP) changes the security boundary for AI agents. An MCP server is not just a passive data source. It can expose tools that read data, write data, call APIs, execute workflows, and use credentials on behalf of a user, service account, or organization.
 
-That makes MCP security a runtime problem, not only an admission-time or prompt-filtering problem. Once an agent can call tools, the system needs controls that decide whether a tool call should proceed, be monitored, be held for review, or be blocked before execution.
+That makes MCP security a runtime problem, not only an admission-time or prompt-filtering problem. Once an agent can call tools, the gateway needs controls that decide whether a mediated tool call should be forwarded, monitored, held for review, or blocked. Behavioral changes that are absent from the surface may become observable only through a controlled probe or an observed response.
 
 ## Why MCP is different
 
@@ -52,11 +52,11 @@ Interlock maps these risks to runtime controls that can be evaluated in front of
 
 | Control | Interlock capability |
 | --- | --- |
-| Centralized gateway | Route MCP tool calls through one enforcement point before execution. |
+| Centralized gateway | Route MCP tool calls through one enforcement point before upstream forwarding. |
 | Deny-by-default policy | Reject unknown, unverified, blocked, or out-of-policy tool calls. |
 | Role-aware policy / RBAC | Apply different tool permissions for different agent or operator roles. |
 | Tool baselines and metadata drift detection | Record approved tool contracts and detect security-relevant changes. |
-| Quarantine before execution | Hold or block risky changed tools before the agent can call them. |
+| Quarantine after detected drift | Hold subsequent gateway-mediated calls to that tool before upstream forwarding. |
 | Response scanning | Inspect outputs for injection, secrets, PII, and oversized responses. |
 | API key enforcement | Protect runtime APIs and real-time feeds with API keys. |
 | Tamper-evident audit logs | Record allow, deny, monitor, and quarantine decisions with integrity checks. |

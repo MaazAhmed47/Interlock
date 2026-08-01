@@ -27,6 +27,13 @@ classifier, quarantine state, audit chain, receipt builder, and receipt verifier
 with a bundled local MCP server. It is an engineering proof, not a marketing
 simulation or a production-readiness claim.
 
+This default evaluator proves capability/surface drift. It does not run the 403-to-200 behavioral probe.
+That controlled, forwarded observation is a
+separate advanced proof described in `demo/offline/README.md`; if it detects an
+effective-permission expansion, later gateway-mediated calls **to that tool**
+are held while it remains quarantined. Quarantine is scoped to the affected
+tool, not to the whole server.
+
 The running scenario is loopback-only from the host. Gateway, dashboard, mock,
 and runners use an internal Docker network; a fixed nginx proxy is the only edge
 member and publishes the three loopback ports. The runner rejects service
@@ -42,10 +49,13 @@ known-good definition and execute one benign call through Interlock.
 
 The controlled MCP example then changes the same tool to add external export,
 broader data handling, and attachment forwarding. Interlock discovers that
-material boundary change and quarantines the stored tool. A subsequent call
-through `/mcp/call` returns `tool_quarantined` before Interlock sends an upstream
-`tools/call`. A separate counter inside the bundled MCP process must remain
-unchanged, independently confirming that the changed tool did not execute.
+material boundary change and quarantines the stored `read_file` tool. A
+subsequent gateway-mediated call to `read_file` through `/mcp/call` returns
+`tool_quarantined`, and Interlock sends no upstream `tools/call` for `read_file`.
+Quarantine is scoped to that one tool, not to the server: the unchanged
+`list_documents` control tool keeps working throughout. A separate counter inside
+the bundled MCP process must remain unchanged, independently confirming that the
+changed tool did not execute.
 
 The runner then retrieves real Interlock audit claims and verifies the real
 Security Receipt before producing a sanitized proof pack.
@@ -148,6 +158,9 @@ docker compose ps
 `gateway`, `dashboard`, and `mcp-mock` should be running; `seeder` should have
 exited successfully. The fixed demo key exists only because this Compose stack
 sets `INTERLOCK_OFFLINE_DEMO=true`; it is not production configuration.
+Compose generates project-scoped container names (such as
+`<project>-gateway-1`), so use `docker compose ps` rather than looking for fixed
+global names.
 
 ## 4. Run the complete evaluator proof
 

@@ -122,7 +122,7 @@ Some risk only appears across calls:
 - `preview_payment -> charge_customer`
 - `terraform_plan -> terraform_apply -> terraform_destroy`
 
-Interlock can deny those planned chains before execution when the orchestrator submits or exposes the chain.
+Interlock can deny those planned chains before the orchestrator forwards provider calls when it submits or exposes the chain.
 
 ### 5. It produces evidence-safe receipts
 

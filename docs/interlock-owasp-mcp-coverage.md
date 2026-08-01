@@ -34,7 +34,7 @@ Interlock should be evaluated as one runtime trust layer, not as a complete repl
 
 - Tool baselines capture the approved capability envelope.
 - Drift detection compares the current tool definition with the approved baseline.
-- Risky changes can require review or quarantine before execution.
+- Detected material surface changes can require review or quarantine of that tool; subsequent gateway-mediated calls to it can then be held before upstream forwarding.
 - Audit evidence records the decision and review path.
 
 ---

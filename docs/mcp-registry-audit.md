@@ -68,7 +68,7 @@ The examples below are illustrative, not exact enforcement logic. Deployed polic
 |---|---|
 | Description-only or documentation changes | Usually monitor or review |
 | Schema, data-class, external-reach, or effect expansion | May require denial or re-approval |
-| Export, delete, destructive, or external-sharing capability added | May trigger quarantine before execution |
+| Export, delete, destructive, or external-sharing capability added | May trigger quarantine of that tool at re-discovery; subsequent gateway calls to it can be held before forwarding |
 | Metadata confidence, provenance, or verification downgrade | May require review before continued trust |
 
 ## Runtime Use
@@ -88,9 +88,9 @@ If stored metadata is missing, Interlock falls back to runtime inference and add
 
 If stored metadata has monitor-level drift, Interlock allows the call but marks the decision `monitor`.
 
-If stored metadata has high drift, Interlock denies before execution with `metadata_drift_violation`.
+If stored metadata has high drift, Interlock denies the gateway-mediated call before upstream forwarding with `metadata_drift_violation`.
 
-If stored metadata is quarantined, Interlock denies before execution with `tool_quarantined`.
+If stored metadata is quarantined, Interlock denies the gateway-mediated call before upstream forwarding with `tool_quarantined`.
 
 ## Operator Review Loop
 

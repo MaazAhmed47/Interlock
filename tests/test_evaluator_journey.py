@@ -405,6 +405,17 @@ def test_compose_runtime_is_internal_and_host_ports_are_loopback_only():
         assert compose["services"][service]["networks"] == ["demo-net"]
 
 
+def test_compose_uses_project_scoped_names_for_concurrent_local_stacks():
+    compose = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+    assert all(
+        "container_name" not in service for service in compose["services"].values()
+    )
+
+    guide = GUIDE.read_text(encoding="utf-8")
+    assert "Compose generates project-scoped container names" in guide
+    assert "docker compose ps" in guide
+
+
 def test_linux_runner_uses_invoking_uid_gid_and_documented_user_owned_directory(
     tmp_path,
 ):

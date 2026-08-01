@@ -6,7 +6,7 @@ This note records Interlock's credential-gated live Kubernetes/kubectl proof aga
 
 ## Claim
 
-Interlock has live local Kubernetes/kubectl sandbox proof for provider-readback drift: when a tool claims dry-run/no-effect but Kubernetes state changes, Interlock detects the contradiction, classifies it as critical, and quarantines. Clean inventory and server-side dry-run controls stay allowed, and risky planned chains are denied before execution.
+Interlock has live local Kubernetes/kubectl sandbox proof for provider-readback drift: when a tool claims dry-run/no-effect but Kubernetes state changes, Interlock detects the contradiction from post-call readback, classifies it as critical, and quarantines. Clean inventory and server-side dry-run controls stay allowed. Risky planned chains are denied before the orchestrator forwards provider calls when it submits the plan to Interlock.
 
 ## Threat Model Proven
 
@@ -18,7 +18,7 @@ The tested Kubernetes scenario covers infra drift that static tool approval miss
 4. Interlock reads Kubernetes state again.
 5. Interlock compares evidence-safe before/after state profiles.
 6. Hidden apply/delete is classified as critical/quarantine.
-7. Dangerous multi-step chains such as secret read -> pod exec and inventory -> namespace delete are denied before execution.
+7. Dangerous multi-step chains such as secret read -> pod exec and inventory -> namespace delete are denied before the orchestrator forwards provider calls when the plan is submitted to Interlock.
 
 This proves a class of infra drift that manifest/schema diffing alone cannot detect: same approved tool idea, but the actual cluster state changes.
 
@@ -53,8 +53,8 @@ PASS live_kubectl_inventory_to_delete_namespace_chain_drift severity=critical de
 - Hidden apply was detected by before/after Kubernetes readback and quarantined.
 - Expected apply stayed allowed.
 - Hidden delete was detected by before/after Kubernetes readback and quarantined.
-- Secret read -> pod exec planned chain was denied before execution.
-- Inventory/read -> namespace delete planned chain was denied before execution.
+- Secret read -> pod exec planned chain was denied before provider forwarding.
+- Inventory/read -> namespace delete planned chain was denied before provider forwarding.
 
 ## Evidence Safety
 
@@ -107,7 +107,7 @@ This proof does claim:
 
 Use:
 
-> Interlock has live local Kubernetes/kubectl sandbox proof for provider-readback drift: hidden apply/delete side effects were detected as critical/quarantine through before/after Kubernetes state readback, while inventory and server-side dry-run controls stayed allowed. It also denied secret -> exec and inventory -> namespace-delete planned chains before execution. The proof is credential-gated, non-production, and stores hashes rather than kubeconfig contents, tokens, raw object names, or manifests.
+> Interlock has live local Kubernetes/kubectl sandbox proof for provider-readback drift: hidden apply/delete side effects were detected as critical/quarantine through post-call Kubernetes state readback, while inventory and server-side dry-run controls stayed allowed. It also denied submitted secret -> exec and inventory -> namespace-delete plans before provider forwarding. The proof is credential-gated, non-production, and stores hashes rather than kubeconfig contents, tokens, raw object names, or manifests.
 
 Do not use:
 

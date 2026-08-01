@@ -16,13 +16,13 @@ Coverage levels:
 
 | Visibility | Interlock control | Prevention? | Honest claim |
 | --- | --- | --- | --- |
-| Planned chain submitted before execution | `run_chain_analysis` / `/mcp/chains/analyze` | Yes | Interlock can deny risky chains before provider calls. |
+| Planned chain submitted before provider calls | `run_chain_analysis` / `/mcp/chains/analyze` | Yes | Interlock can deny risky chains before the orchestrator forwards provider calls. |
 | Calls pass through Interlock but no chain was submitted | `analyze_observed_audit_chain` | No, post-hoc | Interlock can detect and preserve evidence after observing the sequence. |
 | Calls bypass Interlock or are never submitted/observed | None | No | Not detectable by Interlock. Requires routing enforcement or provider-side audit integration. |
 
 Buyer-safe wording:
 
-> Interlock can block risky chains before execution when the orchestrator submits the chain, and it can reconstruct risky chains after the fact when calls pass through the gateway. It does not claim to detect tool calls it never sees.
+> Interlock can block risky chains before provider forwarding when the orchestrator submits the chain, and it can reconstruct risky chains after the fact when calls pass through the gateway. It does not claim to detect tool calls it never sees.
 
 ## 2. Full OAuth / Provider Scope Introspection
 
@@ -85,7 +85,7 @@ Coverage levels:
 
 | Side effect state | Rollback capability | Interlock action |
 | --- | --- | --- |
-| Drift caught before execution | Not needed | Deny/quarantine before provider side effect. |
+| Material surface drift caught at re-discovery | Not needed | Quarantine that tool; deny subsequent gateway calls to it before provider forwarding. |
 | Side effect already happened; rollback tool exists | Provider-specific | Plan rollback and require readback verification. |
 | Side effect already happened; no rollback tool exists | None | Containment only: quarantine, evidence, credential rotation, manual review. |
 
@@ -125,7 +125,7 @@ The point is not to pretend Interlock sees everything. The point is to be the ru
 - If Interlock sees the tool surface, it can baseline and detect drift.
 - If Interlock sees the call behavior, it can detect effective-permission drift.
 - If Interlock can read provider state, it can catch hidden side effects.
-- If Interlock receives the chain before execution, it can deny risky chains.
+- If Interlock receives the chain before the orchestrator forwards provider calls, it can deny risky chains.
 - If Interlock only observes the calls afterward, it can reconstruct and preserve evidence.
 - If Interlock sees none of it, the buyer needs routing enforcement, provider audit integration, or a narrower pilot.
 

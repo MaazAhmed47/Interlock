@@ -16,16 +16,22 @@ caller-selected roles in `/mcp/call` request bodies.
 This happens automatically during gateway startup, before the one-shot seeder
 runs. A first-time user does not mint a key or grant scopes manually.
 
-What it proves (and nothing more): the two **live-proven** drift classes.
+The default evaluator proves one drift class. A separate maintainer command
+proves the advanced behavioral class; the two paths are not one combined claim.
 
-1. **Capability / surface drift** (default path): a tool a team approved as
-   read-only changes under the same name into an external-export/PII tool.
-   Interlock detects the drift at re-discovery, quarantines the tool **before
-   any call executes**, and issues a tamper-evident Security Receipt.
-2. **Behavioral / effective-permission drift** (advanced path): same tool,
+1. **Capability / surface drift (default evaluator proof):** `read_file`, a tool a
+   team approved as read-only, changes under the same name into an
+   external-export/PII tool. Interlock detects the drift at re-discovery and
+   quarantines that one tool. A subsequent gateway-mediated call **to
+   `read_file`** is held before Interlock forwards an upstream `tools/call`, and
+   Interlock issues a tamper-evident Security Receipt. The unchanged
+   `list_documents` control tool keeps working — quarantine is per tool, not a
+   server-wide pause.
+2. **Behavioral / effective-permission drift (separate advanced proof):** same tool,
    same schema — a call the upstream denied (403) later becomes allowed
-   (200). An operator probe catches the effective-permission expansion and
-   quarantines the tool.
+   (200). The controlled probe is forwarded so Interlock can observe that
+   response and quarantine that tool. A later gateway-mediated call **to that
+   same tool** is not forwarded while that quarantine remains in force.
 
 ## Quickstart
 
@@ -62,6 +68,10 @@ Dashboard: <http://localhost:8080/dashboard> → Settings → API URL
 
 The demo binds fixed localhost ports `8001`, `8080`, and `9100`; stop or
 reconfigure anything already using them.
+
+Compose generates project-scoped container names (for example,
+`<project>-gateway-1`); use `docker compose ps` to inspect the current project
+instead of depending on fixed global container names.
 
 In **Audit Log → Runtime Decisions**, every event has a **Receipt** button
 (the tamper-evident record) and a **Verify** button (the four-claim evidence

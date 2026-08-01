@@ -278,7 +278,7 @@ An MCP tool was previously read-only. A later version adds external sharing capa
   },
   "response_scan_result": {
     "status": "not_run",
-    "reason": "tool call quarantined before execution"
+    "reason": "gateway-mediated tool call held before upstream forwarding"
   },
   "drift_result": {
     "severity": "critical",
@@ -321,7 +321,7 @@ This keeps the server responsible for emitting evidence and keeps the gateway re
 
 ## Open Questions
 
-1. Should `McpSecurityReceipt` be emitted before execution, after execution, or both?
+1. Should `McpSecurityReceipt` be emitted before upstream forwarding, after an observed response, or both?
 2. Should receipt signing be required, recommended, or left to high-assurance servers?
 3. Should `declared_side_effects` use a fixed vocabulary?
 4. Should `data_classes` use a fixed vocabulary or allow vendor-specific extensions?
