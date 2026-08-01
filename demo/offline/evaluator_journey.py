@@ -28,6 +28,7 @@ TOOL_NAME = "read_file"
 CONTROL_TOOL = "list_documents"
 SCENARIO = "internal_document_external_export_boundary"
 DISPLAY_NAME = "private document workspace"
+PROOF_CHAIN = "approved boundary → changed boundary → held call → verified receipt"
 
 DEFAULT_GATEWAY = os.getenv("INTERLOCK_DEMO_GATEWAY", "http://localhost:8001")
 DEFAULT_MOCK_ADMIN = os.getenv("INTERLOCK_DEMO_MOCK_ADMIN", "http://localhost:9100")
@@ -80,6 +81,14 @@ APPROVED_BOUNDARY_LIST_VALUES = {
         "internal",
     },
 }
+OPERATOR_ACTION_MEANINGS = {
+    "reject": (
+        "the changed tool stays held; the approved boundary is unchanged and "
+        "you can still approve or rebaseline later"
+    ),
+    "approve": ("the changed boundary is now the approved boundary for this one tool"),
+    "rebaseline": ("the whole current server surface is now the approved boundary"),
+}
 APPROVED_BOUNDARY_SCALAR_VALUES = {
     "side_effect": {"read_only", "mutating", "destructive"},
     "externality": {"internal", "external"},
@@ -115,8 +124,13 @@ def _canonical_json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def _approved_boundary_from_inventory(tool_row: dict) -> dict:
-    """Project only allowlisted normalized fields from Interlock's inventory."""
+def _boundary_from_inventory(tool_row: dict) -> dict:
+    """Project only allowlisted normalized fields from Interlock's inventory.
+
+    Interlock overwrites `normalized_metadata` with the observed surface when it
+    records drift, so the same projection yields the approved boundary from the
+    pre-change row and the observed boundary from the post-change row.
+    """
     metadata = tool_row.get("normalized_metadata")
     if not isinstance(metadata, dict):
         return {}
@@ -150,6 +164,77 @@ def _boundary_summary(boundary: dict) -> str:
         rendered = ",".join(value) if isinstance(value, list) else str(value)
         parts.append(f"{field}={rendered}")
     return "; ".join(parts)
+
+
+def _material_change_summary(approved: dict, observed: dict) -> str:
+    """Describe how the observed boundary widened, from observed fields only."""
+    headlines: list[str] = []
+    gained_effects = sorted(
+        set(observed.get("effects") or []) - set(approved.get("effects") or [])
+    )
+    if "export" in gained_effects:
+        headlines.append("external export was added to the approved tool")
+    other_effects = [effect for effect in gained_effects if effect != "export"]
+    if other_effects:
+        headlines.append("new effects appeared (" + ",".join(other_effects) + ")")
+    if (
+        approved.get("externality") == "internal"
+        and observed.get("externality") == "external"
+    ):
+        headlines.append("the boundary moved from internal to external")
+    gained_data = sorted(
+        set(observed.get("data_classes") or [])
+        - set(approved.get("data_classes") or [])
+    )
+    if gained_data:
+        headlines.append("broader data handling (" + ",".join(gained_data) + ")")
+    if approved.get("side_effect") == "read_only" and observed.get(
+        "side_effect"
+    ) not in (None, "read_only"):
+        headlines.append(
+            "the tool is no longer read_only (now "
+            + str(observed.get("side_effect"))
+            + ")"
+        )
+    if not headlines:
+        return (
+            "no allowlisted normalized boundary field widened; see change_types "
+            "for Interlock's recorded classification"
+        )
+    return (
+        "the same tool name kept its identity while its boundary widened: "
+        + "; ".join(headlines)
+    )
+
+
+def _record_gateway_call(
+    client: Any, records: list[dict], body: dict
+) -> tuple[int | None, dict]:
+    """Send one `/mcp/call` and record what happened to it.
+
+    Call counts in the evidence are observed here rather than assumed, so
+    adding a step to this journey renumbers the artifacts instead of leaving a
+    stale "call 2 of 2" claim behind.
+    """
+    status, payload = _gateway(client, "POST", "/mcp/call", body)
+    records.append(
+        {
+            "tool": str(body.get("tool_name") or ""),
+            "held": payload.get("error") == "tool_quarantined",
+        }
+    )
+    return status, payload
+
+
+def _held_call_facts(records: list[dict]) -> tuple[int, int]:
+    """Return the 1-based index of the held call and the total calls observed."""
+    held = [index for index, record in enumerate(records, start=1) if record["held"]]
+    if len(held) != 1:
+        raise JourneyError(
+            "expected exactly one held gateway call this run; observed "
+            f"{len(held)} held across {len(records)} calls"
+        )
+    return held[0], len(records)
 
 
 def _expect(
@@ -451,11 +536,11 @@ def run_journey(client: Any, output_dir: Path | str) -> dict:
             raise JourneyError("approved baseline did not become active")
 
         print("[3/7] Execute one benign approved call through /mcp/call")
+        gateway_calls: list[dict] = []
         _expect(
-            _gateway(
+            _record_gateway_call(
                 client,
-                "POST",
-                "/mcp/call",
+                gateway_calls,
                 {
                     "server_id": SERVER_ID,
                     "tool_name": TOOL_NAME,
@@ -478,10 +563,9 @@ def run_journey(client: Any, output_dir: Path | str) -> dict:
 
         print("[5/7] Attempt the changed call through Interlock's gateway")
         before = _call_total(client)
-        _, held_outcome = _gateway(
+        _, held_outcome = _record_gateway_call(
             client,
-            "POST",
-            "/mcp/call",
+            gateway_calls,
             {
                 "server_id": SERVER_ID,
                 "tool_name": TOOL_NAME,
@@ -499,6 +583,8 @@ def run_journey(client: Any, output_dir: Path | str) -> dict:
             raise JourneyError(
                 "changed tool reached upstream execution despite quarantine"
             )
+
+        held_call_index, gateway_calls_total = _held_call_facts(gateway_calls)
 
         print("[6/7] Retrieve and verify Interlock's real evidence")
         detection = _latest_detection(client)
@@ -537,7 +623,11 @@ def run_journey(client: Any, output_dir: Path | str) -> dict:
         execution = claims.get("claim_4_execution_after_detection") or {}
         if execution.get("boundary_crossing_executed") is not False:
             raise JourneyError("claim evidence did not prove a held gateway path")
-        approved_boundary = _approved_boundary_from_inventory(approved_row)
+        approved_boundary = _boundary_from_inventory(approved_row)
+        observed_boundary = _boundary_from_inventory(changed_row)
+        material_change = _material_change_summary(approved_boundary, observed_boundary)
+        change_types = sorted(str(v) for v in changed_row.get("drift_types") or [])
+        severity = str(changed_row.get("drift_severity") or "")
 
         artifacts = {
             "approved-state.json": {
@@ -556,16 +646,32 @@ def run_journey(client: Any, output_dir: Path | str) -> dict:
                 "tool": TOOL_NAME,
                 "status": str(changed_row.get("status") or ""),
                 "decision": str(changed_row.get("drift_action") or ""),
-                "severity": str(changed_row.get("drift_severity") or ""),
-                "change_types": sorted(
-                    str(v) for v in changed_row.get("drift_types") or []
-                ),
+                "severity": severity,
+                "change_types": change_types,
+                "boundary": observed_boundary,
+                "boundary_source": "interlock_tool_inventory.normalized_metadata",
+                "material_change": material_change,
                 "surface_hash": observed_hash,
             },
             "held-call.json": {
                 "artifactType": "interlock.evaluator.held-call.v1",
                 "scenario": SCENARIO,
                 "tool": TOOL_NAME,
+                "held_call": {
+                    "tool": TOOL_NAME,
+                    "call_index": held_call_index,
+                    "calls_attempted_through_gateway": gateway_calls_total,
+                    "held_at": "interlock_gateway_before_upstream_tools_call",
+                    "requested_beyond_approved_boundary": (
+                        "send the same document to an external recipient and "
+                        "forward its attachments"
+                    ),
+                    "held_because": (
+                        "the stored tool was quarantined by the material boundary "
+                        "change found at re-discovery, before this call could be "
+                        "forwarded upstream"
+                    ),
+                },
                 "gateway_error": "tool_quarantined",
                 "forwarded": False,
                 "upstream_calls_before": before,
@@ -592,20 +698,68 @@ def run_journey(client: Any, output_dir: Path | str) -> dict:
                 "approved_surface_hash": approved_hash,
                 "observed_surface_hash": observed_hash,
                 "binding_redacted": True,
+                "verification_proves": [
+                    "the stored audit row recomputes to this receipt integrity hash",
+                    "the audit hash chain verifies across the stored records",
+                    "the receipt is bound to this exact call and fails if "
+                    "presented for another",
+                ],
+                "verification_does_not_prove": [
+                    "anything about calls made outside Interlock's gateway",
+                    "that this receipt is externally signed or independently "
+                    "anchored",
+                ],
             },
         }
         summary = (
             "# Interlock evaluator evidence summary\n\n"
             f"Scenario: {DISPLAY_NAME}.\n\n"
-            "- Approved inventory boundary: "
-            f"{_boundary_summary(approved_boundary)}.\n"
-            "- Material change: the same tool introduced external export and broader data handling.\n"
-            "- Gateway decision: `tool_quarantined`; the changed call was held.\n"
-            f"- Independent mock execution counter: {before} before, {after} after the held call.\n"
-            "- Receipt: verified against Interlock's stored audit evidence; raw binding identity is omitted here.\n"
-            "- Next action: choose `approve`, `reject`, or `rebaseline` after review.\n\n"
-            "This proves the bundled call was held on Interlock's gateway path after discovery. "
-            "It does not cover direct MCP connections that bypass Interlock or arbitrary behavioral drift.\n"
+            f"Proof chain: {PROOF_CHAIN}.\n\n"
+            "## Approved boundary\n\n"
+            "What you approved before anything changed:\n\n"
+            f"- {_boundary_summary(approved_boundary)}\n"
+            f"- approved surface hash: `{approved_hash}`\n\n"
+            "## Observed boundary\n\n"
+            "What Interlock read from the same tool name at re-discovery:\n\n"
+            f"- {_boundary_summary(observed_boundary)}\n"
+            f"- observed surface hash: `{observed_hash}`\n\n"
+            "## Material change\n\n"
+            f"- {material_change}.\n"
+            f"- Interlock severity: {severity or 'not recorded'}; "
+            f"recorded change types: {', '.join(change_types) or 'none'}.\n"
+            "- The tool was not held for being new or unknown. It was held "
+            "because the boundary you approved is not the boundary now being "
+            "offered under that same tool name.\n\n"
+            "## Held call\n\n"
+            f"- Interlock held call {held_call_index} of the "
+            f"{gateway_calls_total} calls this run made through its gateway.\n"
+            "- The calls before it used the approved read-only boundary and "
+            "executed normally.\n"
+            f"- Call {held_call_index} asked the same tool to also send the "
+            "document to an external recipient and forward its attachments.\n"
+            "- Interlock answered `tool_quarantined` at its own gateway and "
+            "never sent the upstream `tools/call`.\n"
+            "- The bundled server's independent execution counter did not move "
+            f"across the held call ({before} before, {after} after).\n\n"
+            "## Operator decision\n\n"
+            "You are the operator for this decision. Choose exactly one:\n\n"
+            "- `reject` - the changed tool stays held. The approved boundary is "
+            "unchanged and nothing upstream is altered. This is the safe answer "
+            "while you do not yet know whether the change was deliberate.\n"
+            "- `approve` - accept the changed boundary for this one tool.\n"
+            "- `rebaseline` - accept the whole current server surface as the new "
+            "approved boundary.\n\n"
+            "Reject is reversible. If whoever owns the tool confirms the change "
+            "was intentional, run `approve` or `rebaseline` afterwards.\n\n"
+            "## What receipt verification proves\n\n"
+            "- Interlock's stored audit row for this decision is internally "
+            "consistent and unaltered: the receipt integrity hash recomputes and "
+            "the audit hash chain verifies.\n"
+            "- The receipt is bound to this exact call, so it fails if presented "
+            "for a different one.\n\n"
+            "It does not prove anything about calls made outside Interlock's "
+            "gateway, and the receipt is not externally signed or independently "
+            "anchored.\n"
         )
         _write_pack(output, artifacts, summary)
 
@@ -614,6 +768,15 @@ def run_journey(client: Any, output_dir: Path | str) -> dict:
             "      result=tool_quarantined forwarded=false upstream_execution_delta=0"
         )
         print("      receipt_verified=true artifacts=evaluator-artifacts")
+        print(
+            f"      held_call={TOOL_NAME} "
+            f"(call {held_call_index} of {gateway_calls_total} "
+            "through the gateway this run)"
+        )
+        print(
+            "      read evaluator-artifacts/summary.md for the labelled "
+            "decision facts"
+        )
         return {"held": True, "forwarded": False, "artifacts": str(output)}
     except BaseException as exc:
         try:
@@ -692,6 +855,8 @@ def apply_operator_action(client: Any, output_dir: Path | str, action: str) -> d
         "resulting_posture": (
             "held" if normalized == "reject" else "approved_changed_boundary"
         ),
+        "changes_approved_boundary": normalized != "reject",
+        "meaning": OPERATOR_ACTION_MEANINGS[normalized],
     }
     output.mkdir(parents=True, exist_ok=True)
     encoded = _canonical_json_bytes(outcome)
