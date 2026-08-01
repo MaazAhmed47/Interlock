@@ -16,9 +16,9 @@ For MCP agents, the trust boundary is not only the prompt. It is also the tool s
 | -------------------------- | --------------------------------------- |
 | Live monitoring            | MCP gateway observes tool activity      |
 | Baselines that flag drift  | Tool baseline + drift detection         |
-| Stop mechanisms in seconds | Quarantine before execution             |
+| Stop mechanisms in seconds | Quarantine the affected tool; hold subsequent gateway calls to it before upstream forwarding |
 | Audit evidence             | Security Receipts and audit logs        |
-| Tool interface control     | MCP policy enforcement before execution |
+| Tool interface control     | MCP policy enforcement at the gateway before forwarding |
 
 ## Risky Drift Examples
 

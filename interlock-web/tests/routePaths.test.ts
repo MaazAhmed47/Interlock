@@ -1,6 +1,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isProofRoutePath, normalizeRoutePath } from '../src/routePaths.ts'
+import {
+  DASHBOARD_OVERVIEW_PATH,
+  PUBLIC_DASHBOARD_LANDING,
+  isProofRoutePath,
+  normalizeRoutePath,
+} from '../src/routePaths.ts'
+
+test('public dashboard entry lands on the drift proof while overview stays explicit', () => {
+  assert.equal(PUBLIC_DASHBOARD_LANDING, '/dashboard/proof')
+  assert.equal(DASHBOARD_OVERVIEW_PATH, '/dashboard/overview')
+})
 
 test('normalizes trailing slashes without changing other path segments', () => {
   assert.equal(normalizeRoutePath('/dashboard/proof'), '/dashboard/proof')

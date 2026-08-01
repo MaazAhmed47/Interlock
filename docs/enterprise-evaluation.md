@@ -72,7 +72,7 @@ A 7-day pilot should prove these outcomes:
 1. Interlock can sit between one agent workflow and one MCP server.
 2. A clean tool baseline can be recorded.
 3. A risky schema or capability drift is detected and quarantined.
-4. At least one agent role policy blocks a risky call before execution.
+4. At least one agent role policy blocks a risky gateway-mediated call before Interlock forwards it upstream.
 5. Tool response scanning catches an injected instruction or sensitive data leak.
 6. Audit logs are useful enough for security review.
 7. Added latency is acceptable for the buyer's workflow.

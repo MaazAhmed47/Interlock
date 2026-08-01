@@ -40,7 +40,8 @@ For enterprise pilots:
 
 - Use Postgres through `DATABASE_URL`; do not rely on local SQLite for multi-instance deployments.
 - Use Redis through `REDIS_URL` before running multiple workers or pods.
-- Put the admin surface behind SSO, VPN, identity-aware proxy, or a private network until native OIDC/SAML is implemented.
+- OIDC admin authentication is implemented for issuer/audience/JWKS-validated JWTs and dashboard Authorization Code + PKCE. Configure and test it for the selected IdP, or keep the admin surface behind a VPN, identity-aware proxy, or private network.
+- SAML is not implemented. A SAML-only deployment needs an identity-aware proxy or another external bridge; do not describe Interlock as having native SAML support.
 - Configure retention with `/admin/retention`.
 - Connect logs, metrics, and audit events to the buyer's monitoring/SIEM.
 - Test backup restore before routing production agent traffic.

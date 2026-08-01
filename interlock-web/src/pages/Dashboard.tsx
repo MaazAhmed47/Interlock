@@ -119,7 +119,7 @@ function ExecutiveDemoBrief({
       <div className="exec-demo-copy">
         <div className="exec-demo-kicker">Enterprise demo brief</div>
         <h2>Runtime control for agent tool access, with evidence a security team can inspect.</h2>
-        <p>Evaluate one agent workflow through Interlock: policy enforcement before execution, MCP drift review, response scanning, and a unified decision timeline.</p>
+        <p>Evaluate one agent workflow through Interlock: gateway policy enforcement before upstream forwarding, MCP drift review, response scanning, and a unified decision timeline.</p>
       </div>
       <div className="exec-demo-grid">
         <div className="exec-demo-item"><span>Environment</span><strong>{environmentLabel}</strong></div>

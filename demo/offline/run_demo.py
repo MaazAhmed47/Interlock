@@ -12,10 +12,14 @@ Subcommands:
               (The compose seeder service runs this automatically on `up`.)
   scenario-a  DEFAULT PATH — capability drift:
               approved read-only tool changes under the same name ->
-              quarantine BEFORE execution -> receipt -> verify -> replay fails.
+              quarantine -> later gateway call to that tool held before
+              forwarding -> receipt -> verify -> replay fails.
   scenario-b  ADVANCED PATH — behavioral / effective-permission drift:
-              same tool, same schema, previously-denied call (403) becomes
-              allowed (200) -> quarantine -> receipt -> verify.
+              same tool, same schema. A controlled non-production probe IS
+              forwarded so Interlock can observe that a previously-denied
+              call (403) now returns 200 -> quarantine -> later gateway
+              calls to that tool held before forwarding -> receipt -> verify.
+              The default path (scenario-a) never runs this probe.
   smoke       Prove demo readiness end-to-end on throwaway servers:
               services up, seed present, both scenarios, receipt verification,
               full replay-mutation matrix, claim-4 query, control stays clean.
@@ -303,8 +307,10 @@ class Demo:
     def scenario_a(self, server_id=DOCS_SERVER, mock_path="/docs", cleanup=False):
         banner("SCENARIO A — capability drift (default demo path)")
         print("  An approved read-only tool changes under the same name into an")
-        print("  external-export/PII tool. Interlock quarantines it BEFORE any")
-        print("  call executes, and issues a verifiable Security Receipt.")
+        print("  external-export/PII tool. Interlock detects the drift at")
+        print("  re-discovery and quarantines that one tool, so the next gateway-")
+        print("  mediated call to it is held before upstream forwarding. Other")
+        print("  approved tools keep working. Interlock issues a verifiable receipt.")
 
         if server_id != DOCS_SERVER:
             self.register_and_verify(
@@ -337,7 +343,7 @@ class Demo:
             die("expected read_file to be blocked by capability drift")
         print(f"    blocked reason: {discovery['blocked'][0].get('reason', '')[:120]}")
 
-        step("4/8 Agent attempts the drifted tool -> denied BEFORE execution")
+        step("4/8 Drifted tool call -> held at gateway before upstream forwarding")
         status, outcome = self.gw(
             "POST",
             "/mcp/call",
@@ -418,7 +424,10 @@ class Demo:
             self.set_phase(mock_path, 1)
 
         banner("SCENARIO A COMPLETE")
-        print("  approve -> drift -> quarantine BEFORE execution -> receipt ->")
+        print(
+            "  approve -> drift -> quarantine -> later call to that tool held ->"
+            " receipt ->"
+        )
         print("  verified; replayed receipt against changed context: REJECTED.")
         return detection["id"]
 
@@ -426,8 +435,10 @@ class Demo:
     def scenario_b(self, server_id=CRM_SERVER, mock_path="/crm", cleanup=False):
         banner("SCENARIO B — behavioral / effective-permission drift (advanced)")
         print("  Same tool, same schema. A call that was denied upstream (403)")
-        print("  later becomes allowed (200). Interlock's probe catches the")
-        print("  effective-permission expansion and quarantines the tool.")
+        print("  later becomes allowed (200). The controlled non-production probe")
+        print("  IS forwarded — Interlock needs the upstream response to observe")
+        print("  the change. The observed 200 quarantines the tool, so only later")
+        print("  gateway-mediated calls to that same tool are held before forwarding.")
 
         if server_id != CRM_SERVER:
             self.register_and_verify(

@@ -3,7 +3,7 @@
 Interlock is designed to sit between an agent runtime and MCP/tool
 infrastructure. The exact adapter depends on the client, but the integration
 model stays the same: point tool calls through Interlock and let the gateway
-resolve the agent role from the runtime API key before execution. Do not treat
+resolve the agent role from the runtime API key before forwarding an upstream gateway call. Do not treat
 an `/mcp/call` request-body role as authorization; it is ignored.
 
 ---
@@ -156,7 +156,7 @@ The former `initialize`/`notifications/initialized` lifecycle,
 not supported. GET and DELETE return `405 Method Not Allowed`. This profile
 does not yet advertise subscriptions, tasks, prompts, resources, MRTR, or
 `x-mcp-header` parameter mirroring. Tools that require `x-mcp-header` are hidden
-and denied before execution.
+and denied at the gateway before upstream forwarding.
 
 Registered upstreams default to the existing `legacy` bare JSON-RPC adapter.
 Set `upstream_protocol_profile` to `2026-07-28` only for an upstream that

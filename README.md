@@ -8,7 +8,7 @@
 
 **MCP runtime trust layer for AI agents.**
 
-Interlock detects material MCP tool drift after approval, including effective-permission expansion that static manifest comparison can miss, quarantines changed gateway-mediated calls before continued use, and emits hash-chained evidence.
+Interlock detects material MCP tool drift after approval, including effective-permission expansion that static manifest comparison can miss, quarantines the affected tool so that later gateway-mediated calls to that tool are held before upstream forwarding, and emits hash-chained evidence.
 
 Current source metadata is `0.2.0-alpha.1`. This identifies the source tree; it is not a published GitHub release. See [GitHub Releases](https://github.com/MaazAhmed47/Interlock/releases) for published artifacts.
 
@@ -36,7 +36,7 @@ docker compose run --rm demo-runner scenario-a
 docker compose run --rm demo-runner scenario-b
 ```
 
-This runs the real proof sequence: approved tool → material capability drift → quarantine before a changed gateway-mediated call continues → Security Receipt → hash-chain verification. `scenario-b` adds the behavioral case that static manifest comparison misses: the same tool and schema move from expected `403 denied` to observed `200 allowed`.
+This runs the real proof sequence: an approved `read_file` boundary undergoes a material capability change, Interlock quarantines that tool, the next gateway-mediated call to `read_file` is held before any upstream `tools/call` is forwarded, and the decision produces a Security Receipt that passes hash-chain verification. `scenario-b` adds the behavioral case that static manifest comparison misses: the same tool and schema move from expected `403 denied` to observed `200 allowed`.
 
 See the [offline demo instructions](demo/offline/README.md#quickstart) for the command reference, fixed ports, reset procedure, and exact proof limits.
 
@@ -103,7 +103,7 @@ Scope note: this is behavioral verification, not provider-wide OAuth introspecti
 
 Use Interlock when an AI agent can call MCP tools that touch real systems: files, internal documents, databases, Slack, GitHub, customer records, or deployment workflows — especially when those tools are vendor, community, forked, or separately operated surfaces your team does not fully control.
 
-Example: you approved a read-only MCP tool for internal documents. Later, the same tool name gains external export behavior or starts exposing sensitive data fields. Interlock detects the drift, blocks or quarantines the tool before execution, and records a Security Receipt for review.
+Example: you approved a read-only MCP tool for internal documents. Later, the same tool name gains external export behavior or starts exposing sensitive data fields. Interlock can detect that material surface drift during gateway re-discovery, quarantine that tool, hold subsequent gateway-mediated calls to it before forwarding, and record a Security Receipt for review. Unrelated approved tools keep working. Undeclared behavioral drift may require a controlled probe or an observed response first.
 
 ---
 
@@ -133,7 +133,7 @@ configuration is default-deny: the variable name must also appear in
 }
 ```
 
-Use a non-production workflow only. Baseline a safe read-only tool, then make or simulate one safe surface change and verify that Interlock detects the changed tool boundary before execution.
+Use a non-production workflow only. Baseline a safe read-only tool, then make or simulate one safe surface change and verify that Interlock detects the changed boundary at re-discovery and holds the subsequent gateway-mediated call to that tool before forwarding upstream.
 
 ---
 
@@ -163,7 +163,7 @@ Interlock is built around that runtime control gap for MCP agents:
 
 * baseline approved MCP tools
 * detect post-approval tool/schema drift
-* enforce quarantine before execution
+* enforce quarantine on the affected tool, holding subsequent gateway-mediated calls to it before upstream forwarding
 * produce audit evidence for runtime decisions
 
 Interlock is not affiliated with or endorsed by OWASP. The mapping above describes alignment with public agentic security guidance.
@@ -293,7 +293,7 @@ Beyond pattern matching, Interlock enforces business-logic constraints on tool a
 }
 ```
 
-Now an agent calling `refund_user(amount=99999)` is denied before execution — even if the tool exists and the agent has permission. Regex can't catch business-logic violations like this; deterministic bounds can.
+Now an agent calling `refund_user(amount=99999)` through `/mcp/call` is denied at the gateway before Interlock forwards the upstream `tools/call` — even if the tool exists and the agent has permission. Regex can't catch business-logic violations like this; deterministic bounds can.
 
 ---
 
@@ -516,7 +516,7 @@ Open an issue, start a discussion, or reach out from the links above.
 Interlock is strongest when agents are close to real systems: databases, Slack, files, ticketing, deployment tools, finance data, or internal APIs. A buyer should be able to prove value quickly by seeing:
 
 - a clean MCP tool baseline recorded at discovery
-- a risky tool schema or capability drift quarantined before execution
+- a risky tool schema or capability drift detected at re-discovery, followed by a gateway-mediated call to that tool held before upstream forwarding
 - role-based policy blocking a dangerous call from the wrong agent
 - response scanning catching prompt injection, secrets, PII, or oversized output
 - audit evidence for every allow, deny, monitor, and quarantine decision
@@ -578,7 +578,7 @@ What to verify before production:
 
 ## What Interlock is
 
-Interlock detects material MCP tool drift after approval, including effective-permission expansion that static manifest comparison can miss, quarantines changed gateway-mediated calls before continued use, and emits hash-chained evidence.
+Interlock detects material MCP tool drift after approval, including effective-permission expansion that static manifest comparison can miss, quarantines the affected tool so that later gateway-mediated calls to that tool are held before upstream forwarding, and emits hash-chained evidence.
 
 It is built for the agent path, not just prompt filtering. The main security surface is `POST /mcp/call`, where Interlock checks server trust, tool whitelist rules, tool metadata, schema drift, provenance, RBAC, tool-call arguments, and MCP responses before returning anything to the agent.
 
@@ -725,7 +725,7 @@ Readback effect evidence schema: [`readback-effect-drift-record.v1.json`](interl
 
 `core/chain_drift.py` adds pre-execution analysis for planned MCP tool chains. This catches risks that no single tool call reveals alone: sensitive read -> external send, secret read -> shell execution, Terraform plan -> apply/destroy, or preview -> deploy/charge later in the same workflow. The analyzer does not call providers or execute tools. It hashes every step's arguments, builds an evidence-safe chain profile, and logs a chain-drift Security Receipt when the planned sequence crosses a material boundary.
 
-Critical chain findings are denied before execution with types such as `chain_sensitive_read_to_external_effect`, `chain_secret_to_execution`, `chain_preview_to_deploy`, `chain_preview_to_destructive`, and `chain_preview_to_money_movement`. Read-only chains remain allowed. This is a prevention point for orchestrators that can submit a planned sequence before running it; it is not a claim that Interlock can infer every future agent step without seeing the plan.
+Critical chain findings are denied before the orchestrator forwards provider calls when it submits the planned sequence to Interlock, with types such as `chain_sensitive_read_to_external_effect`, `chain_secret_to_execution`, `chain_preview_to_deploy`, `chain_preview_to_destructive`, and `chain_preview_to_money_movement`. Read-only chains remain allowed. This is a prevention point for orchestrators that expose a plan before running it; it is not a claim that Interlock can infer every future agent step without seeing the plan.
 
 Chain drift evidence schema: [`chain-drift-record.v1.json`](interlock-web/public/schemas/chain-drift-record.v1.json).
 

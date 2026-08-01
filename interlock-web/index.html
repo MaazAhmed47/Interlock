@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Interlock — Know when an approved MCP tool changes</title>
-<meta name="description" content="Interlock baselines the approved MCP tool boundary, detects material capability or observed behavioral drift, quarantines the changed gateway-mediated call, and records hash-chained evidence.">
+<meta name="description" content="Interlock baselines the approved MCP tool boundary, detects material capability or observed behavioral drift, quarantines the affected tool so later gateway-mediated calls to it are held before upstream forwarding, and records hash-chained evidence.">
 <link rel="canonical" href="https://getinterlock.dev/">
 <meta property="og:title" content="Interlock — Know when an approved MCP tool changes">
-<meta property="og:description" content="Runtime trust for MCP tools after approval. Detect drift, quarantine before execution, verify hash-chained receipts offline.">
+<meta property="og:description" content="Runtime trust for MCP tools after approval. Detect material drift, hold subsequent gateway-mediated calls to the quarantined tool before forwarding, and verify hash-chained receipts offline.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://getinterlock.dev/">
 <meta name="twitter:card" content="summary_large_image">
@@ -247,29 +247,29 @@
 <header class="hero" id="top">
   <div class="wrap">
     <h1>Interlock stops AI agents from using MCP tools that changed after approval.</h1>
-    <p class="lede">Detect material changes, hold risky gateway-mediated calls, and review the evidence before they run.</p>
+    <p class="lede">Detect material changes to an approved MCP tool boundary, hold the next gateway-mediated call <em>to that tool</em> before it is forwarded upstream, and verify the recorded evidence.</p>
     <div class="cta-row">
       <a class="btn" href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline" target="_blank" rel="noopener">Run the offline proof</a>
       <a class="btn ghost" href="mailto:maaz@getinterlock.dev?subject=MCP%20trust%20boundary%20%E2%80%94%20evaluation%20interest&body=Hi%20Maaz%2C%0A%0AWe%20run%20agents%20against%20MCP%20tools%20and%20want%20to%20discuss%20post-approval%20drift.%0A%0AOur%20setup%3A%20%0A">Discuss one MCP trust boundary</a>
     </div>
     <div class="subnote">MCP runtime trust layer for AI agents. Open source. Self-hosted. Designed for gateway-mediated MCP traffic.</div>
 
-    <!-- proof flow -->
-    <div class="flow reveal">
+    <!-- proof flow — DEFAULT EVALUATOR JOURNEY: surface / capability drift -->
+    <div class="flow reveal" id="default-proof-flow" data-proof-flow="default-surface-drift">
       <div class="fstep green">
         <div class="top"><span class="flabel">1 · APPROVED BOUNDARY</span><span class="pill green">✓ approved</span></div>
-        <div class="fbody">read-only tool · internal access<br>expected capability: read<br>expected result: denied / 403<br><span style="color:var(--muted2)">baseline hash pinned · policy approved</span></div>
+        <div class="fbody">tool: read_file<br>effects: read<br>externality: internal<br><span style="color:var(--muted2)">baseline hash pinned · policy approved</span></div>
       </div>
       <div class="arrow">→</div>
       <div class="fstep amber">
-        <div class="top"><span class="flabel">2 · BEHAVIOR CHANGED</span><span class="pill amber">changed</span></div>
-        <div class="big">expected 403 → observed <span style="color:var(--amberText)">200</span></div>
-        <div class="fbody">manifest surface: unchanged<br><span style="color:var(--muted2)">behavioral drift detected</span></div>
+        <div class="top"><span class="flabel">2 · SURFACE CHANGED</span><span class="pill amber">changed</span></div>
+        <div class="big">read → read + <span style="color:var(--amberText)">export</span></div>
+        <div class="fbody">tool identity: unchanged<br>externality: internal → external<br><span style="color:var(--muted2)">capability drift detected at re-discovery</span></div>
       </div>
       <div class="arrow">→</div>
       <div class="fstep red">
-        <div class="top"><span class="flabel" style="color:var(--redText)">3 · QUARANTINED</span><span class="pill red">quarantined</span></div>
-        <div class="fbody">decision: quarantined<br>changed gateway-mediated call not forwarded<br><span style="color:var(--muted2)">reason: behavioral scope drift</span></div>
+        <div class="top"><span class="flabel" style="color:var(--redText)">3 · READ_FILE QUARANTINED</span><span class="pill red">quarantined</span></div>
+        <div class="fbody">decision: read_file quarantined<br>next gateway-mediated call to read_file: held before upstream forwarding<br><span style="color:var(--muted2)">other approved tools keep working</span></div>
       </div>
       <div class="arrow">→</div>
       <div class="fstep green">
@@ -277,7 +277,7 @@
         <div class="fbody">hash-chained receipt<br>previous hash → current hash<br>verified offline<br><span style="color:var(--greenText)">chain: verified</span></div>
       </div>
     </div>
-    <div class="subnote" style="margin-top:20px">Gateway-mediated decisions are recorded in a hash-chained audit log, from which receipts can be verified offline. <span class="mono" style="border:1px solid rgba(210,153,34,0.48);background:rgba(210,153,34,0.10);color:var(--amberText);border-radius:999px;padding:2px 10px;margin-left:8px">offline proof fixture</span></div>
+    <div class="subnote" style="margin-top:20px">This is the default evaluator journey: the change is found by comparing the re-discovered tool surface against the approved baseline, so the next gateway-mediated call <em>to that tool</em> is held before Interlock forwards it upstream. Quarantine is scoped to the affected tool — unrelated approved tools on the same server keep running. Decisions are recorded in a hash-chained audit log, from which receipts can be verified offline. <span class="mono" style="border:1px solid rgba(210,153,34,0.48);background:rgba(210,153,34,0.10);color:var(--amberText);border-radius:999px;padding:2px 10px;margin-left:8px">offline proof fixture</span></div>
   </div>
 </header>
 
@@ -292,7 +292,7 @@
     <div class="grid cols3 reveal" style="margin-top:40px">
       <div class="card"><div class="eyebrow" style="color:var(--muted2)">SURFACE DRIFT</div><div class="kv" style="margin-top:8px">Tool names, parameters, schemas, or declared capabilities change.</div></div>
       <div class="card"><div class="eyebrow" style="color:var(--muted2)">CAPABILITY DRIFT</div><div class="kv" style="margin-top:8px">A tool gains broader effects, externality, permissions, or data access.</div></div>
-      <div class="card" style="background:rgba(210,153,34,0.06);border-left:3px solid var(--amber);border-radius:0 8px 8px 0"><div class="eyebrow" style="color:var(--amberText)">OBSERVED BEHAVIORAL DRIFT</div><div class="kv" style="margin-top:8px">Runtime behavior changes while the manifest remains unchanged — <span class="mono">expected 403 → observed 200</span>. Invisible to schema diffing.</div></div>
+      <div class="card" style="background:rgba(210,153,34,0.06);border-left:3px solid var(--amber);border-radius:0 8px 8px 0"><div class="eyebrow" style="color:var(--amberText)">OBSERVED BEHAVIORAL DRIFT</div><div class="kv" style="margin-top:8px">Runtime behavior changes while the manifest remains unchanged — <span class="mono">expected 403 → observed 200</span>. Invisible to schema diffing, so it has to be <em>observed</em>: see the <a href="#behavioral-probe" style="color:var(--amberText)">controlled probe</a>.</div></div>
     </div>
   </div>
 </section>
@@ -310,9 +310,9 @@
       <div class="step"><b>1</b>Register a gateway-mediated MCP server</div>
       <div class="step"><b>2</b>Review and approve its tool boundary</div>
       <div class="step"><b>3</b>Create an approved baseline</div>
-      <div class="step"><b>4</b>Compare later surface and behavioral evidence</div>
+      <div class="step"><b>4</b>Re-discover and compare the current tool surface</div>
       <div class="step"><b>5</b>Detect material drift</div>
-      <div class="step"><b>6</b>Quarantine the changed call</div>
+      <div class="step"><b>6</b>Quarantine that tool, holding later gateway-mediated calls to it before forwarding</div>
       <div class="step"><b>7</b>Record the gateway decision</div>
       <div class="step"><b>8</b>Operator approves, rejects, or rebaselines</div>
     </div>
@@ -325,7 +325,7 @@
     <div class="reveal">
       <div class="eyebrow">THE PRODUCT CONSOLE</div>
       <h2 style="margin-top:12px">Drift review comes first.</h2>
-      <p class="lede" style="margin-top:14px">The first thing you see is the drift review queue: the approved baseline, expected-versus-observed evidence, the quarantine decision, forwarding status, and the receipt — with approve, reject, or rebaseline one action away.</p>
+      <p class="lede" style="margin-top:14px">The operational console keeps the drift review queue available: the approved baseline, the approved-versus-current boundary diff, the quarantine decision, what happens to later calls to that tool, and the receipt — with approve, reject, or rebaseline one action away.</p>
       <div style="margin-top:20px;display:flex;flex-direction:column;gap:10px;font-size:14px;color:var(--muted)">
         <div style="display:flex;gap:10px"><span style="color:var(--greenText)">✓</span>Approved server and tool baseline, always visible</div>
         <div style="display:flex;gap:10px"><span style="color:var(--greenText)">✓</span>Expected-versus-observed evidence per decision</div>
@@ -335,17 +335,17 @@
     </div>
     <div class="console reveal">
       <div class="head"><span>Drift review queue</span><span class="sub">Offline proof fixture. Receipt chain verified.</span></div>
-      <div class="crow chead"><span>TOOL BOUNDARY</span><span>EXPECTED</span><span>OBSERVED</span><span>DECISION</span></div>
+      <div class="crow chead"><span>TOOL BOUNDARY</span><span>APPROVED</span><span>CURRENT</span><span>DECISION</span></div>
       <div class="crow" style="background:rgba(248,81,73,0.07)">
-        <span class="mono">read-only tool (fixture)</span>
-        <span class="mono" style="color:var(--greenText)">denied / 403</span>
-        <span class="mono" style="color:var(--amberText)">allowed / 200</span>
+        <span class="mono">read_file (fixture)</span>
+        <span class="mono" style="color:var(--greenText)">read · internal</span>
+        <span class="mono" style="color:var(--amberText)">read, export · external</span>
         <span><span class="pill red">quarantined</span></span>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line3)">
         <div style="padding:14px 20px;border-right:1px solid var(--line3)">
-          <div class="chead" style="display:block">EXPECTED VS OBSERVED</div>
-          <div class="mono" style="font-size:12.5px;line-height:1.8;color:var(--muted);margin-top:6px">manifest surface: unchanged<br>classification: behavioral scope drift<br>forwarding: not forwarded</div>
+          <div class="chead" style="display:block">APPROVED VS CURRENT</div>
+          <div class="mono" style="font-size:12.5px;line-height:1.8;color:var(--muted);margin-top:6px">tool identity: unchanged<br>classification: capability / surface drift<br>detected at: re-discovery<br>subsequent calls to read_file: held before forwarding</div>
         </div>
         <div style="padding:14px 20px">
           <div class="chead" style="display:block">RECEIPT</div>
@@ -356,7 +356,7 @@
         <span class="opchip">Approve</span>
         <span class="opchip">Reject</span>
         <span class="opchip">Rebaseline</span>
-        <span style="font-size:12px;color:var(--muted2);margin-left:auto">Operator actions · shown for reference, one continuous example</span>
+        <span style="font-size:12px;color:var(--muted2);margin-left:auto">Operator actions · shown for reference</span>
       </div>
     </div>
   </div>
@@ -368,12 +368,36 @@
     <div style="max-width:680px" class="reveal">
       <div class="eyebrow">EVIDENCE</div>
       <h2 style="margin-top:12px">See exactly what changed.</h2>
-      <p class="lede" style="margin-top:14px">Schema drift shows up in the surface diff. Behavioral drift shows up only in observed evidence — same manifest, different runtime behavior.</p>
+      <p class="lede" style="margin-top:14px">In the default journey the change is a declared one: the re-discovered tool surface no longer matches the approved boundary, and the diff is the evidence.</p>
     </div>
-    <div class="grid cols3 reveal" style="margin-top:40px">
-      <div class="fstep green"><div class="flabel" style="color:var(--greenText)">APPROVED</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:var(--muted);margin-top:10px">expected result: denied / 403<br>manifest surface: unchanged<br>approved baseline<br><span style="color:var(--muted2)">policy version recorded</span></div></div>
-      <div class="fstep amber"><div class="flabel" style="color:var(--amberText)">OBSERVED</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:var(--muted);margin-top:10px">observed result: <span style="color:var(--amberText);font-weight:700">allowed / 200</span><br>manifest surface: unchanged<br>behavioral mismatch detected<br><span style="color:var(--muted2)">evidence recorded</span></div></div>
-      <div class="fstep red"><div class="flabel" style="color:var(--redText)">DECISION</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:var(--muted);margin-top:10px">classification: behavioral scope drift<br>decision: quarantined<br>call not forwarded<br><span style="color:var(--greenText)">receipt recorded</span></div></div>
+    <div class="grid cols3 reveal" style="margin-top:40px" id="default-evidence-diff">
+      <div class="fstep green"><div class="flabel" style="color:var(--greenText)">APPROVED</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:var(--muted);margin-top:10px">tool: read_file<br>effects: read<br>externality: internal<br><span style="color:var(--muted2)">policy version recorded</span></div></div>
+      <div class="fstep amber"><div class="flabel" style="color:var(--amberText)">CURRENT</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:var(--muted);margin-top:10px">tool: read_file <span style="color:var(--muted2)">(same identity)</span><br>effects: read, <span style="color:var(--amberText);font-weight:700">export</span><br>externality: <span style="color:var(--amberText);font-weight:700">external</span><br><span style="color:var(--muted2)">capability drift at re-discovery</span></div></div>
+      <div class="fstep red"><div class="flabel" style="color:var(--redText)">DECISION</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:var(--muted);margin-top:10px">classification: capability / surface drift<br>decision: read_file quarantined<br>subsequent calls to read_file: held before forwarding<br><span style="color:var(--greenText)">receipt recorded</span></div></div>
+    </div>
+    <div class="note reveal" style="margin-top:24px">Surface and capability drift is declared, so Interlock can compare it against the approved baseline and hold the next call to that tool before forwarding. Quarantine applies to the changed tool, not to the whole server. Hidden <em>behavioral</em> drift leaves the manifest untouched — proving that needs a response Interlock has actually seen, which is a separate exercise below.</div>
+  </div>
+</section>
+
+<!-- ADVANCED BEHAVIORAL PROOF — SEPARATE FROM THE DEFAULT EVALUATOR JOURNEY -->
+<section class="pad band" id="behavioral-probe">
+  <div class="wrap">
+    <div style="max-width:720px" class="reveal">
+      <div class="eyebrow" style="color:var(--amberText)">ADVANCED BEHAVIORAL PROOF · SEPARATE EXERCISE</div>
+      <h2 style="margin-top:12px">Controlled effective-permission probe.</h2>
+      <p class="lede" style="margin-top:14px">Some drift never reaches the manifest: the schema is identical, but the upstream authorization quietly loosens. Interlock cannot diff its way to that. It has to see a response.</p>
+      <div class="note" style="margin-top:20px"><strong style="color:var(--amberText)">This is not the default evaluator journey.</strong> The default journey above detects surface and capability drift and never issues this probe. This exercise is a separate, explicitly invoked command against a server an administrator has registered as non-production and probe-enabled.</div>
+    </div>
+    <div class="grid cols3 reveal" style="margin-top:40px" id="behavioral-probe-flow">
+      <div class="fstep amber"><div class="flabel" style="color:var(--amberText)">1 · PROBE IS FORWARDED</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:var(--muted);margin-top:10px">controlled non-production probe<br>expected: denied / 403<br><span style="color:var(--amberText);font-weight:700">forwarded upstream on purpose</span><br><span style="color:var(--muted2)">Interlock needs the upstream response to observe the change</span></div></div>
+      <div class="fstep amber"><div class="flabel" style="color:var(--amberText)">2 · BEHAVIOR OBSERVED</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:var(--muted);margin-top:10px">expected 403 → observed <span style="color:var(--amberText);font-weight:700">200</span><br>manifest surface: unchanged<br>the probe did execute upstream<br><span style="color:var(--muted2)">that observed 200 is the evidence</span></div></div>
+      <div class="fstep red"><div class="flabel" style="color:var(--redText)">3 · QUARANTINE FOLLOWS</div><div class="mono" style="font-size:12.5px;line-height:1.9;color:var(--muted);margin-top:10px">the observed 200 quarantines that tool<br>classification: effective-permission drift<br><span style="color:var(--redText);font-weight:700">later gateway-mediated calls to that tool are held before forwarding</span><br><span style="color:var(--greenText)">receipt recorded · chain verified</span></div></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:28px" class="reveal">
+      <div class="limit"><span>—</span><span>The probe call is forwarded and answered upstream. It is not held; the calls that are held are the later ones to that same tool.</span></div>
+      <div class="limit"><span>—</span><span>Interlock does not prevent the first observable behavioral change. It converts that change into evidence, then holds later calls to that tool.</span></div>
+      <div class="limit"><span>—</span><span>This is a direct behavioral observation on one registered tool. It is not generic OAuth introspection and makes no claim about provider-wide token scope.</span></div>
+      <div class="limit"><span>—</span><span>Probes are fail-closed: an administrator must register the server as non-production with probes enabled, and each probe carries a required safety note.</span></div>
     </div>
   </div>
 </section>
@@ -387,14 +411,15 @@
       <p class="lede" style="margin-top:14px">You don't need a call to see it work. The proof runs on your machine, against a clearly labelled fixture.</p>
       <div class="cta-row" style="justify-content:flex-start;margin-top:24px">
         <a class="btn" href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline" target="_blank" rel="noopener">Run the offline proof</a>
-        <a class="btn ghost" href="https://github.com/MaazAhmed47/Interlock" target="_blank" rel="noopener">Read the walkthrough</a>
+        <a class="btn ghost" href="https://github.com/MaazAhmed47/Interlock/blob/main/docs/evaluator-quickstart.md" target="_blank" rel="noopener">Read the walkthrough</a>
       </div>
+      <div class="note" style="margin-top:20px">The default run proves capability and surface drift. It does not issue the <a href="#behavioral-probe" style="color:var(--amberText)">403 → 200 behavioral probe</a>; that is a separate command in the same repository.</div>
     </div>
-    <div class="grid cols2 reveal">
+    <div class="grid cols2 reveal" id="offline-proof-claims">
       <div class="step">Runs locally, using an <span class="mono">offline proof fixture</span></div>
-      <div class="step">Demonstrates <span class="mono">expected 403 → observed 200</span></div>
-      <div class="step">Shows the manifest surface unchanged throughout</div>
-      <div class="step">Shows the quarantine decision and forwarding status</div>
+      <div class="step">Diffs the approved boundary against the re-discovered surface</div>
+      <div class="step">Shows <span class="mono">read_file</span> keeping its identity while its capability expands</div>
+      <div class="step">Shows the quarantine decision, and the next call to <span class="mono">read_file</span> held before forwarding</div>
       <div class="step">Produces receipt evidence for the decision</div>
       <div class="step">Supports offline receipt-chain verification</div>
     </div>

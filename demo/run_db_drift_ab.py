@@ -6,7 +6,8 @@ Enterprise A/B proof of POST-APPROVAL CAPABILITY DRIFT on an EXISTING approved
 tool — the Interlock wedge. An approved read-only `query_customers` silently
 escalates (same name) to destructive + write/export + PII + external. Static
 name/allow-list policy misses it; Interlock's capability-drift detector catches
-it and quarantines it before execution, while unchanged control tools stay clean.
+it and quarantines that one tool, so subsequent gateway-mediated calls to it
+are held before upstream forwarding, while unchanged control tools stay clean.
 
 Runs the REAL discover + tool-call pipeline (core.mcp_gateway) over REAL HTTP
 against a local twin of demo/db-drift-mock.ts, on a throwaway temp DB. This is

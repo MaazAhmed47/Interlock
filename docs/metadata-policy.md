@@ -50,7 +50,7 @@ Actions:
 
 ```text
 allow   - continue normally
-deny    - block before execution
+deny    - block the gateway-mediated call before upstream forwarding
 monitor - continue, but mark the call as needing review
 ```
 

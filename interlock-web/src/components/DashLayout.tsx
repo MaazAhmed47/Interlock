@@ -3,11 +3,11 @@ import { LayoutDashboard, ScanLine, Server, BookOpen, Settings, ArrowLeft, Menu,
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, hasApiKey, HealthResponse, UsageResponse, MCPServer, MCPTool, AuditEvent, ShadowStats, ScanHistoryEvent, ScanResult, ScanStats, normalizeLayerLabel, DEMO_USAGE, DEMO_MCP_SERVERS, DEMO_MCP_TOOLS, DEMO_DRIFTED_TOOLS, DEMO_AUDIT_EVENTS, DEMO_SCAN_HISTORY, DEMO_SCAN_STATS, DEMO_SHADOW_STATS } from '../api'
 import { authDisplayName, clearAuthSession, redirectToOidcLogout, useAuthSession } from '../auth'
-import { isProofRoutePath } from '../routePaths'
+import { DASHBOARD_OVERVIEW_PATH, isProofRoutePath } from '../routePaths'
 
 const NAV = [
   { to: '/dashboard/proof', label: 'Drift Proof', icon: GitCompareArrows, end: false },
-  { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, end: true },
+  { to: DASHBOARD_OVERVIEW_PATH, label: 'Overview', icon: LayoutDashboard, end: true },
   { to: '/dashboard/scan', label: 'Scan', icon: ScanLine, end: false },
   { to: '/dashboard/mcp', label: 'MCP Gateway', icon: Server, end: false },
   { to: '/dashboard/audit', label: 'Audit Log', icon: BookOpen, end: false },
