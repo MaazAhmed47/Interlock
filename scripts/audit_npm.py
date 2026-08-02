@@ -16,9 +16,15 @@ a blanket suppression:
   * an exception that matches nothing in its own scope fails, so the policy
     file cannot accumulate dead entries that quietly widen over time.
 
-Fail-closed posture: an advisory is blocked unless an exception proves
-otherwise, and an audit run that cannot be shown to be a complete, well-formed
-npm report is a failure rather than an empty (and therefore "clean") result.
+Fail-closed posture. An audit run is trusted only when npm exited 0 or 1 (the
+two codes that mean "the audit completed") AND stdout is a complete, well-formed
+report; anything else is a failure rather than an empty — and therefore
+"clean" — result. Production/full-tree differencing compares the whole security
+identity of an advisory, so a finding that differs in severity, range, or
+vulnerable instances can never be erased by its production twin. Installed
+versions come from a structured lockfile parse that keeps every instance, since
+one package can be installed at several paths at different versions.
+
 `npm audit` exits non-zero whenever it finds anything, so shelling it into a
 file needs `|| true` — exactly the exit-swallowing that this gate exists to
 avoid. It runs npm itself instead.
@@ -39,12 +45,16 @@ import argparse
 import datetime as _dt
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 POLICY_PATH = REPO_ROOT / ".github" / "dependency-audit-policy.json"
 SUPPORTED_AUDIT_REPORT_VERSIONS = {2}
+# 0 = audit ran, nothing found. 1 = audit ran, advisories found. Anything else
+# is an operational failure, not a verdict.
+COMPLETED_AUDIT_EXIT_CODES = {0, 1}
 
 
 class AuditUnusable(Exception):
@@ -105,11 +115,45 @@ def validate_report(payload: object, source: str) -> dict:
     return payload
 
 
-def run_npm_audit(npm_dir: pathlib.Path, production_only: bool) -> dict:
-    """Run `npm audit --json` and validate what comes back.
+_SECRETISH = re.compile(
+    r"(authorization|bearer|token|secret|password|passwd|api[-_]?key|cookie|set-cookie"
+    r"|_auth|_authToken|npm_token|//[^/\s]+/:_)",
+    re.I,
+)
 
-    npm exits 1 when advisories exist, which is not an error here: the policy
-    decides. Anything that is not a parsable, complete report is fatal.
+
+def sanitize_stderr(text: str, max_lines: int = 4, max_chars: int = 240) -> str:
+    """A short, redacted stderr summary safe to print in a public CI log.
+
+    npm writes registry URLs and, when misconfigured, auth material to stderr.
+    Only a handful of lines are kept, any line that looks credential-bearing is
+    replaced wholesale rather than partially masked, and the result is capped.
+    """
+    kept: list[str] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if _SECRETISH.search(line):
+            kept.append("[redacted: credential-bearing line]")
+        else:
+            kept.append(line)
+        if len(kept) >= max_lines:
+            break
+    summary = " | ".join(kept)
+    if len(summary) > max_chars:
+        summary = summary[:max_chars] + "…"
+    return summary or "(no stderr)"
+
+
+def run_npm_audit(npm_dir: pathlib.Path, production_only: bool) -> dict:
+    """Run `npm audit --json` and validate both the process and the payload.
+
+    npm exits 0 when nothing is found and 1 when advisories exist; both mean the
+    audit completed and the policy decides. Every other exit code is an
+    operational failure (network, auth, bad config, npm crash) and must be
+    rejected even when stdout happens to contain valid-looking audit JSON —
+    otherwise a failed run is indistinguishable from a clean tree.
     """
     if not (npm_dir / "package-lock.json").exists():
         raise AuditUnusable(
@@ -130,17 +174,25 @@ def run_npm_audit(npm_dir: pathlib.Path, production_only: bool) -> dict:
     except OSError as exc:  # npm missing / not executable
         raise AuditUnusable(f"{label}: could not execute npm ({exc})") from exc
 
+    if proc.returncode not in COMPLETED_AUDIT_EXIT_CODES:
+        raise AuditUnusable(
+            f"{label}: npm exited {proc.returncode}, which does not represent a "
+            f"completed audit (expected one of "
+            f"{sorted(COMPLETED_AUDIT_EXIT_CODES)}); "
+            f"stderr: {sanitize_stderr(proc.stderr)}"
+        )
+
     if not proc.stdout.strip():
         raise AuditUnusable(
             f"{label}: produced no stdout (exit {proc.returncode}); "
-            f"stderr: {proc.stderr.strip()[:300]}"
+            f"stderr: {sanitize_stderr(proc.stderr)}"
         )
     try:
         payload = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
         raise AuditUnusable(
             f"{label}: stdout was not JSON (exit {proc.returncode}): {exc}; "
-            f"head: {proc.stdout[:200]!r}"
+            f"stderr: {sanitize_stderr(proc.stderr)}"
         ) from exc
     return validate_report(payload, label)
 
@@ -158,11 +210,14 @@ def load_report_file(path: pathlib.Path) -> dict:
 # ── observed facts ───────────────────────────────────────────────────────────
 
 
-def installed_versions(lock_path: pathlib.Path) -> dict[str, str]:
-    """Map package name -> installed version from package-lock.json.
+def installed_instances(lock_path: pathlib.Path) -> dict[str, str]:
+    """Map every lockfile path -> installed version.
 
-    Structured parse of the lockfile `packages` map rather than trusting the
-    audit payload to describe what is installed.
+    A package can be installed at several paths at different versions (a nested
+    `node_modules/tool/node_modules/postcss` alongside a hoisted
+    `node_modules/postcss`). Collapsing those to one version with `setdefault`
+    silently picks an arbitrary winner and can validate an exception against a
+    version that is not the vulnerable one, so every instance is kept.
     """
     if not lock_path.exists():
         raise AuditUnusable(f"{lock_path}: package-lock.json not found")
@@ -176,19 +231,38 @@ def installed_versions(lock_path: pathlib.Path) -> dict[str, str]:
             f"{lock_path}: no 'packages' map (lockfileVersion too old?)"
         )
 
-    versions: dict[str, str] = {}
+    instances: dict[str, str] = {}
     for key, meta in packages.items():
         if not key or not isinstance(meta, dict):
             continue
-        marker = "node_modules/"
-        idx = key.rfind(marker)
-        if idx == -1:
-            continue
-        name = key[idx + len(marker) :]
         version = meta.get("version")
-        if name and isinstance(version, str):
-            versions.setdefault(name, version)
-    return versions
+        if "node_modules/" in key and isinstance(version, str):
+            instances[key] = version
+    return instances
+
+
+def package_name_for(lock_key: str) -> str:
+    marker = "node_modules/"
+    idx = lock_key.rfind(marker)
+    return lock_key[idx + len(marker) :] if idx != -1 else lock_key
+
+
+def versions_for_package(instances: dict[str, str], name: str) -> dict[str, str]:
+    """Every lockfile path of `name` -> its version."""
+    return {k: v for k, v in instances.items() if package_name_for(k) == name}
+
+
+def implicated_versions(
+    instances: dict[str, str], name: str, node_paths: list[str]
+) -> dict[str, str]:
+    """Versions of the instances the advisory actually points at.
+
+    npm reports vulnerable instances in `nodes` as lockfile-style paths. When
+    those resolve, only they are considered; otherwise every installed instance
+    of the package is, which is the conservative choice.
+    """
+    matched = {p: instances[p] for p in node_paths if p in instances}
+    return matched or versions_for_package(instances, name)
 
 
 def advisories(report: dict) -> list[dict]:
@@ -226,6 +300,69 @@ def at_or_above(severity: str, threshold: str, order: list[str]) -> bool:
         return True  # unknown severity: fail closed
 
 
+# ── production / full-tree differencing ──────────────────────────────────────
+
+# Facts that define WHICH advisory this is. Paths are deliberately excluded:
+# the full tree legitimately contains extra dev instances of the same advisory.
+SECURITY_IDENTITY_FIELDS = ("id", "advisory_package", "severity", "range", "node_range")
+
+
+def security_identity(row: dict) -> tuple:
+    return tuple(row[f] for f in SECURITY_IDENTITY_FIELDS)
+
+
+def development_only(full_rows: list[dict], production_rows: list[dict]) -> list[dict]:
+    """Full-tree rows that are not already accounted for by the production tree.
+
+    Subtraction is by complete security identity, never by (id, package) alone.
+    Three cases:
+
+      * identical identity and identical vulnerable paths -> already covered by
+        the production gate, subtract it;
+      * identical identity but the full tree lists extra vulnerable instances ->
+        those extra instances are dev-only, so the row is retained (with the
+        extra paths) and evaluated by the development gate;
+      * same (id, package) but different severity/range -> the two reports
+        disagree about the advisory itself. Nothing can safely be subtracted, so
+        fail closed rather than guess which report is right.
+    """
+    prod_by_identity: dict[tuple, dict] = {
+        security_identity(r): r for r in production_rows
+    }
+    prod_by_key: dict[tuple, list[dict]] = {}
+    for row in production_rows:
+        prod_by_key.setdefault((row["id"], row["advisory_package"]), []).append(row)
+
+    remaining: list[dict] = []
+    for row in full_rows:
+        identity = security_identity(row)
+        twin = prod_by_identity.get(identity)
+        if twin is None:
+            conflicting = prod_by_key.get((row["id"], row["advisory_package"]))
+            if conflicting:
+                other = conflicting[0]
+                differences = [
+                    f"{field}: production={other[field]!r} full={row[field]!r}"
+                    for field in SECURITY_IDENTITY_FIELDS
+                    if other[field] != row[field]
+                ]
+                raise AuditUnusable(
+                    "production and full audit reports disagree about "
+                    f"{row['id']} ({row['advisory_package']}): "
+                    + "; ".join(differences)
+                    + ". Refusing to subtract one from the other."
+                )
+            remaining.append(row)  # genuinely dev-only
+            continue
+
+        extra_paths = [p for p in row["paths"] if p not in set(twin["paths"])]
+        if extra_paths:
+            # Same advisory, additional vulnerable instances that only exist in
+            # the dev tree: keep it, scoped to just those instances.
+            remaining.append({**row, "paths": extra_paths, "dev_only_instances": True})
+    return remaining
+
+
 # ── exception matching ───────────────────────────────────────────────────────
 
 
@@ -252,16 +389,25 @@ def mismatches(
         problems.append(f"scope: policy={entry.get('scope')!r} gate={scope!r}")
 
     recorded_version = entry.get("installedVersion")
-    observed_version = versions.get(row["advisory_package"])
+    implicated = implicated_versions(versions, row["advisory_package"], row["paths"])
+    observed = sorted(set(implicated.values()))
     if recorded_version is None:
         problems.append("installedVersion: not recorded in policy")
-    elif observed_version is None:
+    elif not observed:
         problems.append(
             f"installedVersion: {row['advisory_package']} not present in package-lock.json"
         )
-    elif recorded_version != observed_version:
+    elif len(observed) > 1:
+        # Several vulnerable instances at different versions: one recorded
+        # version cannot describe them all, so the exception must not apply.
+        detail = ", ".join(f"{p}={v}" for p, v in sorted(implicated.items()))
         problems.append(
-            f"installedVersion: policy={recorded_version!r} lockfile={observed_version!r}"
+            f"installedVersion: policy records a single {recorded_version!r} but "
+            f"{len(observed)} versions are installed ({detail})"
+        )
+    elif recorded_version != observed[0]:
+        problems.append(
+            f"installedVersion: policy={recorded_version!r} lockfile={observed[0]!r}"
         )
 
     recorded_range = entry.get("affectedRange")
@@ -342,16 +488,11 @@ def main() -> int:
 
         if lock_path is None:
             raise AuditUnusable("no lockfile given; cannot verify installed versions")
-        versions = installed_versions(lock_path)
+        versions = installed_instances(lock_path)
 
         rows = advisories(evaluated)
         if args.scope == "development" and production is not None:
-            prod_keys = {
-                (r["id"], r["advisory_package"]) for r in advisories(production)
-            }
-            rows = [
-                r for r in rows if (r["id"], r["advisory_package"]) not in prod_keys
-            ]
+            rows = development_only(rows, advisories(production))
     except AuditUnusable as exc:
         # Still emit sanitized evidence when we have something structural.
         if args.write and written is not None:
