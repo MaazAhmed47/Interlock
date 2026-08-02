@@ -36,6 +36,13 @@ const OPEN_REDIRECT_PAYLOADS = [
   ' javascript:alert(1)',
   'data:text/html,<script>alert(1)</script>',
   '//evil.example\\@getinterlock.dev/dashboard',
+  '//user:getinterlock.dev@evil.example/dashboard',
+  'https://user:getinterlock.dev@evil.example/dashboard',
+  '%2F%2Fevil.example/dashboard',
+  '%252F%252Fevil.example/dashboard',
+  '/%2F%2Fevil.example/dashboard',
+  '\u0000//evil.example/dashboard',
+  '\r\n//evil.example/dashboard',
 ]
 
 /**
@@ -81,9 +88,35 @@ test('legitimate in-app destinations survive unchanged', () => {
     '/dashboard/proof',
     '/dashboard/overview',
     '/dashboard/audit?view=admin',
+    '/dashboard/audit?view=admin#receipt-42',
     '/dashboard/settings',
+    '/dashboard/settings?returnTo=%252F%252Fevil.example',
+    '/dashboard/%E0%A4%A',
+    '/dashboard/path\\with-mixed/slashes',
   ]) {
     assert.equal(sanitizeReturnTo(ok), ok, `internal route must be preserved: ${ok}`)
+  }
+})
+
+test('every accepted target resolves on the Interlock origin', () => {
+  const origin = 'https://getinterlock.dev'
+  const candidates = [
+    ...OPEN_REDIRECT_PAYLOADS,
+    ...SAME_ORIGIN_LOOKALIKES,
+    '/dashboard',
+    '/dashboard/proof?source=review#step-2',
+    '/dashboard/%E0%A4%A',
+    '/dashboard/path\\with-mixed/slashes',
+    '/dashboard/settings?returnTo=%252F%252Fevil.example',
+  ]
+
+  for (const candidate of candidates) {
+    const target = sanitizeReturnTo(candidate)
+    assert.equal(
+      new URL(target, origin).origin,
+      origin,
+      `sanitized target escaped the Interlock origin: ${JSON.stringify({ candidate, target })}`,
+    )
   }
 })
 
