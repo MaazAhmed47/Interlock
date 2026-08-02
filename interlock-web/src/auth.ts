@@ -170,7 +170,7 @@ export function supabaseAuthStatus(config: SupabaseAuthConfig = getSupabaseAuthC
 const RETURN_TO_FALLBACK = '/dashboard'
 const RETURN_TO_PARSE_ORIGIN = 'https://interlock.invalid'
 const MAX_RETURN_TO_DECODE_PASSES = 4
-const INVALID_PATH_CHARACTER = /[\\\u0000-\u001f\u007f]/
+const INVALID_PATH_CHARACTER = /[\\\u0000-\u001f\u007f-\u009f]/
 const MALFORMED_PERCENT_ENCODING = /%(?![0-9a-f]{2})/i
 
 function decodeReturnPathname(pathname: string) {

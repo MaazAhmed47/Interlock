@@ -96,12 +96,21 @@ const SLASH_AND_CONTROL_PAYLOADS = [
   '/dashboard/proof\u007f',
 ]
 
+const C1_CONTROL_PAYLOADS = Array.from({ length: 0x20 }, (_, offset) => {
+  const character = String.fromCodePoint(0x80 + offset)
+  return [
+    `/dashboard/${character}proof`,
+    `/dashboard/${encodeURIComponent(character)}proof`,
+  ]
+}).flat()
+
 const REJECTED_VALUES = [
   ...OFF_ORIGIN_AND_AUTHORITY_PAYLOADS,
   ...AUTH_BOUNCE_PAYLOADS,
   ...MALFORMED_PATHS,
   ...BOUNDARY_AND_DOT_SEGMENT_PAYLOADS,
   ...SLASH_AND_CONTROL_PAYLOADS,
+  ...C1_CONTROL_PAYLOADS,
 ]
 
 const SAFE_CASES = [
@@ -154,6 +163,11 @@ test('dashboard boundary confusion and escaping dot segments fail closed', () =>
 
 test('slash confusion and control characters fail closed', () => {
   assertRejected(SLASH_AND_CONTROL_PAYLOADS)
+})
+
+test('raw and UTF-8 percent-encoded C1 controls fail closed exhaustively', () => {
+  assert.equal(C1_CONTROL_PAYLOADS.length, 64)
+  assertRejected(C1_CONTROL_PAYLOADS)
 })
 
 test('nullish and empty return targets fail closed', () => {
