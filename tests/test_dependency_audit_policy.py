@@ -48,12 +48,31 @@ REQUIRED_FIELDS = (
     "expires",
 )
 
-# The advisory set actually observed at this commit. Every hostile fixture is a
-# single-fact mutation of this, so a failure names exactly one broken guarantee.
+# Historical React Router findings retained only as synthetic fixtures. Every
+# hostile fixture is a single-fact mutation, so failures name one broken gate
+# guarantee without requiring a live vulnerable dependency graph.
 OBSERVED = [
     ("GHSA-jjmj-jmhj-qwj2", "react-router-dom", "moderate", ">=6.30.2 <=6.30.4"),
     ("GHSA-wrjc-x8rr-h8h6", "react-router", "moderate", ">=6.0.0 <7.18.0"),
     ("GHSA-337j-9hxr-rhxg", "react-router", "moderate", ">=6.4.0 <7.18.0"),
+]
+
+FIXTURE_EXCEPTIONS = [
+    {
+        "id": advisory_id,
+        "package": package,
+        "installedVersion": "6.30.4",
+        "severity": severity,
+        "affectedRange": affected_range,
+        "scope": "production",
+        "title": "synthetic React Router policy fixture",
+        "reason": "Synthetic exception used only to exercise exact-match audit policy behavior.",
+        "exploitability": "Synthetic test metadata; no exception is present in the repository policy.",
+        "compensatingControl": "interlock-web/src/auth.ts",
+        "owner": "security@getinterlock.dev",
+        "expires": "2026-11-01",
+    }
+    for advisory_id, package, severity, affected_range in OBSERVED
 ]
 
 CLEAN = 0
@@ -114,6 +133,27 @@ def _run_gate(
 ):
     report = tmp_path / "audit.json"
     report.write_text(json.dumps(payload), encoding="utf-8")
+    if lockfile is None:
+        lockfile = tmp_path / "fixture-lock.json"
+        lockfile.write_text(
+            json.dumps(
+                {
+                    "lockfileVersion": 3,
+                    "packages": {
+                        "node_modules/react-router-dom": {"version": "6.30.4"},
+                        "node_modules/react-router": {"version": "6.30.4"},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+    if policy is None:
+        policy = tmp_path / "fixture-policy.json"
+        policy.write_text(
+            json.dumps({**_policy(), "exceptions": FIXTURE_EXCEPTIONS}),
+            encoding="utf-8",
+        )
+
     cmd = [
         sys.executable,
         str(GATE),
@@ -122,12 +162,12 @@ def _run_gate(
         "--scope",
         scope,
         "--lockfile",
-        str(lockfile or LOCKFILE),
+        str(lockfile),
+        "--policy",
+        str(policy),
     ]
     if today:
         cmd += ["--today", today]
-    if policy:
-        cmd += ["--policy", str(policy)]
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
@@ -142,22 +182,18 @@ def _mutate(index, **changes):
 # ── the accepted set still passes ────────────────────────────────────────────
 
 
-def test_exact_current_exceptions_pass(tmp_path):
+def test_exact_synthetic_exceptions_pass(tmp_path):
     r = _run_gate(tmp_path, _report(OBSERVED))
     assert r.returncode == CLEAN, r.stdout
     assert "3 advisories, 0 blocking, 3 accepted, 0 stale" in r.stdout
 
 
 def test_real_lockfile_versions_back_the_policy():
-    """The recorded installedVersion must be what is really installed."""
+    """The repository policy is exception-free on the secure router graph."""
     lock = json.loads(LOCKFILE.read_text(encoding="utf-8"))
-    for entry in _policy()["exceptions"]:
-        node = lock["packages"].get(f"node_modules/{entry['package']}")
-        assert node, f"{entry['package']} not in package-lock.json"
-        assert node["version"] == entry["installedVersion"], (
-            f"{entry['id']}: policy records {entry['installedVersion']}, "
-            f"lockfile has {node['version']}"
-        )
+    assert _policy()["exceptions"] == []
+    assert lock["packages"]["node_modules/react-router"]["version"] == "8.3.0"
+    assert "node_modules/react-router-dom" not in lock["packages"]
 
 
 # ── an exception must describe the advisory it approves ──────────────────────
@@ -328,6 +364,24 @@ def test_failed_audit_still_writes_evidence_when_structure_allows(tmp_path):
     report.write_text(
         json.dumps(_report(_mutate(0, severity="critical"))), encoding="utf-8"
     )
+    lockfile = tmp_path / "fixture-lock.json"
+    lockfile.write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {
+                    "node_modules/react-router-dom": {"version": "6.30.4"},
+                    "node_modules/react-router": {"version": "6.30.4"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = tmp_path / "fixture-policy.json"
+    policy.write_text(
+        json.dumps({**_policy(), "exceptions": FIXTURE_EXCEPTIONS}),
+        encoding="utf-8",
+    )
     r = subprocess.run(
         [
             sys.executable,
@@ -337,7 +391,9 @@ def test_failed_audit_still_writes_evidence_when_structure_allows(tmp_path):
             "--scope",
             "production",
             "--lockfile",
-            str(LOCKFILE),
+            str(lockfile),
+            "--policy",
+            str(policy),
             "--write",
             str(out),
         ],
@@ -393,6 +449,73 @@ def test_policy_is_not_a_blanket_suppression():
         assert "*" not in entry["package"], "wildcard packages are not allowed"
         assert "*" not in entry["affectedRange"], "wildcard ranges are not allowed"
         assert entry["scope"] in {"production", "development"}
+
+
+def test_repository_policy_has_no_react_router_exceptions():
+    router_ids = {
+        "GHSA-337j-9hxr-rhxg",
+        "GHSA-wrjc-x8rr-h8h6",
+        "GHSA-jjmj-jmhj-qwj2",
+        "GHSA-qwww-vcr4-c8h2",
+    }
+    assert not router_ids.intersection(entry["id"] for entry in _policy()["exceptions"])
+
+
+@pytest.mark.parametrize(
+    ("advisory_id", "package", "severity", "affected_range", "version"),
+    [
+        (
+            "GHSA-337j-9hxr-rhxg",
+            "react-router",
+            "moderate",
+            ">=6.4.0 <7.18.0",
+            "6.30.4",
+        ),
+        (
+            "GHSA-wrjc-x8rr-h8h6",
+            "react-router",
+            "moderate",
+            ">=6.0.0 <7.18.0",
+            "6.30.4",
+        ),
+        (
+            "GHSA-jjmj-jmhj-qwj2",
+            "react-router-dom",
+            "moderate",
+            ">=6.30.2 <=6.30.4",
+            "6.30.4",
+        ),
+        (
+            "GHSA-qwww-vcr4-c8h2",
+            "react-router",
+            "high",
+            ">=7.12.0 <8.3.0",
+            "7.18.2",
+        ),
+    ],
+)
+def test_vulnerable_react_router_advisory_reintroduction_blocks(
+    tmp_path, advisory_id, package, severity, affected_range, version
+):
+    lockfile = tmp_path / "vulnerable-router-lock.json"
+    lockfile.write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {f"node_modules/{package}": {"version": version}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = _run_gate(
+        tmp_path,
+        _report([(advisory_id, package, severity, affected_range)]),
+        lockfile=lockfile,
+        policy=_exceptionless_policy(tmp_path),
+    )
+    assert result.returncode == BLOCKED, result.stdout
+    assert advisory_id in result.stdout
+    assert "NOT EXCEPTED -> blocking" in result.stdout
 
 
 def test_no_unvalidated_cvss_is_carried():
@@ -1104,9 +1227,9 @@ def test_malformed_vulnerability_nodes_fail():
 
 
 def test_via_may_mix_advisory_objects_and_indirect_name_strings():
-    """Real npm reports do this; validation must not reject them.
+    """npm reports may do this; validation must not reject the shape.
 
-    Shape taken from the live report: `react-router-dom` carries its own
+    Shape taken from the retired report: `react-router-dom` carried its own
     advisory object AND the plain string `react-router`, which names the other
     vulnerable node that also makes it vulnerable.
     """
@@ -1213,14 +1336,7 @@ def _graph_report(vulns):
 
 
 def _exceptionless_policy(tmp_path):
-    """This repo's policy with its exceptions removed.
-
-    The stale-exception check happens to catch a zero-row report here, because
-    this repo currently carries three production exceptions that would all go
-    unmatched. That is incidental cover, not the guarantee under test: a repo
-    with no exceptions — or an advisory nobody wrote an exception for — has
-    nothing stale to trip over. Removing them exposes the real verdict.
-    """
+    """Write the repository's exception-free policy to an isolated fixture."""
     path = tmp_path / "exceptionless-policy.json"
     path.write_text(json.dumps({**_policy(), "exceptions": []}), encoding="utf-8")
     return path
@@ -1484,7 +1600,7 @@ def test_malformed_policy_exception_fails_closed_without_a_traceback(tmp_path):
         "missing compensating control": {"compensatingControl": None},
     }
     for label, override in cases.items():
-        entry = dict(_policy()["exceptions"][0])
+        entry = dict(FIXTURE_EXCEPTIONS[0])
         for key, value in override.items():
             if value is None:
                 entry.pop(key, None)
@@ -1509,24 +1625,12 @@ def test_bad_today_override_fails_closed_without_a_traceback(tmp_path):
 
 
 def test_current_real_npm_reports_pass_advisory_graph_validation():
-    """Production and full trees: real object/string via mixtures, real graph."""
+    """Production and full npm trees are clean and flatten to no advisories."""
     npm_dir = ROOT / "interlock-web"
     for production_only in (True, False):
         label = "production" if production_only else "full"
         report = audit_npm.run_npm_audit(npm_dir, production_only=production_only)
         rows = audit_npm.advisories(report)
         declared = report["metadata"]["vulnerabilities"]["total"]
-        assert declared > 0, f"{label}: fixture is vacuous if nothing is declared"
-        assert rows, f"{label}: declared {declared} vulnerabilities but flattened none"
-        observed_ids = {r["id"] for r in rows}
-        assert observed_ids == {advisory_id for advisory_id, *_ in OBSERVED}, label
-        mixtures = [
-            name
-            for name, node in report["vulnerabilities"].items()
-            if any(isinstance(v, dict) for v in node["via"])
-            and any(isinstance(v, str) for v in node["via"])
-        ]
-        assert mixtures, (
-            f"{label}: no object/string via mixture left in the real report; "
-            "the preservation guarantee is no longer exercised by real data"
-        )
+        assert declared == 0, f"{label}: expected a clean dependency graph"
+        assert rows == [], f"{label}: clean report flattened unexpected advisories"

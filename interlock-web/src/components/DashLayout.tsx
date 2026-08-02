@@ -1,4 +1,4 @@
-import { Outlet, Link, NavLink, useLocation } from 'react-router-dom'
+import { Outlet, Link, NavLink, useLocation } from 'react-router'
 import { LayoutDashboard, ScanLine, Server, BookOpen, Settings, ArrowLeft, Menu, X, LogIn, LogOut, ShieldCheck, GitCompareArrows } from 'lucide-react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, hasApiKey, HealthResponse, UsageResponse, MCPServer, MCPTool, AuditEvent, ShadowStats, ScanHistoryEvent, ScanResult, ScanStats, normalizeLayerLabel, DEMO_USAGE, DEMO_MCP_SERVERS, DEMO_MCP_TOOLS, DEMO_DRIFTED_TOOLS, DEMO_AUDIT_EVENTS, DEMO_SCAN_HISTORY, DEMO_SCAN_STATS, DEMO_SHADOW_STATS } from '../api'

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router'
 import { ScanLine, Loader2 } from 'lucide-react'
 import { api, demoScan, normalizeLayerLabel, ScanMode, ScanResult, DEMO_PROMPTS, DemoPrompt } from '../api'
 import StatusBadge from '../components/StatusBadge'

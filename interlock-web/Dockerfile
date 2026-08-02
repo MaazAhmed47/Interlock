@@ -2,7 +2,7 @@
 # Used by the offline demo compose stack (demo/offline/docker-compose.yml).
 # VITE_INTERLOCK_API_URL is baked at build time — point it at the gateway URL
 # the BROWSER will use (http://localhost:8001 for the local demo).
-FROM node:20-alpine AS build
+FROM node:22.22.0-alpine AS build
 
 WORKDIR /build
 COPY package.json package-lock.json ./

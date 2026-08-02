@@ -15,48 +15,5 @@
     "high",
     "critical"
   ],
-  "exceptions": [
-    {
-      "id": "GHSA-jjmj-jmhj-qwj2",
-      "package": "react-router-dom",
-      "installedVersion": "6.30.4",
-      "severity": "moderate",
-      "affectedRange": ">=6.30.2 <=6.30.4",
-      "scope": "production",
-      "title": "React Router: Open redirect leading to XSS",
-      "reason": "No fix exists on the 6.x line. The GitHub advisory records first_patched_version=none for react-router-dom 6.x; the only upstream remedy is the react-router 7.18.x major line, which is a framework major migration and out of scope for a dependency-security change.",
-      "exploitability": "Requires an attacker-influenced navigation target. The single such sink is navigate(returnTo) in interlock-web/src/pages/OIDCCallback.tsx. Every producer of returnTo passes it through sanitizeReturnTo on both write and read, which requires the literal '/dashboard' prefix, so an authority-position payload ('//host', '/\\host') can never reach the router.",
-      "compensatingControl": "interlock-web/src/auth.ts::sanitizeReturnTo, pinned by interlock-web/tests/returnToRedirect.test.ts",
-      "owner": "maaz@getinterlock.dev",
-      "expires": "2026-11-01"
-    },
-    {
-      "id": "GHSA-wrjc-x8rr-h8h6",
-      "package": "react-router",
-      "installedVersion": "6.30.4",
-      "severity": "moderate",
-      "affectedRange": ">=6.0.0 <7.18.0",
-      "scope": "production",
-      "title": "React Router: Open redirect via backslash in <Link> and useNavigate (CVE-2025-68470 bypass)",
-      "reason": "Patched only in react-router 7.18.0; no 6.x backport. Same major-migration constraint as GHSA-jjmj-jmhj-qwj2.",
-      "exploitability": "Same single sink and same guard as GHSA-jjmj-jmhj-qwj2. The backslash bypass needs the escape at the authority position (second character); sanitizeReturnTo forces characters 1-10 to be '/dashboard'.",
-      "compensatingControl": "interlock-web/src/auth.ts::sanitizeReturnTo, pinned by interlock-web/tests/returnToRedirect.test.ts",
-      "owner": "maaz@getinterlock.dev",
-      "expires": "2026-11-01"
-    },
-    {
-      "id": "GHSA-337j-9hxr-rhxg",
-      "package": "react-router",
-      "installedVersion": "6.30.4",
-      "severity": "moderate",
-      "affectedRange": ">=6.4.0 <7.18.0",
-      "scope": "production",
-      "title": "React Router: Arbitrary Constructor Injection via deserializeErrors() in React Router SSR Hydration",
-      "reason": "Patched only in react-router 7.18.0; no 6.x backport.",
-      "exploitability": "Unreachable. deserializeErrors() runs only on SSR hydration. interlock-web is a client-only Vite SPA: it contains no hydrateRoot, StaticRouter, renderToString, or createStaticHandler, and ships no server renderer.",
-      "compensatingControl": "Client-only build; absence of SSR entry points is asserted by interlock-web/tests/noSsrHydration.test.ts",
-      "owner": "maaz@getinterlock.dev",
-      "expires": "2026-11-01"
-    }
-  ]
+  "exceptions": []
 }
