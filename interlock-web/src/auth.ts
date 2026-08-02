@@ -167,10 +167,66 @@ export function supabaseAuthStatus(config: SupabaseAuthConfig = getSupabaseAuthC
   return { configured: missing.length === 0, missing }
 }
 
+const RETURN_TO_FALLBACK = '/dashboard'
+const RETURN_TO_PARSE_ORIGIN = 'https://interlock.invalid'
+const MAX_RETURN_TO_DECODE_PASSES = 4
+const INVALID_PATH_CHARACTER = /[\\\u0000-\u001f\u007f]/
+const MALFORMED_PERCENT_ENCODING = /%(?![0-9a-f]{2})/i
+
+function decodeReturnPathname(pathname: string) {
+  let decoded = pathname
+  for (let pass = 0; pass < MAX_RETURN_TO_DECODE_PASSES; pass += 1) {
+    let next: string
+    try {
+      next = decodeURIComponent(decoded)
+    } catch {
+      return null
+    }
+    if (INVALID_PATH_CHARACTER.test(next)) return null
+    if (next === decoded) return decoded
+    decoded = next
+  }
+  return null
+}
+
+function normalizeReturnPathname(pathname: string) {
+  if (!pathname.startsWith('/') || pathname.startsWith('//') || pathname.includes('//')) return null
+
+  const trailingSlash = pathname.endsWith('/')
+  const segments: string[] = []
+  for (const segment of pathname.split('/').slice(1)) {
+    if (!segment || segment === '.') continue
+    if (segment === '..') segments.pop()
+    else segments.push(segment)
+  }
+  if (!segments.length || segments[0].toLowerCase() !== 'dashboard') return null
+
+  segments[0] = 'dashboard'
+  const route = `/${segments.join('/')}`.toLowerCase()
+  if (route === '/dashboard/login' || route.startsWith('/dashboard/login/')) return null
+  if (route === '/dashboard/auth/callback' || route.startsWith('/dashboard/auth/callback/')) return null
+
+  const encoded = `/${segments.map(segment => encodeURIComponent(segment)).join('/')}`
+  return trailingSlash ? `${encoded}/` : encoded
+}
+
 export function sanitizeReturnTo(value?: string | null) {
-  if (!value || !value.startsWith('/dashboard')) return '/dashboard'
-  if (value.includes('/dashboard/auth/callback') || value.includes('/dashboard/login')) return '/dashboard'
-  return value
+  if (!value || value[0] !== '/' || value.startsWith('//')) return RETURN_TO_FALLBACK
+  if (INVALID_PATH_CHARACTER.test(value)) return RETURN_TO_FALLBACK
+  if (MALFORMED_PERCENT_ENCODING.test(value)) return RETURN_TO_FALLBACK
+
+  try {
+    const parsed = new URL(value, RETURN_TO_PARSE_ORIGIN)
+    if (parsed.origin !== RETURN_TO_PARSE_ORIGIN) return RETURN_TO_FALLBACK
+
+    const decodedPathname = decodeReturnPathname(parsed.pathname)
+    if (!decodedPathname) return RETURN_TO_FALLBACK
+    const pathname = normalizeReturnPathname(decodedPathname)
+    if (!pathname) return RETURN_TO_FALLBACK
+    return `${pathname}${parsed.search}${parsed.hash}`
+  } catch {
+    return RETURN_TO_FALLBACK
+  }
 }
 
 function base64Url(bytes: Uint8Array) {
