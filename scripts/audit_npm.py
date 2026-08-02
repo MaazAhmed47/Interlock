@@ -112,7 +112,91 @@ def validate_report(payload: object, source: str) -> dict:
             f"{source}: 'metadata.vulnerabilities' missing or not an object"
         )
 
+    validate_metadata_counts(metadata["vulnerabilities"], vulns, source)
+    for name, node in vulns.items():
+        validate_vulnerability_node(name, node, source)
+
     return payload
+
+
+SEVERITY_BUCKETS = ("info", "low", "moderate", "high", "critical")
+
+
+def _count(counts: dict, key: str, source: str) -> int:
+    """A severity/total count that is genuinely a non-negative integer.
+
+    `bool` is a subclass of `int` in Python, so `True` would otherwise pass as
+    the number 1 and let a malformed report through.
+    """
+    if key not in counts:
+        raise AuditUnusable(f"{source}: metadata.vulnerabilities.{key} is missing")
+    value = counts[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise AuditUnusable(
+            f"{source}: metadata.vulnerabilities.{key} must be an integer, "
+            f"got {type(value).__name__} ({value!r})"
+        )
+    if value < 0:
+        raise AuditUnusable(
+            f"{source}: metadata.vulnerabilities.{key} is negative ({value})"
+        )
+    return value
+
+
+def validate_metadata_counts(counts: dict, vulns: dict, source: str) -> None:
+    """Cross-check npm's own summary against the report body.
+
+    npm counts vulnerable *package nodes* in `metadata.vulnerabilities`, which
+    is exactly `len(vulnerabilities)` — not the flattened advisory count, since
+    one package node can carry several advisories. If the summary and the body
+    disagree, the report is internally inconsistent and must not be trusted.
+    """
+    buckets = {name: _count(counts, name, source) for name in SEVERITY_BUCKETS}
+    total = _count(counts, "total", source)
+
+    bucket_sum = sum(buckets.values())
+    if total != bucket_sum:
+        raise AuditUnusable(
+            f"{source}: metadata total {total} != sum of severity buckets "
+            f"{bucket_sum} ({buckets})"
+        )
+    if total != len(vulns):
+        raise AuditUnusable(
+            f"{source}: metadata total {total} != {len(vulns)} vulnerable package "
+            "nodes in the report body"
+        )
+
+
+def validate_vulnerability_node(name: str, node: object, source: str) -> None:
+    """Every vulnerability entry must be shaped as npm documents it."""
+    where = f"{source}: vulnerabilities[{name!r}]"
+    if not isinstance(node, dict):
+        raise AuditUnusable(f"{where} is not an object")
+
+    severity = node.get("severity")
+    if not isinstance(severity, str) or severity.lower() not in SEVERITY_BUCKETS:
+        raise AuditUnusable(f"{where}.severity is invalid ({severity!r})")
+
+    via = node.get("via")
+    if not isinstance(via, list):
+        raise AuditUnusable(f"{where}.via must be a list")
+    for item in via:
+        # npm mixes advisory objects with plain-string indirect edges.
+        if not isinstance(item, (dict, str)):
+            raise AuditUnusable(
+                f"{where}.via contains a {type(item).__name__}; "
+                "expected an advisory object or a package-name string"
+            )
+
+    nodes = node.get("nodes")
+    if not isinstance(nodes, list) or not all(
+        isinstance(p, str) and p.strip() for p in nodes
+    ):
+        raise AuditUnusable(f"{where}.nodes must be a list of non-empty strings")
+
+    vrange = node.get("range")
+    if vrange is not None and not isinstance(vrange, str):
+        raise AuditUnusable(f"{where}.range must be a string when present")
 
 
 _SECRETISH = re.compile(
@@ -253,16 +337,54 @@ def versions_for_package(instances: dict[str, str], name: str) -> dict[str, str]
 
 
 def implicated_versions(
-    instances: dict[str, str], name: str, node_paths: list[str]
+    instances: dict[str, str], name: str, node_paths: object
 ) -> dict[str, str]:
     """Versions of the instances the advisory actually points at.
 
-    npm reports vulnerable instances in `nodes` as lockfile-style paths. When
-    those resolve, only they are considered; otherwise every installed instance
-    of the package is, which is the conservative choice.
+    npm reports vulnerable instances in `nodes` as lockfile-style paths. Partial
+    resolution is refused: if npm names instances, EVERY one must resolve to an
+    instance of the expected package in the lockfile. Dropping the ones that do
+    not resolve would quietly shrink the evidence — and could leave a single
+    surviving path whose version happens to match an exception.
+
+    Only when npm supplies no paths at all does this fall back to considering
+    every installed instance of the package, which is the conservative choice.
     """
-    matched = {p: instances[p] for p in node_paths if p in instances}
-    return matched or versions_for_package(instances, name)
+    if node_paths is None:
+        node_paths = []
+    if not isinstance(node_paths, list) or not all(
+        isinstance(p, str) and p.strip() for p in node_paths
+    ):
+        raise AuditUnusable(
+            f"{name}: vulnerable 'nodes' must be a list of non-empty strings, "
+            f"got {node_paths!r}"
+        )
+
+    if not node_paths:
+        return versions_for_package(instances, name)
+
+    resolved: dict[str, str] = {}
+    unresolved: list[str] = []
+    wrong_package: list[str] = []
+    for path in node_paths:
+        if path not in instances:
+            unresolved.append(path)
+        elif package_name_for(path) != name:
+            wrong_package.append(f"{path} -> {package_name_for(path)}")
+        else:
+            resolved[path] = instances[path]
+
+    if unresolved or wrong_package:
+        problems = []
+        if unresolved:
+            problems.append(f"not found in package-lock.json: {sorted(unresolved)}")
+        if wrong_package:
+            problems.append(f"resolve to another package: {sorted(wrong_package)}")
+        raise AuditUnusable(
+            f"{name}: npm reported vulnerable instances that cannot be verified "
+            "against the lockfile (" + "; ".join(problems) + ")"
+        )
+    return resolved
 
 
 def advisories(report: dict) -> list[dict]:
@@ -311,31 +433,99 @@ def security_identity(row: dict) -> tuple:
     return tuple(row[f] for f in SECURITY_IDENTITY_FIELDS)
 
 
-def development_only(full_rows: list[dict], production_rows: list[dict]) -> list[dict]:
-    """Full-tree rows that are not already accounted for by the production tree.
+def _group_by_identity(rows: list[dict]) -> dict[tuple, dict]:
+    """Group rows by security identity, unioning their vulnerable paths.
 
-    Subtraction is by complete security identity, never by (id, package) alone.
-    Three cases:
-
-      * identical identity and identical vulnerable paths -> already covered by
-        the production gate, subtract it;
-      * identical identity but the full tree lists extra vulnerable instances ->
-        those extra instances are dev-only, so the row is retained (with the
-        extra paths) and evaluated by the development gate;
-      * same (id, package) but different severity/range -> the two reports
-        disagree about the advisory itself. Nothing can safely be subtracted, so
-        fail closed rather than guess which report is right.
+    npm can list the same advisory more than once for a package. Keying a plain
+    dict by identity would let the last row overwrite the earlier one and drop
+    its paths, so paths are accumulated instead of replaced.
     """
-    prod_by_identity: dict[tuple, dict] = {
-        security_identity(r): r for r in production_rows
-    }
+    grouped: dict[tuple, dict] = {}
+    for row in rows:
+        identity = security_identity(row)
+        bucket = grouped.get(identity)
+        if bucket is None:
+            grouped[identity] = {**row, "paths": list(dict.fromkeys(row["paths"]))}
+        else:
+            merged = list(dict.fromkeys([*bucket["paths"], *row["paths"]]))
+            bucket["paths"] = merged
+    return grouped
+
+
+def development_only(full_rows: list[dict], production_rows: list[dict]) -> list[dict]:
+    """Full-tree rows not already accounted for by the production tree.
+
+    The full tree is `npm audit` over every dependency; the production tree is
+    the same audit with `--omit=dev`. The full tree must therefore be a superset
+    of production. That invariant is checked in BOTH directions, because a
+    one-way scan can only find extra dev findings — it cannot notice that a
+    production finding went missing, which would mean the two runs did not
+    describe the same dependency graph.
+
+    Cases:
+      * identity in both, identical paths -> covered by the production gate,
+        subtract;
+      * identity in both, full has extra paths -> those instances are dev-only,
+        retain the row narrowed to them;
+      * identity only in full -> genuinely dev-only, retain;
+      * identity only in production, or a production path missing from full ->
+        the superset invariant is broken: fail closed;
+      * same (id, package) with different security fields -> the reports
+        disagree about the advisory itself: fail closed.
+    """
+    prod_by_identity = _group_by_identity(production_rows)
+    full_by_identity = _group_by_identity(full_rows)
+
     prod_by_key: dict[tuple, list[dict]] = {}
-    for row in production_rows:
+    for identity, row in prod_by_identity.items():
         prod_by_key.setdefault((row["id"], row["advisory_package"]), []).append(row)
 
+    full_by_key: dict[tuple, list[dict]] = {}
+    for identity, row in full_by_identity.items():
+        full_by_key.setdefault((row["id"], row["advisory_package"]), []).append(row)
+
+    # Direction 1: everything production saw must still be present in full.
+    for identity, prod_row in prod_by_identity.items():
+        full_row = full_by_identity.get(identity)
+        if full_row is None:
+            # Prefer the specific diagnosis: if the same advisory is present in
+            # full but with different security facts, the reports disagree —
+            # that is more informative than "it is missing".
+            counterpart = full_by_key.get(
+                (prod_row["id"], prod_row["advisory_package"])
+            )
+            if counterpart:
+                other = counterpart[0]
+                differences = [
+                    f"{field}: production={prod_row[field]!r} full={other[field]!r}"
+                    for field in SECURITY_IDENTITY_FIELDS
+                    if prod_row[field] != other[field]
+                ]
+                raise AuditUnusable(
+                    "production and full audit reports disagree about "
+                    f"{prod_row['id']} ({prod_row['advisory_package']}): "
+                    + "; ".join(differences)
+                    + ". Refusing to subtract one from the other."
+                )
+            raise AuditUnusable(
+                "production audit reported "
+                f"{prod_row['id']} ({prod_row['advisory_package']}, "
+                f"severity={prod_row['severity']}) but the full audit did not; "
+                "the full tree must be a superset of the production tree"
+            )
+        missing_paths = [
+            p for p in prod_row["paths"] if p not in set(full_row["paths"])
+        ]
+        if missing_paths:
+            raise AuditUnusable(
+                f"production audit reported vulnerable instances for "
+                f"{prod_row['id']} ({prod_row['advisory_package']}) that the full "
+                f"audit did not: {sorted(missing_paths)}"
+            )
+
+    # Direction 2: what the full tree adds is a development finding.
     remaining: list[dict] = []
-    for row in full_rows:
-        identity = security_identity(row)
+    for identity, row in full_by_identity.items():
         twin = prod_by_identity.get(identity)
         if twin is None:
             conflicting = prod_by_key.get((row["id"], row["advisory_package"]))
@@ -357,8 +547,6 @@ def development_only(full_rows: list[dict], production_rows: list[dict]) -> list
 
         extra_paths = [p for p in row["paths"] if p not in set(twin["paths"])]
         if extra_paths:
-            # Same advisory, additional vulnerable instances that only exist in
-            # the dev tree: keep it, scoped to just those instances.
             remaining.append({**row, "paths": extra_paths, "dev_only_instances": True})
     return remaining
 
@@ -493,6 +681,15 @@ def main() -> int:
         rows = advisories(evaluated)
         if args.scope == "development" and production is not None:
             rows = development_only(rows, advisories(production))
+
+        if args.write:
+            out = pathlib.Path(args.write)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(
+                json.dumps(written, indent=2, sort_keys=True), encoding="utf-8"
+            )
+
+        return decide(rows, versions, policy, args.scope, order, threshold, today)
     except AuditUnusable as exc:
         # Still emit sanitized evidence when we have something structural.
         if args.write and written is not None:
@@ -506,21 +703,32 @@ def main() -> int:
         print("  RESULT: FAIL (fail-closed; an untrusted audit is not a clean tree)")
         return 2
 
-    if args.write:
-        out = pathlib.Path(args.write)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(written, indent=2, sort_keys=True), encoding="utf-8")
 
+def decide(
+    rows: list[dict],
+    versions: dict[str, str],
+    policy: dict,
+    scope: str,
+    order: list[str],
+    threshold: str,
+    today: _dt.date,
+) -> int:
+    """Print the per-advisory verdict and return the gate's exit code.
+
+    Kept inside the caller's AuditUnusable boundary: evidence problems found
+    while matching an exception (an unverifiable vulnerable instance, say) must
+    fail closed with the same clean diagnostic, not surface as a traceback.
+    """
     # Exceptions are indexed by (id, package) and only apply in their own scope,
     # so a policy entry can never approve a different package on a shared id.
     scoped = [
         e
         for e in policy.get("exceptions", [])
-        if str(e.get("scope", "")).lower() == args.scope
+        if str(e.get("scope", "")).lower() == scope
     ]
     by_key = {(e["id"], e.get("package")): e for e in scoped}
 
-    print(f"== npm audit gate :: scope={args.scope} threshold={threshold} ==")
+    print(f"== npm audit gate :: scope={scope} threshold={threshold} ==")
     if not rows:
         print("  no advisories in this scope")
 
@@ -540,7 +748,7 @@ def main() -> int:
             print("           NOT EXCEPTED -> blocking")
             continue
 
-        drift = mismatches(row, entry, args.scope, versions)
+        drift = mismatches(row, entry, scope, versions)
         if drift:
             blocking.append(row)
             print("           EXCEPTION DOES NOT MATCH OBSERVED ADVISORY -> blocking")
@@ -562,7 +770,7 @@ def main() -> int:
 
     stale = [k for k in by_key if k not in used]
     if stale:
-        print(f"\n  stale {args.scope} policy entries matching no observed advisory:")
+        print(f"\n  stale {scope} policy entries matching no observed advisory:")
         for gid, pkg in sorted(stale):
             print(f"    - {gid} ({pkg})")
         print("  remove them; a policy file must not accumulate dead exceptions")

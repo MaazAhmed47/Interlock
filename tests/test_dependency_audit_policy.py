@@ -67,6 +67,16 @@ def _policy() -> dict:
     return json.loads(POLICY.read_text(encoding="utf-8"))
 
 
+def _metadata_for(vulns: dict) -> dict:
+    """npm-consistent metadata: buckets sum to total, total == package nodes."""
+    buckets = {k: 0 for k in ("info", "low", "moderate", "high", "critical")}
+    for node in vulns.values():
+        sev = str(node.get("severity", "")).lower()
+        if sev in buckets:
+            buckets[sev] += 1
+    return {"vulnerabilities": {**buckets, "total": len(vulns)}}
+
+
 def _report(entries):
     """Build a structurally valid npm audit report from (id, pkg, sev, range)."""
     vulns: dict = {}
@@ -95,7 +105,7 @@ def _report(entries):
     return {
         "auditReportVersion": 2,
         "vulnerabilities": vulns,
-        "metadata": {"vulnerabilities": {"total": len(entries)}},
+        "metadata": _metadata_for(vulns),
     }
 
 
@@ -199,8 +209,11 @@ def test_package_absent_from_lockfile_fails(tmp_path):
         encoding="utf-8",
     )
     r = _run_gate(tmp_path, _report(OBSERVED), lockfile=lock)
-    assert r.returncode == BLOCKED, r.stdout
-    assert "not present in package-lock.json" in r.stdout
+    # An advisory whose vulnerable instance cannot be located in the lockfile is
+    # unverifiable, so the gate fails closed rather than merely blocking.
+    assert r.returncode == UNUSABLE, r.stdout
+    assert "cannot be verified against the lockfile" in r.stdout
+    assert "not found in package-lock.json" in r.stdout
 
 
 def test_wrong_scope_fails(tmp_path):
@@ -490,11 +503,12 @@ def _report_with_nodes(entries):
     return {
         "auditReportVersion": 2,
         "vulnerabilities": vulns,
-        "metadata": {"vulnerabilities": {"total": len(entries)}},
+        "metadata": _metadata_for(vulns),
     }
 
 
 BASE_ROW = _row("GHSA-x", "pkg-a", "moderate", ">=1.0.0 <2.0.0", ["node_modules/pkg-a"])
+EXTRA_PROD_ROW = _row("GHSA-y", "pkg-b", "high", "<1.0.0", ["node_modules/pkg-b"])
 
 
 def _difference(full_entries, production_entries):
@@ -698,7 +712,16 @@ EMPTY_REPORT = json.dumps(
     {
         "auditReportVersion": 2,
         "vulnerabilities": {},
-        "metadata": {"vulnerabilities": {"total": 0}},
+        "metadata": {
+            "vulnerabilities": {
+                "info": 0,
+                "low": 0,
+                "moderate": 0,
+                "high": 0,
+                "critical": 0,
+                "total": 0,
+            }
+        },
     }
 )
 ADVISORY_REPORT = json.dumps(
@@ -723,7 +746,16 @@ ADVISORY_REPORT = json.dumps(
                 ],
             }
         },
-        "metadata": {"vulnerabilities": {"total": 1}},
+        "metadata": {
+            "vulnerabilities": {
+                "info": 0,
+                "low": 0,
+                "moderate": 0,
+                "high": 1,
+                "critical": 0,
+                "total": 1,
+            }
+        },
     }
 )
 
@@ -798,3 +830,295 @@ def test_sanitize_stderr_caps_length_and_line_count():
     assert len(summary) <= 241
     assert summary.count("|") <= 3
     assert audit_npm.sanitize_stderr("") == "(no stderr)"
+
+
+# ── F1: the full tree must be a verified superset of production ──────────────
+
+
+def test_production_row_absent_from_full_fails():
+    """A one-way scan cannot notice a production finding going missing."""
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        _difference([BASE_ROW], [BASE_ROW, EXTRA_PROD_ROW])
+    message = str(excinfo.value)
+    assert "GHSA-y" in message
+    assert "must be a superset" in message
+
+
+def test_production_vulnerable_path_absent_from_full_fails():
+    prod = _row(
+        "GHSA-x",
+        "pkg-a",
+        "moderate",
+        ">=1.0.0 <2.0.0",
+        ["node_modules/pkg-a", "node_modules/only-in-prod/node_modules/pkg-a"],
+    )
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        _difference([BASE_ROW], [prod])
+    assert "vulnerable instances" in str(excinfo.value)
+    assert "only-in-prod" in str(excinfo.value)
+
+
+def test_duplicate_identities_union_paths_instead_of_overwriting():
+    """Two rows sharing an identity must contribute both path sets."""
+    first = {**audit_npm.advisories(_report_with_nodes([BASE_ROW]))[0]}
+    second = {**first, "paths": ["node_modules/second-copy/node_modules/pkg-a"]}
+    grouped = audit_npm._group_by_identity([first, second])
+    assert len(grouped) == 1
+    (only,) = grouped.values()
+    assert only["paths"] == [
+        "node_modules/pkg-a",
+        "node_modules/second-copy/node_modules/pkg-a",
+    ], "a later duplicate must not overwrite the earlier row's paths"
+
+
+def test_duplicate_production_paths_are_not_lost_during_subtraction():
+    """Union semantics must hold across the production side too."""
+    prod_rows = audit_npm.advisories(_report_with_nodes([BASE_ROW]))
+    duplicate = {
+        **prod_rows[0],
+        "paths": ["node_modules/dup/node_modules/pkg-a"],
+    }
+    full = _row(
+        "GHSA-x",
+        "pkg-a",
+        "moderate",
+        ">=1.0.0 <2.0.0",
+        ["node_modules/pkg-a", "node_modules/dup/node_modules/pkg-a"],
+    )
+    # Both production paths are covered by full, so nothing remains and no
+    # superset violation is raised.
+    remaining = audit_npm.development_only(
+        audit_npm.advisories(_report_with_nodes([full])),
+        [*prod_rows, duplicate],
+    )
+    assert remaining == []
+
+
+def test_full_only_identity_remains_a_development_finding():
+    remaining = _difference([BASE_ROW, EXTRA_PROD_ROW], [BASE_ROW])
+    assert [r["id"] for r in remaining] == ["GHSA-y"]
+
+
+def test_full_only_path_remains_a_development_finding():
+    full = _row(
+        "GHSA-x",
+        "pkg-a",
+        "moderate",
+        ">=1.0.0 <2.0.0",
+        ["node_modules/pkg-a", "node_modules/only-in-full/node_modules/pkg-a"],
+    )
+    remaining = _difference([full], [BASE_ROW])
+    assert len(remaining) == 1
+    assert remaining[0]["paths"] == ["node_modules/only-in-full/node_modules/pkg-a"]
+
+
+# ── F2: vulnerable node paths must resolve completely ────────────────────────
+
+
+def _single_instance_lock(tmp_path):
+    lock = tmp_path / "lock.json"
+    lock.write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {"node_modules/pkg-a": {"version": "1.0.0"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return audit_npm.installed_instances(lock)
+
+
+def test_one_known_plus_one_unknown_node_path_fails(tmp_path):
+    instances = _single_instance_lock(tmp_path)
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        audit_npm.implicated_versions(
+            instances,
+            "pkg-a",
+            ["node_modules/pkg-a", "node_modules/ghost/node_modules/pkg-a"],
+        )
+    message = str(excinfo.value)
+    assert "not found in package-lock.json" in message
+    assert "ghost" in message
+
+
+def test_wrong_package_node_path_fails(tmp_path):
+    lock = tmp_path / "lock.json"
+    lock.write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {"node_modules/other": {"version": "9.9.9"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    instances = audit_npm.installed_instances(lock)
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        audit_npm.implicated_versions(instances, "pkg-a", ["node_modules/other"])
+    assert "resolve to another package" in str(excinfo.value)
+
+
+def test_empty_nodes_uses_conservative_all_instance_evaluation(tmp_path):
+    instances = audit_npm.installed_instances(_multi_version_lock(tmp_path))
+    assert set(audit_npm.implicated_versions(instances, "postcss", []).values()) == {
+        "8.5.25",
+        "7.0.1",
+    }
+    assert set(audit_npm.implicated_versions(instances, "postcss", None).values()) == {
+        "8.5.25",
+        "7.0.1",
+    }
+
+
+def test_malformed_nodes_value_fails(tmp_path):
+    instances = _single_instance_lock(tmp_path)
+    for bad in ("node_modules/pkg-a", ["", "node_modules/pkg-a"], [None], [123]):
+        with pytest.raises(audit_npm.AuditUnusable):
+            audit_npm.implicated_versions(instances, "pkg-a", bad)
+
+
+# ── F3: metadata must agree with the report body ─────────────────────────────
+
+
+def _payload(vulns, counts):
+    return {
+        "auditReportVersion": 2,
+        "vulnerabilities": vulns,
+        "metadata": {"vulnerabilities": counts},
+    }
+
+
+def _buckets(**overrides):
+    base = {"info": 0, "low": 0, "moderate": 0, "high": 0, "critical": 0, "total": 0}
+    base.update(overrides)
+    return base
+
+
+def _one_node(severity="high"):
+    return {
+        "pkg-a": {
+            "name": "pkg-a",
+            "severity": severity,
+            "isDirect": True,
+            "range": "<1",
+            "nodes": ["node_modules/pkg-a"],
+            "via": [],
+        }
+    }
+
+
+def test_empty_vulnerabilities_with_total_one_fails():
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        audit_npm.validate_report(_payload({}, _buckets(high=1, total=1)), "fixture")
+    assert "vulnerable package nodes" in str(excinfo.value)
+
+
+def test_non_empty_vulnerabilities_with_total_zero_fails():
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        audit_npm.validate_report(_payload(_one_node(), _buckets()), "fixture")
+    assert "vulnerable package nodes" in str(excinfo.value)
+
+
+def test_severity_buckets_not_summing_to_total_fails():
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        audit_npm.validate_report(
+            _payload(_one_node(), _buckets(moderate=1, total=5)), "fixture"
+        )
+    assert "sum of severity buckets" in str(excinfo.value)
+
+
+def test_missing_negative_string_and_boolean_counts_fail():
+    cases = {
+        "missing bucket": {"total": 1, "high": 1},
+        "negative total": _buckets(high=1, total=-1),
+        "negative bucket": _buckets(high=-1, total=-1),
+        "string total": _buckets(high=1, total="1"),
+        "string bucket": _buckets(high="1", total=1),
+        "boolean total": _buckets(high=1, total=True),
+        "boolean bucket": _buckets(high=True, total=1),
+    }
+    for label, counts in cases.items():
+        with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+            audit_npm.validate_report(_payload(_one_node(), counts), "fixture")
+        assert "metadata.vulnerabilities" in str(excinfo.value), label
+
+
+def test_malformed_vulnerability_nodes_fail():
+    cases = {
+        "node not an object": {"pkg-a": "oops"},
+        "bad severity": {
+            "pkg-a": {
+                "severity": "spicy",
+                "via": [],
+                "nodes": ["node_modules/pkg-a"],
+                "range": "<1",
+            }
+        },
+        "via not a list": {
+            "pkg-a": {
+                "severity": "high",
+                "via": {},
+                "nodes": ["node_modules/pkg-a"],
+                "range": "<1",
+            }
+        },
+        "via bad member": {
+            "pkg-a": {
+                "severity": "high",
+                "via": [123],
+                "nodes": ["node_modules/pkg-a"],
+                "range": "<1",
+            }
+        },
+        "nodes not a list": {
+            "pkg-a": {
+                "severity": "high",
+                "via": [],
+                "nodes": "node_modules/pkg-a",
+                "range": "<1",
+            }
+        },
+        "nodes has empty string": {
+            "pkg-a": {"severity": "high", "via": [], "nodes": [""], "range": "<1"}
+        },
+        "range not a string": {
+            "pkg-a": {
+                "severity": "high",
+                "via": [],
+                "nodes": ["node_modules/pkg-a"],
+                "range": 5,
+            }
+        },
+    }
+    for label, vulns in cases.items():
+        with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+            audit_npm.validate_report(
+                _payload(vulns, _buckets(high=1, total=1)), "fixture"
+            )
+        assert "vulnerabilities[" in str(excinfo.value), label
+
+
+def test_via_may_mix_advisory_objects_and_indirect_name_strings():
+    """Real npm reports do this; validation must not reject them."""
+    vulns = {
+        "pkg-a": {
+            "severity": "high",
+            "range": "<1",
+            "nodes": ["node_modules/pkg-a"],
+            "via": [{"source": 1, "name": "pkg-a", "severity": "high"}, "pkg-b"],
+        }
+    }
+    audit_npm.validate_report(_payload(vulns, _buckets(high=1, total=1)), "fixture")
+
+
+def test_current_real_npm_reports_remain_accepted():
+    """The live production and full trees must still validate end-to-end."""
+    npm_dir = ROOT / "interlock-web"
+    for production_only in (True, False):
+        report = audit_npm.run_npm_audit(npm_dir, production_only=production_only)
+        counts = report["metadata"]["vulnerabilities"]
+        assert counts["total"] == len(report["vulnerabilities"])
+        assert counts["total"] == sum(
+            counts[b] for b in audit_npm.SEVERITY_BUCKETS
+        ), "real npm metadata must satisfy the invariant the gate enforces"
