@@ -1,5 +1,5 @@
 import { Component, type ReactNode } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router'
 import DashLayout from './components/DashLayout'
 import Dashboard from './pages/Dashboard'
 import DriftProof from './pages/DriftProof'

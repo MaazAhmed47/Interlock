@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { KeyRound } from 'lucide-react'
 
 interface Props { message?: string; showSettingsLink?: boolean }

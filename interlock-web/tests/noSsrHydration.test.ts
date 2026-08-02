@@ -1,15 +1,4 @@
-/**
- * Compensating control for GHSA-337j-9hxr-rhxg (react-router
- * deserializeErrors() constructor injection during SSR hydration).
- *
- * That advisory is accepted in .github/dependency-audit-policy.json purely
- * because this app is a client-only SPA: deserializeErrors() is reached only on
- * SSR hydration, and interlock-web has no server renderer.
- *
- * If SSR is ever introduced, the exception's premise disappears and the
- * advisory becomes reachable. These tests fail at that moment, forcing the
- * react-router 7.18+ upgrade instead of letting a stale exception stand.
- */
+/** Architecture contract: the dashboard remains a client-only Declarative SPA. */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -53,9 +42,7 @@ test('no SSR or hydration entry point exists in the dashboard source', () => {
   assert.deepEqual(
     offenders,
     [],
-    'SSR detected — GHSA-337j-9hxr-rhxg becomes reachable and the accepted ' +
-      'exception in .github/dependency-audit-policy.json is no longer valid. ' +
-      `Upgrade react-router to >=7.18.0 instead.\n${offenders.join('\n')}`,
+    `SSR or hydration entry point detected; review the client-only routing architecture.\n${offenders.join('\n')}`,
   )
 })
 

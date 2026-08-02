@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { LogIn, Save, Search, ShieldCheck } from 'lucide-react'
 import { API_URL_KEY, API_KEY_KEY, DEFAULT_API_URL, api } from '../api'
 import { defaultRedirectUri, discoverOidcFromIssuer, getOidcConfig, getSupabaseAuthConfig, oidcConfigStatus, saveOidcConfig, saveSupabaseAuthConfig, supabaseAuthStatus, useAuthSession } from '../auth'

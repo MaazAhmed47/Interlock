@@ -16,12 +16,19 @@ const source = (path: string) => readFileSync(join(webRoot, path), 'utf8')
 const app = source('src/App.tsx')
 const main = source('src/main.tsx')
 const layout = source('src/components/DashLayout.tsx')
+const dashboardSource = source('src/App.tsx') + source('src/main.tsx') + layout +
+  source('src/components/EmptyState.tsx') + source('src/pages/Audit.tsx') +
+  source('src/pages/Dashboard.tsx') + source('src/pages/Login.tsx') +
+  source('src/pages/OIDCCallback.tsx') + source('src/pages/Scan.tsx') +
+  source('src/pages/Settings.tsx')
 
 test('the dashboard remains a client-only declarative BrowserRouter application', () => {
   assert.match(main, /<BrowserRouter>/)
   assert.match(app, /<Routes>/)
   assert.doesNotMatch(main + app, /createBrowserRouter|RouterProvider|HydratedRouter/)
   assert.doesNotMatch(source('vite.config.ts'), /@react-router\/dev/)
+  assert.doesNotMatch(dashboardSource, /react-router-dom/)
+  assert.match(main, /from 'react-router'/)
 })
 
 test('the complete dashboard route table remains wired to its intended pages', () => {

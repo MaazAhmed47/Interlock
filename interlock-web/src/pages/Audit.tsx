@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router'
 import { BadgeCheck, Download, LockKeyhole, LogIn, Printer, Receipt, RefreshCw, ShieldCheck } from 'lucide-react'
 import { AdminAuditEvent, api, AuditEvent, ScanHistoryEvent, SecurityReceipt } from '../api'
 import { authDisplayName, beginOidcLogin, useAuthSession } from '../auth'

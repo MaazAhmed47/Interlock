@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { RefreshCw, ScanLine, Server, Activity, ShieldCheck } from 'lucide-react'
 import { AuditEvent, ScanHistoryEvent, ScanStats, ShadowStats, DEMO_PROMPTS } from '../api'
 import { useDashboardData } from '../components/DashLayout'
