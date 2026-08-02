@@ -480,7 +480,7 @@ curl -X POST http://localhost:8001/mcp/validate-tool \
 
 #### 6. Open the dashboard
 
-Frontend development requires Node.js 22.22.0 or a newer Node 22 patch.
+Frontend development requires Node.js 22.22.0 or newer.
 
 ```bash
 cd interlock-web
