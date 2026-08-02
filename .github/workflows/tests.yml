@@ -51,6 +51,8 @@ jobs:
   dependency-audit:
     name: Dependency audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -58,17 +60,96 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: interlock-web/package-lock.json
+
       - name: Install dependencies and pip-audit
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pip-audit
 
-      # Report-only for now: the pinned pytest version still has a known
-      # advisory (see the release changelog). Remove
-      # continue-on-error once those pins are bumped, so new advisories block.
-      - name: Audit dependencies (pip-audit, report-only)
-        continue-on-error: true
+      # Each ecosystem is audited independently: a Python advisory must not stop
+      # the npm gates from running and reporting, and vice versa. Every audit
+      # step therefore runs with `if: always()` and records its own outcome id,
+      # and a final step fails the job if ANY of them failed. No step uses
+      # continue-on-error, `|| true`, or any other exit-swallowing construct.
+      - name: Audit Python dependencies (pip-audit, blocking)
+        id: pip_audit
+        if: always()
         run: pip-audit --progress-spinner off
+
+      - name: Record Python audit JSON
+        id: pip_audit_json
+        if: always()
+        run: pip-audit --progress-spinner off --format=json --output pip-audit.json
+
+      - name: Install frontend dependencies
+        id: npm_install
+        if: always()
+        working-directory: interlock-web
+        run: npm ci
+
+      # The gate runs `npm audit` itself, so no shell redirect needs `|| true`
+      # to survive npm's non-zero "found something" exit. Production is the
+      # --omit=dev tree; development is the full tree minus production, so a
+      # production advisory can never be relabelled as a build-only finding.
+      - name: Gate production dependencies (npm audit --omit=dev, blocking)
+        id: npm_production
+        if: always()
+        run: >-
+          python scripts/audit_npm.py
+          --npm-dir interlock-web
+          --scope production
+          --write interlock-web/npm-audit-production.json
+
+      - name: Gate build/development dependencies (blocking)
+        id: npm_development
+        if: always()
+        run: >-
+          python scripts/audit_npm.py
+          --npm-dir interlock-web
+          --scope development
+          --write interlock-web/npm-audit-all.json
+
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-${{ github.sha }}
+          path: |
+            pip-audit.json
+            interlock-web/npm-audit-production.json
+            interlock-web/npm-audit-all.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      # Single authoritative verdict. Any failed or skipped audit fails the job,
+      # so running the ecosystems independently never softens the result.
+      - name: Dependency audit verdict
+        if: always()
+        env:
+          PIP_AUDIT: ${{ steps.pip_audit.outcome }}
+          PIP_AUDIT_JSON: ${{ steps.pip_audit_json.outcome }}
+          NPM_INSTALL: ${{ steps.npm_install.outcome }}
+          NPM_PRODUCTION: ${{ steps.npm_production.outcome }}
+          NPM_DEVELOPMENT: ${{ steps.npm_development.outcome }}
+        run: |
+          failed=0
+          for name in PIP_AUDIT PIP_AUDIT_JSON NPM_INSTALL NPM_PRODUCTION NPM_DEVELOPMENT; do
+            outcome="${!name}"
+            printf '%-16s %s\n' "$name" "$outcome"
+            if [ "$outcome" != "success" ]; then
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::dependency audit failed in at least one ecosystem"
+            exit 1
+          fi
+          echo "all dependency audits passed"
 
   secret-scan:
     name: Secret scan

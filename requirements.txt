@@ -31,7 +31,7 @@ PyJWT[crypto]==2.13.0
 python-dotenv==1.2.2
 
 # Tests
-pytest==8.4.2
+pytest==9.0.3
 jsonschema==4.26.0
 mcp==1.28.1
 
