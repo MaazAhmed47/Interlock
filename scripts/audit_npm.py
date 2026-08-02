@@ -16,6 +16,18 @@ a blanket suppression:
   * an exception that matches nothing in its own scope fails, so the policy
     file cannot accumulate dead entries that quietly widen over time.
 
+A declared vulnerability must also survive the flattening. The verdict is
+computed from advisory objects inside each node's `via`, while the report
+declares vulnerabilities through `metadata` and per-node `severity` — fields the
+flattening never reads. A report can therefore agree with itself on every count
+and still produce zero advisory rows, which reads as "no advisories in this
+scope" and passes. So the via graph is validated for completeness: every node
+must reach a real advisory object, string edges must name nodes the report
+actually contains, cycles must terminate in evidence, each advisory object must
+carry the severity, range, package and identity the verdict is computed from,
+the severity buckets must match the nodes one for one, and a summary declaring
+vulnerable packages can never flatten to nothing.
+
 Fail-closed posture. An audit run is trusted only when npm exited 0 or 1 (the
 two codes that mean "the audit completed") AND stdout is a complete, well-formed
 report; anything else is a failure rather than an empty — and therefore
@@ -115,6 +127,10 @@ def validate_report(payload: object, source: str) -> dict:
     validate_metadata_counts(metadata["vulnerabilities"], vulns, source)
     for name, node in vulns.items():
         validate_vulnerability_node(name, node, source)
+    # Only once every node is individually well-formed can the graph they form
+    # and the severities they claim be checked against each other.
+    validate_advisory_graph(vulns, source)
+    validate_metadata_severities(metadata["vulnerabilities"], vulns, source)
 
     return payload
 
@@ -167,6 +183,40 @@ def validate_metadata_counts(counts: dict, vulns: dict, source: str) -> None:
         )
 
 
+def validate_metadata_severities(counts: dict, vulns: dict, source: str) -> None:
+    """Compare every severity bucket against the severities actually declared.
+
+    Matching totals are not agreement. A report can hold exactly as many
+    vulnerable package nodes as `total` claims, with the buckets summing to that
+    same total, and still describe a critical finding as moderate — which is
+    precisely the drift the exception matcher exists to catch. Comparing the
+    buckets one by one leaves no room for a severity to be restated on the way
+    into the summary.
+    """
+    observed = {name: 0 for name in SEVERITY_BUCKETS}
+    for node in vulns.values():
+        # Node severities are validated before this runs, so an unknown bucket
+        # is unreachable; counting only known ones keeps it that way rather than
+        # raising a KeyError, and an uncounted node still shows up as a
+        # difference below.
+        bucket = str(node.get("severity", "")).lower()
+        if bucket in observed:
+            observed[bucket] += 1
+
+    differences = [
+        f"{name}: metadata={counts[name]} report body={observed[name]}"
+        for name in SEVERITY_BUCKETS
+        if counts[name] != observed[name]
+    ]
+    if differences:
+        raise AuditUnusable(
+            f"{source}: metadata.vulnerabilities severity buckets disagree with the "
+            "severities declared by the vulnerable package nodes ("
+            + "; ".join(differences)
+            + ")"
+        )
+
+
 def validate_vulnerability_node(name: str, node: object, source: str) -> None:
     """Every vulnerability entry must be shaped as npm documents it."""
     where = f"{source}: vulnerabilities[{name!r}]"
@@ -180,11 +230,18 @@ def validate_vulnerability_node(name: str, node: object, source: str) -> None:
     via = node.get("via")
     if not isinstance(via, list):
         raise AuditUnusable(f"{where}.via must be a list")
-    for item in via:
+    for index, item in enumerate(via):
         # npm mixes advisory objects with plain-string indirect edges.
-        if not isinstance(item, (dict, str)):
+        if isinstance(item, dict):
+            validate_advisory_object(name, index, item, source)
+        elif isinstance(item, str):
+            if not item.strip():
+                raise AuditUnusable(
+                    f"{where}.via[{index}] is an empty package-name string"
+                )
+        else:
             raise AuditUnusable(
-                f"{where}.via contains a {type(item).__name__}; "
+                f"{where}.via[{index}] is a {type(item).__name__}; "
                 "expected an advisory object or a package-name string"
             )
 
@@ -197,6 +254,137 @@ def validate_vulnerability_node(name: str, node: object, source: str) -> None:
     vrange = node.get("range")
     if vrange is not None and not isinstance(vrange, str):
         raise AuditUnusable(f"{where}.range must be a string when present")
+
+
+def advisory_identity(advisory: dict) -> str:
+    """The advisory id the gate matches exceptions on.
+
+    npm identifies an advisory twice over: a `url` ending in the GHSA id and a
+    numeric `source`. The url is preferred because that is what a policy entry
+    records; the source is the fallback that still names something specific.
+    """
+    url = advisory.get("url")
+    if isinstance(url, str) and url.strip():
+        return url.rsplit("/", 1)[-1]
+    origin = advisory.get("source")
+    return str(origin) if origin is not None else ""
+
+
+def _require_text(value: object, field: str, where: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise AuditUnusable(
+            f"{where}.{field} must be a non-empty string, got {value!r}"
+        )
+    return value
+
+
+def validate_advisory_object(
+    package: str, index: int, advisory: dict, source: str
+) -> None:
+    """An advisory object must carry every fact the verdict is computed from.
+
+    `severity`, `range` and `name` are compared against the policy entry, and
+    the identity derived from `url`/`source` is what an exception is keyed on.
+    A missing one of these is not a harmless gap: the flattening turns it into
+    an empty string, and an empty string is then compared as though it were an
+    observed fact.
+    """
+    where = f"{source}: vulnerabilities[{package!r}].via[{index}]"
+
+    name = _require_text(advisory.get("name"), "name", where)
+    if name != package:
+        raise AuditUnusable(
+            f"{where}.name is {name!r} but the advisory is listed under "
+            f"{package!r}; npm lists an advisory object under the package it "
+            "affects, so the two must agree"
+        )
+
+    severity = advisory.get("severity")
+    if not isinstance(severity, str) or severity.lower() not in SEVERITY_BUCKETS:
+        raise AuditUnusable(f"{where}.severity is invalid ({severity!r})")
+
+    _require_text(advisory.get("range"), "range", where)
+
+    if advisory.get("url") is not None:
+        _require_text(advisory.get("url"), "url", where)
+
+    origin = advisory.get("source")
+    if origin is not None and (
+        isinstance(origin, bool) or not isinstance(origin, int) or origin < 0
+    ):
+        raise AuditUnusable(
+            f"{where}.source must be a non-negative integer advisory id, "
+            f"got {origin!r}"
+        )
+
+    if not advisory_identity(advisory):
+        raise AuditUnusable(
+            f"{where} carries neither a usable url nor a source, so the advisory "
+            "cannot be identified and no exception could ever be matched to it"
+        )
+
+
+def _via_reaches_advisory(start: str, vulns: dict) -> tuple[bool, set[str]]:
+    """Walk the via graph from `start`; report whether it reaches an advisory.
+
+    The visited set makes the walk cycle-safe and doubles as the diagnostic:
+    when nothing is reachable it names exactly which nodes were consulted.
+    """
+    seen: set[str] = set()
+    stack = [start]
+    while stack:
+        package = stack.pop()
+        if package in seen:
+            continue
+        seen.add(package)
+        for item in vulns[package].get("via") or []:
+            if isinstance(item, dict):
+                return True, seen
+            if isinstance(item, str):
+                stack.append(item)
+    return False, seen
+
+
+def validate_advisory_graph(vulns: dict, source: str) -> None:
+    """Every declared vulnerability must reach a real advisory object.
+
+    npm states causation two ways inside `via`: an advisory object is direct
+    evidence, and a bare string names another vulnerable package node that makes
+    this one vulnerable. The gate's verdict is computed only from advisory
+    objects, so a node whose via graph never reaches one declares a
+    vulnerability that nothing downstream can see, count or block — it flattens
+    away and the scope reads as clean.
+
+    Three shapes are rejected: an empty `via`, an edge naming a package the
+    report does not contain (the report is missing its own cause), and a cycle
+    that never terminates in evidence.
+    """
+    for package, node in vulns.items():
+        for index, item in enumerate(node.get("via") or []):
+            if isinstance(item, str) and item not in vulns:
+                raise AuditUnusable(
+                    f"{source}: vulnerabilities[{package!r}].via[{index}] names "
+                    f"{item!r}, which is not a vulnerable package node in this "
+                    "report; the advisory graph is incomplete"
+                )
+
+    for package, node in vulns.items():
+        reached, visited = _via_reaches_advisory(package, vulns)
+        if reached:
+            continue
+        others = sorted(visited - {package})
+        if not node.get("via"):
+            detail = "it declares no via entries at all"
+        elif others:
+            detail = "its via graph only reaches " + ", ".join(repr(o) for o in others)
+        else:
+            detail = "its via graph only refers back to itself"
+        raise AuditUnusable(
+            f"{source}: vulnerabilities[{package!r}] declares severity "
+            f"{node.get('severity')!r} but no advisory object is reachable from "
+            f"it ({detail}); a declared vulnerability carrying no advisory "
+            "flattens to zero rows and would be reported as a clean scope"
+        )
 
 
 _SECRETISH = re.compile(
@@ -387,8 +575,14 @@ def implicated_versions(
     return resolved
 
 
-def advisories(report: dict) -> list[dict]:
-    """Flatten an npm audit report into one row per (package, advisory)."""
+def advisories(report: dict, source: str = "audit report") -> list[dict]:
+    """Flatten an npm audit report into one row per (package, advisory).
+
+    The closing invariant lives here rather than in validation: whatever path a
+    report took to get this far, a summary that declares vulnerable packages can
+    never be turned into an empty advisory list. Zero rows is the one result the
+    gate cannot distinguish from a clean tree, so it has to be earned.
+    """
     rows: list[dict] = []
     for name, node in (report.get("vulnerabilities") or {}).items():
         if not isinstance(node, dict):
@@ -396,12 +590,11 @@ def advisories(report: dict) -> list[dict]:
         for via in node.get("via") or []:
             if not isinstance(via, dict):
                 continue  # a string `via` is an indirect edge, not an advisory
-            url = via.get("url") or ""
             rows.append(
                 {
                     "package": name,
                     "advisory_package": via.get("name") or name,
-                    "id": url.rsplit("/", 1)[-1] if url else str(via.get("source", "")),
+                    "id": advisory_identity(via),
                     "severity": (
                         via.get("severity") or node.get("severity") or ""
                     ).lower(),
@@ -411,6 +604,17 @@ def advisories(report: dict) -> list[dict]:
                     "direct": bool(node.get("isDirect")),
                     "paths": node.get("nodes") or [],
                 }
+            )
+
+    counts = (report.get("metadata") or {}).get("vulnerabilities") or {}
+    declared = counts.get("total")
+    if isinstance(declared, int) and not isinstance(declared, bool):
+        if declared > 0 and not rows:
+            raise AuditUnusable(
+                f"{source}: metadata declares {declared} vulnerable package "
+                "node(s) but the report flattens to zero advisories; a declared "
+                "vulnerability that produces no advisory row would be reported "
+                "as a clean scope"
             )
     return rows
 
@@ -551,6 +755,66 @@ def development_only(full_rows: list[dict], production_rows: list[dict]) -> list
     return remaining
 
 
+# ── policy loading ───────────────────────────────────────────────────────────
+
+# Fields decide() reads without guarding. An entry missing one of them used to
+# surface as a KeyError or ValueError traceback and exit 1 — the same exit code
+# as "policy violation", making a broken policy file look like a blocked build.
+EXCEPTION_REQUIRED_TEXT = ("id", "package", "scope", "severity", "compensatingControl")
+
+
+def validate_exception(where: str, entry: object) -> None:
+    if not isinstance(entry, dict):
+        raise AuditUnusable(f"{where} is not an object")
+    for field in EXCEPTION_REQUIRED_TEXT:
+        value = entry.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise AuditUnusable(
+                f"{where}.{field} must be a non-empty string, got {value!r}"
+            )
+    expires = entry.get("expires")
+    if not isinstance(expires, str):
+        raise AuditUnusable(
+            f"{where}.expires must be an ISO date string, got {expires!r}"
+        )
+    try:
+        _dt.date.fromisoformat(expires)
+    except ValueError as exc:
+        raise AuditUnusable(
+            f"{where}.expires is not an ISO date (YYYY-MM-DD): {expires!r}"
+        ) from exc
+
+
+def load_policy(path: pathlib.Path) -> dict:
+    """Read the policy, or explain why it cannot be trusted."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise AuditUnusable(f"{path}: policy file is not valid JSON: {exc}") from exc
+    except OSError as exc:
+        raise AuditUnusable(f"{path}: policy file could not be read ({exc})") from exc
+
+    if not isinstance(payload, dict):
+        raise AuditUnusable(f"{path}: policy must be a JSON object")
+    entries = payload.get("exceptions", [])
+    if not isinstance(entries, list):
+        raise AuditUnusable(f"{path}: policy 'exceptions' must be a list")
+    for index, entry in enumerate(entries):
+        validate_exception(f"{path}: exceptions[{index}]", entry)
+    return payload
+
+
+def parse_today(raw: str | None) -> _dt.date:
+    if raw is None:
+        return _dt.datetime.now(_dt.timezone.utc).date()
+    try:
+        return _dt.date.fromisoformat(raw)
+    except ValueError as exc:
+        raise AuditUnusable(
+            f"--today must be an ISO date (YYYY-MM-DD), got {raw!r}"
+        ) from exc
+
+
 # ── exception matching ───────────────────────────────────────────────────────
 
 
@@ -632,17 +896,6 @@ def main() -> int:
     if not policy_path.exists():
         sys.stderr.write(f"policy file missing: {policy_path}\n")
         return 2
-    policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    order = [
-        s.lower()
-        for s in policy.get("severityOrder", ["low", "moderate", "high", "critical"])
-    ]
-    threshold = str(policy.get("failOnSeverity", "moderate")).lower()
-    today = (
-        _dt.date.fromisoformat(args.today)
-        if args.today
-        else _dt.datetime.now(_dt.timezone.utc).date()
-    )
 
     npm_dir = pathlib.Path(args.npm_dir) if args.npm_dir else None
     lock_path = (
@@ -656,6 +909,18 @@ def main() -> int:
     # never be relabelled as a build/dev finding.
     written: dict | None = None
     try:
+        # Loaded inside the fail-closed boundary: an unreadable policy or an
+        # unparsable date is an operational failure (exit 2), not a verdict.
+        policy = load_policy(policy_path)
+        order = [
+            s.lower()
+            for s in policy.get(
+                "severityOrder", ["low", "moderate", "high", "critical"]
+            )
+        ]
+        threshold = str(policy.get("failOnSeverity", "moderate")).lower()
+        today = parse_today(args.today)
+
         # `production` is the --omit=dev tree, used to subtract production
         # findings from the full tree. It stays None only when a caller supplies
         # a single pre-captured report and no full-tree companion.
@@ -678,9 +943,9 @@ def main() -> int:
             raise AuditUnusable("no lockfile given; cannot verify installed versions")
         versions = installed_instances(lock_path)
 
-        rows = advisories(evaluated)
+        rows = advisories(evaluated, f"{args.scope} audit report")
         if args.scope == "development" and production is not None:
-            rows = development_only(rows, advisories(production))
+            rows = development_only(rows, advisories(production, "production tree"))
 
         if args.write:
             out = pathlib.Path(args.write)

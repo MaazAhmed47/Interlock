@@ -109,7 +109,9 @@ def _report(entries):
     }
 
 
-def _run_gate(tmp_path, payload, scope="production", lockfile=None, today=None):
+def _run_gate(
+    tmp_path, payload, scope="production", lockfile=None, today=None, policy=None
+):
     report = tmp_path / "audit.json"
     report.write_text(json.dumps(payload), encoding="utf-8")
     cmd = [
@@ -124,6 +126,8 @@ def _run_gate(tmp_path, payload, scope="production", lockfile=None, today=None):
     ]
     if today:
         cmd += ["--today", today]
+    if policy:
+        cmd += ["--policy", str(policy)]
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
@@ -1100,16 +1104,44 @@ def test_malformed_vulnerability_nodes_fail():
 
 
 def test_via_may_mix_advisory_objects_and_indirect_name_strings():
-    """Real npm reports do this; validation must not reject them."""
+    """Real npm reports do this; validation must not reject them.
+
+    Shape taken from the live report: `react-router-dom` carries its own
+    advisory object AND the plain string `react-router`, which names the other
+    vulnerable node that also makes it vulnerable.
+    """
     vulns = {
         "pkg-a": {
             "severity": "high",
             "range": "<1",
             "nodes": ["node_modules/pkg-a"],
-            "via": [{"source": 1, "name": "pkg-a", "severity": "high"}, "pkg-b"],
-        }
+            "via": [
+                {
+                    "source": 1,
+                    "name": "pkg-a",
+                    "url": "https://github.com/advisories/GHSA-a",
+                    "severity": "high",
+                    "range": "<1",
+                },
+                "pkg-b",
+            ],
+        },
+        "pkg-b": {
+            "severity": "high",
+            "range": "<1",
+            "nodes": ["node_modules/pkg-b"],
+            "via": [
+                {
+                    "source": 2,
+                    "name": "pkg-b",
+                    "url": "https://github.com/advisories/GHSA-b",
+                    "severity": "high",
+                    "range": "<1",
+                }
+            ],
+        },
     }
-    audit_npm.validate_report(_payload(vulns, _buckets(high=1, total=1)), "fixture")
+    audit_npm.validate_report(_payload(vulns, _buckets(high=2, total=2)), "fixture")
 
 
 def test_current_real_npm_reports_remain_accepted():
@@ -1122,3 +1154,379 @@ def test_current_real_npm_reports_remain_accepted():
         assert counts["total"] == sum(
             counts[b] for b in audit_npm.SEVERITY_BUCKETS
         ), "real npm metadata must satisfy the invariant the gate enforces"
+
+
+# ── F4: a declared vulnerability must reach a real advisory ──────────────────
+#
+# The gate's verdict is computed from FLATTENED advisory rows, but a package
+# node declares that it is vulnerable in `metadata` and `severity` — fields the
+# flattening never reads. A report can therefore be internally consistent by
+# every count-based check and still flatten to nothing, which reads as "no
+# advisories in this scope" and passes. These tests close that gap: a declared
+# vulnerability must be backed by a reachable advisory object.
+
+
+def _advisory(package, advisory_id="GHSA-z", severity="high", vrange="<1", **override):
+    """An advisory object shaped like the ones real npm emits."""
+    obj = {
+        "source": 1124268,
+        "name": package,
+        "dependency": package,
+        "title": "fixture advisory",
+        "url": f"https://github.com/advisories/{advisory_id}",
+        "severity": severity,
+        "range": vrange,
+    }
+    obj.update(override)
+    for key, value in list(obj.items()):
+        if value is _ABSENT:
+            del obj[key]
+    return obj
+
+
+class _Absent:
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid only
+        return "<absent>"
+
+
+_ABSENT = _Absent()
+
+
+def _node(package, severity="high", via=None, vrange="<1"):
+    return {
+        "name": package,
+        "severity": severity,
+        "isDirect": True,
+        "range": vrange,
+        "nodes": [f"node_modules/{package}"],
+        "via": [] if via is None else list(via),
+    }
+
+
+def _graph_report(vulns):
+    """A report whose metadata is derived from the nodes, so counts agree."""
+    return {
+        "auditReportVersion": 2,
+        "vulnerabilities": vulns,
+        "metadata": _metadata_for(vulns),
+    }
+
+
+def _exceptionless_policy(tmp_path):
+    """This repo's policy with its exceptions removed.
+
+    The stale-exception check happens to catch a zero-row report here, because
+    this repo currently carries three production exceptions that would all go
+    unmatched. That is incidental cover, not the guarantee under test: a repo
+    with no exceptions — or an advisory nobody wrote an exception for — has
+    nothing stale to trip over. Removing them exposes the real verdict.
+    """
+    path = tmp_path / "exceptionless-policy.json"
+    path.write_text(json.dumps({**_policy(), "exceptions": []}), encoding="utf-8")
+    return path
+
+
+def test_declared_high_severity_with_empty_via_cannot_pass(tmp_path):
+    """The blocker: consistent metadata, `via: []`, zero rows — and PASS.
+
+    Everything about this report agrees with itself: one vulnerable package
+    node, metadata total 1, high bucket 1. Only the advisory itself is missing,
+    so the flattening yields nothing and the gate has nothing to block on.
+    """
+    payload = _graph_report({"pkg-a": _node("pkg-a", "high", via=[])})
+    result = _run_gate(tmp_path, payload, policy=_exceptionless_policy(tmp_path))
+    assert result.returncode == UNUSABLE, result.stdout
+    assert "RESULT: PASS" not in result.stdout
+    assert "no advisories in this scope" not in result.stdout
+
+
+def test_empty_via_is_rejected_at_validation():
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        audit_npm.validate_report(
+            _graph_report({"pkg-a": _node("pkg-a", "high", via=[])}), "fixture"
+        )
+    message = str(excinfo.value)
+    assert "pkg-a" in message
+    assert "advisory" in message
+
+
+def test_via_edge_naming_an_absent_package_fails():
+    """A dangling edge means the report does not contain its own cause."""
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        audit_npm.validate_report(
+            _graph_report({"pkg-a": _node("pkg-a", via=["ghost"])}), "fixture"
+        )
+    message = str(excinfo.value)
+    assert "ghost" in message
+    assert "pkg-a" in message
+
+
+def test_dangling_edge_fails_even_when_another_via_carries_an_advisory():
+    """An unreachable cause is a defect on its own, not excused by a sibling."""
+    vulns = {
+        "pkg-a": _node("pkg-a", via=[_advisory("pkg-a"), "ghost"]),
+    }
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        audit_npm.validate_report(_graph_report(vulns), "fixture")
+    assert "ghost" in str(excinfo.value)
+
+
+def test_cyclic_via_graph_without_an_advisory_fails():
+    """Two nodes blaming each other reach no advisory and must not pass."""
+    vulns = {
+        "pkg-a": _node("pkg-a", via=["pkg-b"]),
+        "pkg-b": _node("pkg-b", via=["pkg-a"]),
+    }
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        audit_npm.validate_report(_graph_report(vulns), "fixture")
+    message = str(excinfo.value)
+    assert "advisory" in message
+    assert "pkg-a" in message or "pkg-b" in message
+
+
+def test_self_referential_via_without_an_advisory_fails():
+    vulns = {"pkg-a": _node("pkg-a", via=["pkg-a"])}
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        audit_npm.validate_report(_graph_report(vulns), "fixture")
+    assert "pkg-a" in str(excinfo.value)
+
+
+def test_via_string_chain_that_reaches_an_advisory_is_accepted():
+    """Indirection is legitimate as long as the chain terminates in evidence."""
+    vulns = {
+        "pkg-a": _node("pkg-a", via=["pkg-b"]),
+        "pkg-b": _node("pkg-b", via=["pkg-c"]),
+        "pkg-c": _node("pkg-c", via=[_advisory("pkg-c")]),
+    }
+    audit_npm.validate_report(_graph_report(vulns), "fixture")
+
+
+def test_cycle_with_an_advisory_reachable_through_it_is_accepted():
+    """A cycle is only fatal when nothing in it carries an advisory."""
+    vulns = {
+        "pkg-a": _node("pkg-a", via=["pkg-b"]),
+        "pkg-b": _node("pkg-b", via=["pkg-a", _advisory("pkg-b")]),
+    }
+    audit_npm.validate_report(_graph_report(vulns), "fixture")
+
+
+# ── F4: advisory objects must carry the facts the gate decides on ────────────
+
+
+def test_advisory_object_fields_are_validated():
+    """Each field the verdict depends on must be present and well-formed.
+
+    `severity`, `range` and `name` feed exception matching and production/full
+    differencing; `source` and `url` are what the advisory id is derived from.
+    A missing or malformed one silently becomes an empty string in the flattened
+    row, which is a fact the gate would then compare against.
+    """
+    cases = {
+        "missing source": {"source": _ABSENT, "url": _ABSENT},
+        "boolean source": {"source": True},
+        "negative source": {"source": -1},
+        "string source": {"source": "1124268"},
+        "missing name": {"name": _ABSENT},
+        "empty name": {"name": "  "},
+        "non-string name": {"name": 5},
+        "name is a different package": {"name": "other-pkg"},
+        "missing severity": {"severity": _ABSENT},
+        "unknown severity": {"severity": "spicy"},
+        "non-string severity": {"severity": 3},
+        "missing range": {"range": _ABSENT},
+        "empty range": {"range": ""},
+        "non-string range": {"range": 5},
+        "empty url": {"url": ""},
+        "non-string url": {"url": 7},
+    }
+    for label, override in cases.items():
+        vulns = {"pkg-a": _node("pkg-a", via=[_advisory("pkg-a", **override)])}
+        with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+            audit_npm.validate_report(_graph_report(vulns), "fixture")
+        message = str(excinfo.value)
+        assert "via[0]" in message, label
+        assert "pkg-a" in message, label
+
+
+def test_advisory_object_without_url_but_with_source_is_accepted():
+    """npm always sends a url; a numeric source alone still identifies it."""
+    vulns = {"pkg-a": _node("pkg-a", via=[_advisory("pkg-a", url=_ABSENT)])}
+    audit_npm.validate_report(_graph_report(vulns), "fixture")
+    rows = audit_npm.advisories(_graph_report(vulns))
+    assert rows[0]["id"] == "1124268", "id must fall back to the advisory source"
+
+
+# ── F5: metadata severities must match the body, bucket by bucket ────────────
+
+
+def test_metadata_bucket_disagreeing_with_node_severity_fails():
+    """Totals can agree while the severities do not.
+
+    `total` and the bucket sum both equal 1 here, and there is exactly one
+    vulnerable package node — every count-based check passes. But npm says the
+    finding is moderate while the node says high, so one of the two is fiction.
+    """
+    vulns = {"pkg-a": _node("pkg-a", "high", via=[_advisory("pkg-a")])}
+    payload = {
+        "auditReportVersion": 2,
+        "vulnerabilities": vulns,
+        "metadata": {"vulnerabilities": _buckets(moderate=1, total=1)},
+    }
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        audit_npm.validate_report(payload, "fixture")
+    message = str(excinfo.value)
+    assert "high" in message and "moderate" in message
+
+
+def test_metadata_buckets_matching_node_severities_are_accepted():
+    vulns = {
+        "pkg-a": _node("pkg-a", "high", via=[_advisory("pkg-a")]),
+        "pkg-b": _node(
+            "pkg-b", "moderate", via=[_advisory("pkg-b", severity="moderate")]
+        ),
+    }
+    payload = {
+        "auditReportVersion": 2,
+        "vulnerabilities": vulns,
+        "metadata": {"vulnerabilities": _buckets(high=1, moderate=1, total=2)},
+    }
+    audit_npm.validate_report(payload, "fixture")
+
+
+def test_severity_bucket_swap_across_two_nodes_fails():
+    """Bucket counts must be per-severity, not merely the right shape overall."""
+    vulns = {
+        "pkg-a": _node(
+            "pkg-a", "critical", via=[_advisory("pkg-a", severity="critical")]
+        ),
+        "pkg-b": _node("pkg-b", "low", via=[_advisory("pkg-b", severity="low")]),
+    }
+    payload = {
+        "auditReportVersion": 2,
+        "vulnerabilities": vulns,
+        "metadata": {"vulnerabilities": _buckets(high=1, moderate=1, total=2)},
+    }
+    with pytest.raises(audit_npm.AuditUnusable):
+        audit_npm.validate_report(payload, "fixture")
+
+
+# ── F5: declared vulnerabilities must survive the flattening ─────────────────
+
+
+def test_declared_total_cannot_flatten_to_zero_advisories():
+    """The last-line invariant, independent of how the report got this far.
+
+    Even if some future validation gap lets a via-less node through, the
+    flattening itself must refuse to report zero advisories for a report that
+    declares some.
+    """
+    payload = {
+        "auditReportVersion": 2,
+        "vulnerabilities": {"pkg-a": _node("pkg-a", "high", via=[])},
+        "metadata": {"vulnerabilities": _buckets(high=1, total=1)},
+    }
+    with pytest.raises(audit_npm.AuditUnusable) as excinfo:
+        audit_npm.advisories(payload)
+    message = str(excinfo.value)
+    assert "1" in message
+    assert "advisor" in message.lower()
+
+
+def test_zero_declared_vulnerabilities_still_flattens_to_nothing():
+    """The invariant must not fire on a genuinely clean tree."""
+    payload = {
+        "auditReportVersion": 2,
+        "vulnerabilities": {},
+        "metadata": {"vulnerabilities": _buckets()},
+    }
+    assert audit_npm.advisories(payload) == []
+
+
+def test_a_clean_tree_still_passes_the_gate(tmp_path):
+    """The new invariant must not turn a genuinely empty report into a failure."""
+    payload = {
+        "auditReportVersion": 2,
+        "vulnerabilities": {},
+        "metadata": {"vulnerabilities": _buckets()},
+    }
+    result = _run_gate(tmp_path, payload, policy=_exceptionless_policy(tmp_path))
+    assert result.returncode == CLEAN, result.stdout
+    assert "no advisories in this scope" in result.stdout
+
+
+# ── F6: every failure is a clean diagnostic, never a traceback ───────────────
+
+
+def test_graph_failures_print_a_clean_diagnostic(tmp_path):
+    payload = _graph_report({"pkg-a": _node("pkg-a", "high", via=["ghost"])})
+    result = _run_gate(tmp_path, payload)
+    assert result.returncode == UNUSABLE
+    assert "AUDIT UNUSABLE" in result.stdout
+    assert "Traceback" not in result.stderr
+    assert "Traceback" not in result.stdout
+
+
+def test_unreadable_policy_file_fails_closed_without_a_traceback(tmp_path):
+    """A crash currently exits 1, which is indistinguishable from 'blocked'."""
+    bad_policy = tmp_path / "policy.json"
+    bad_policy.write_text("{not json", encoding="utf-8")
+    result = _run_gate(tmp_path, _report(OBSERVED), policy=bad_policy)
+    assert result.returncode == UNUSABLE, result.stdout + result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_malformed_policy_exception_fails_closed_without_a_traceback(tmp_path):
+    """A policy entry the gate cannot read must not crash mid-verdict."""
+    cases = {
+        "bad expiry": {"expires": "not-a-date"},
+        "missing expiry": {"expires": None},
+        "missing id": {"id": None},
+        "missing compensating control": {"compensatingControl": None},
+    }
+    for label, override in cases.items():
+        entry = dict(_policy()["exceptions"][0])
+        for key, value in override.items():
+            if value is None:
+                entry.pop(key, None)
+            else:
+                entry[key] = value
+        policy_file = tmp_path / f"policy-{label.replace(' ', '-')}.json"
+        policy_file.write_text(
+            json.dumps({**_policy(), "exceptions": [entry]}), encoding="utf-8"
+        )
+        result = _run_gate(tmp_path, _report(OBSERVED), policy=policy_file)
+        assert result.returncode == UNUSABLE, f"{label}: {result.stdout}{result.stderr}"
+        assert "Traceback" not in result.stderr, label
+
+
+def test_bad_today_override_fails_closed_without_a_traceback(tmp_path):
+    result = _run_gate(tmp_path, _report(OBSERVED), today="31-12-2026")
+    assert result.returncode == UNUSABLE, result.stdout + result.stderr
+    assert "Traceback" not in result.stderr
+
+
+# ── F6: the live reports must survive every new check ────────────────────────
+
+
+def test_current_real_npm_reports_pass_advisory_graph_validation():
+    """Production and full trees: real object/string via mixtures, real graph."""
+    npm_dir = ROOT / "interlock-web"
+    for production_only in (True, False):
+        label = "production" if production_only else "full"
+        report = audit_npm.run_npm_audit(npm_dir, production_only=production_only)
+        rows = audit_npm.advisories(report)
+        declared = report["metadata"]["vulnerabilities"]["total"]
+        assert declared > 0, f"{label}: fixture is vacuous if nothing is declared"
+        assert rows, f"{label}: declared {declared} vulnerabilities but flattened none"
+        observed_ids = {r["id"] for r in rows}
+        assert observed_ids == {advisory_id for advisory_id, *_ in OBSERVED}, label
+        mixtures = [
+            name
+            for name, node in report["vulnerabilities"].items()
+            if any(isinstance(v, dict) for v in node["via"])
+            and any(isinstance(v, str) for v in node["via"])
+        ]
+        assert mixtures, (
+            f"{label}: no object/string via mixture left in the real report; "
+            "the preservation guarantee is no longer exercised by real data"
+        )
