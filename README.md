@@ -3,7 +3,6 @@
 # Interlock
 
 [![CI](https://github.com/MaazAhmed47/Interlock/actions/workflows/tests.yml/badge.svg)](https://github.com/MaazAhmed47/Interlock/actions)
-[![Quality](https://img.shields.io/badge/quality-ruff%20%7C%20black%20%7C%20mypy%20%7C%20tests-green)](https://github.com/MaazAhmed47/Interlock/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
 **MCP runtime trust layer for AI agents.**
@@ -15,6 +14,14 @@ Current source metadata is `0.2.0-alpha.1`. This identifies the source tree; it 
 **Public origin:** https://getinterlock.dev
 
 </div>
+
+### Start here by role
+
+- **Evaluator:** [Offline evaluator quickstart](docs/evaluator-quickstart.md)
+- **Security reviewer:** [Current limits](#current-limits) · [Security policy](SECURITY.md) · [Threat model](docs/mcp-runtime-security-threat-model.md)
+- **Engineer:** [How a request flows](#how-a-request-flows) · [Architecture](#architecture)
+- **Operator:** [Install](INSTALL.md) · [Deployment state](#deployment-state)
+- **Proof and evidence:** [Behavioral drift proof](#live-proven-behavioral-drift) · [Detection Quality Evidence](docs/detection-quality-evidence.md)
 
 ## Run the offline proof
 
@@ -1231,7 +1238,9 @@ For active roadmap work, see GitHub issues and discussions.
 
 ## Project Links
 
+- Maintainer: [Maaz Ahmed](https://www.linkedin.com/in/maaz-ahmed-abb422295/) — Founder & Engineer, Interlock
 - GitHub: https://github.com/MaazAhmed47/Interlock
+- LinkedIn: https://www.linkedin.com/in/maaz-ahmed-abb422295/
 - Offline proof: [demo/offline/README.md](demo/offline/README.md)
 - Founder email: maaz@getinterlock.dev
 

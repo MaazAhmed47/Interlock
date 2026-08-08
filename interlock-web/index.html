@@ -10,6 +10,16 @@
 <meta property="og:description" content="Runtime trust for MCP tools after approval. Detect material drift, hold subsequent gateway-mediated calls to the quarantined tool before forwarding, and verify hash-chained receipts offline.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://getinterlock.dev/">
+<meta property="og:image" content="https://getinterlock.dev/interlock-social-preview.png">
+<meta property="og:image:secure_url" content="https://getinterlock.dev/interlock-social-preview.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1672">
+<meta property="og:image:height" content="941">
+<meta property="og:image:alt" content="Interlock MCP drift proof showing approval, change, quarantine, and verified evidence">
+<meta name="twitter:title" content="Interlock — Know when an approved MCP tool changes">
+<meta name="twitter:description" content="Runtime trust for MCP tools after approval, with gateway-mediated quarantine and verifiable evidence.">
+<meta name="twitter:image" content="https://getinterlock.dev/interlock-social-preview.png">
+<meta name="twitter:image:alt" content="Interlock MCP drift proof showing approval, change, quarantine, and verified evidence">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="/interlock-favicon-white.svg" type="image/svg+xml">
 <link rel="icon" href="/interlock-favicon-white.png" type="image/png">
@@ -191,6 +201,13 @@
   .capture input{flex:1;min-width:220px;background:var(--bg);border:1px solid var(--control);border-radius:6px;
     padding:13px 16px;color:#fff;font-size:15px}
   .capture input::placeholder{color:var(--faint)}
+
+  .founder-block{margin:26px auto 0;padding-top:22px;border-top:1px solid var(--line2);max-width:440px;
+    font-size:13px;color:var(--muted2);line-height:1.7}
+  .founder-block strong{display:block;color:var(--text);font-size:15px;font-weight:500}
+  .founder-links{display:flex;justify-content:center;gap:16px;margin-top:8px;flex-wrap:wrap}
+  .founder-links a{color:var(--greenText)}
+  .founder-links a:hover{text-decoration:underline}
 
   /* footer */
   footer{border-top:1px solid var(--line);background:var(--bg2)}
@@ -505,9 +522,17 @@
       <a class="btn" href="mailto:maaz@getinterlock.dev?subject=MCP%20trust%20boundary%20%E2%80%94%20evaluation%20interest&body=Hi%20Maaz%2C%0A%0AWe%20run%20agents%20against%20MCP%20tools%20and%20want%20to%20discuss%20post-approval%20drift.%0A%0AOur%20setup%3A%20%0A">Discuss one MCP trust boundary</a>
       <a class="btn ghost" href="https://github.com/MaazAhmed47/Interlock/tree/main/demo/offline" target="_blank" rel="noopener">Run the offline proof</a>
     </div>
-    <div class="subnote reveal" style="margin-top:16px">Or reach the founder directly: <a href="mailto:maaz@getinterlock.dev" style="color:var(--greenText)">maaz@getinterlock.dev</a></div>
-  </div>
+    <div class="founder-block reveal" id="founder">
+      <strong>Built and maintained by Maaz Ahmed</strong>
+      <span>Founder &amp; Engineer, Interlock</span>
+      <div class="founder-links">
+        <a href="https://github.com/MaazAhmed47" target="_blank" rel="noopener">GitHub ↗</a>
+        <a href="https://www.linkedin.com/in/maaz-ahmed-abb422295/" target="_blank" rel="noopener">LinkedIn ↗</a>
+        <a href="mailto:maaz@getinterlock.dev">Email</a>
+      </div>
+    </div>
 </section>
+  </div>
 
 <footer>
   <div class="wrap">
