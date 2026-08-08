@@ -26,6 +26,7 @@ import { DASHBOARD_OVERVIEW_PATH, PUBLIC_DASHBOARD_LANDING } from '../src/routeP
 const here = fileURLToPath(new URL('.', import.meta.url))
 const landing = readFileSync(`${here}../index.html`, 'utf8')
 const driftProof = readFileSync(`${here}../src/pages/DriftProof.tsx`, 'utf8')
+const readme = readFileSync(`${here}../../README.md`, 'utf8')
 const evaluatorSource = readFileSync(
   `${here}../../demo/offline/evaluator_journey.py`,
   'utf8',
@@ -52,6 +53,23 @@ function evaluatorConstant(name: string): string {
 
 const EVALUATOR_TOOL = evaluatorConstant('TOOL_NAME')
 const EVALUATOR_CONTROL_TOOL = evaluatorConstant('CONTROL_TOOL')
+
+test('public project surfaces identify the maintainer and route readers by role', () => {
+  assert.match(readme, /### Start here by role/)
+  assert.match(readme, /docs\/mcp-runtime-security-threat-model\.md/)
+  assert.match(readme, /Maintainer: \[Maaz Ahmed\]/)
+  assert.doesNotMatch(readme, /img\.shields\.io\/badge\/quality-/)
+
+  const founder = regionById(landing, 'founder')
+  assert.match(founder, /Built and maintained by Maaz Ahmed/)
+  assert.match(founder, /Founder &amp; Engineer, Interlock/)
+  assert.match(founder, /linkedin\.com\/in\/maaz-ahmed-abb422295/)
+  assert.match(founder, /mailto:maaz@getinterlock\.dev/)
+  assert.match(landing, /property="og:image" content="https:\/\/getinterlock\.dev\/interlock-social-preview\.png"/)
+  assert.match(landing, /name="twitter:image" content="https:\/\/getinterlock\.dev\/interlock-social-preview\.png"/)
+  assert.match(landing, /property="og:image:alt"/)
+  assert.match(landing, /name="twitter:image:alt"/)
+})
 
 /** Slice an element's markup by id, balancing the given tag. */
 function regionById(source: string, id: string, tag = 'div'): string {
