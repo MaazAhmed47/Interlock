@@ -71,6 +71,23 @@ test('public project surfaces identify the maintainer and route readers by role'
   assert.match(landing, /name="twitter:image:alt"/)
 })
 
+test('landing page CSS uses only declared custom properties', () => {
+  const declared = new Set(Array.from(landing.matchAll(/(--[\w-]+)\s*:/g), (match) => match[1]))
+  const used = new Set(Array.from(landing.matchAll(/var\((--[\w-]+)/g), (match) => match[1]))
+  assert.deepEqual([...used].filter((token) => !declared.has(token)), [])
+})
+
+test('closing call to action closes its wrapper before the section', () => {
+  assert.match(landing, /<div class="founder-block[\s\S]*?<\/div>\s*<\/div>\s*<\/section>\s*<footer>/)
+  assert.doesNotMatch(landing, /<\/section>\s*<\/div>\s*<footer>/)
+})
+
+test('README labels the local behavioral proof without implying an external live system', () => {
+  assert.match(readme, /^## Local behavioral drift proof$/m)
+  assert.doesNotMatch(readme, /^## Live-proven behavioral drift$/m)
+  assert.match(readme, /\(#local-behavioral-drift-proof\)/)
+})
+
 /** Slice an element's markup by id, balancing the given tag. */
 function regionById(source: string, id: string, tag = 'div'): string {
   const start = source.indexOf(`id="${id}"`)

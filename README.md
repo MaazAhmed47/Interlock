@@ -21,7 +21,7 @@ Current source metadata is `0.2.0-alpha.1`. This identifies the source tree; it 
 - **Security reviewer:** [Current limits](#current-limits) · [Security policy](SECURITY.md) · [Threat model](docs/mcp-runtime-security-threat-model.md)
 - **Engineer:** [How a request flows](#how-a-request-flows) · [Architecture](#architecture)
 - **Operator:** [Install](INSTALL.md) · [Deployment state](#deployment-state)
-- **Proof and evidence:** [Behavioral drift proof](#live-proven-behavioral-drift) · [Detection Quality Evidence](docs/detection-quality-evidence.md)
+- **Proof and evidence:** [Behavioral drift proof](#local-behavioral-drift-proof) · [Detection Quality Evidence](docs/detection-quality-evidence.md)
 
 ## Run the offline proof
 
@@ -62,7 +62,7 @@ Run the offline proof first. If it matches a real risk, [discuss one MCP trust b
 
 ---
 
-## Live-proven behavioral drift
+## Local behavioral drift proof
 
 Manifest and schema diffing are necessary, but they do not cover the hardest runtime drift case: the MCP surface can stay identical while the upstream permission boundary changes. Interlock's effective-permission probe path is built for that case.
 
