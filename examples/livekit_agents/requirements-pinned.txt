@@ -1,0 +1,4 @@
+# Exact direct integration inputs; this is not a resolved transitive lock.
+# Source inspected and installed from this exact LiveKit Agents commit.
+livekit-agents[mcp] @ git+https://github.com/livekit/agents.git@06c71f9c718e24a151630447755a9fa86851b389#subdirectory=livekit-agents
+mcp==1.28.1
