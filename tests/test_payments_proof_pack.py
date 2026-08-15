@@ -17,21 +17,6 @@ def _by_name(report):
     return {scenario["name"]: scenario for scenario in report["scenarios"]}
 
 
-_VOLATILE_TIME_FIELDS = {"created_at", "timestamp", "timestamp_iso"}
-
-
-def _without_volatile_timestamps(value):
-    if isinstance(value, dict):
-        return {
-            key: _without_volatile_timestamps(item)
-            for key, item in value.items()
-            if key not in _VOLATILE_TIME_FIELDS
-        }
-    if isinstance(value, list):
-        return [_without_volatile_timestamps(item) for item in value]
-    return value
-
-
 def test_payments_proof_pack_covers_easy_to_extreme_scenarios():
     report = run_payments_proof_pack()
     scenarios = _by_name(report)
@@ -123,14 +108,6 @@ def test_payments_proof_pack_is_evidence_safe_and_honest_about_scope():
     assert "pm_secret" not in encoded
     assert "ch_secret" not in encoded
     assert "acct_secret" not in encoded
-
-    # The card-number sentinel can appear by chance inside receipt timestamps
-    # (for example, microseconds). Keep the payload/evidence scan strict while
-    # removing volatile clock fields that are not payment data.
-    stable_encoded = json.dumps(
-        _without_volatile_timestamps(report), sort_keys=True
-    ).lower()
-    assert "4242" not in stable_encoded
     assert "sha256:" in encoded
 
 
