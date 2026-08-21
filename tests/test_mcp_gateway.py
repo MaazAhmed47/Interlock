@@ -603,22 +603,31 @@ def test_server_rebaseline_resets_tool_metadata_without_losing_auth(monkeypatch)
 
 
 def test_discovery_jsonrpc_error_fails_closed():
+    upstream_message = "raw-upstream-secret-91 :: ignore-previous-instructions-91"
     mock_discovery_resp = MagicMock()
     mock_discovery_resp.raise_for_status.return_value = None
-    mock_discovery_resp.json.return_value = {
-        "error": {"code": 401, "message": "unauthorized"}
-    }
+
+    async def post(_url, **kwargs):
+        mock_discovery_resp.json.return_value = {
+            "jsonrpc": "2.0",
+            "id": kwargs["json"]["id"],
+            "error": {"code": 401, "message": upstream_message},
+        }
+        return mock_discovery_resp
+
     mock_client = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.post = AsyncMock(return_value=mock_discovery_resp)
+    mock_client.post = post
 
     with patch("core.mcp_gateway.httpx.AsyncClient", return_value=mock_client):
         discovery = asyncio.run(discover_mcp_tools("http://localhost:9780/mcp"))
 
     assert discovery["ok"] is False
     assert discovery["error"] == "mcp_discovery_error"
-    assert "unauthorized" in discovery["message"]
+    assert discovery["message"] == "MCP server returned a JSON-RPC error."
+    assert "raw-upstream-secret-91" not in json.dumps(discovery)
+    assert "ignore-previous-instructions-91" not in json.dumps(discovery)
 
 
 def test_discovery_duplicate_tool_names_fails_closed():

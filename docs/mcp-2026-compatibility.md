@@ -88,6 +88,20 @@ values:
 Existing SQLite and Postgres rows migrate to `legacy`. This default preserves
 behavior and avoids silently treating previously registered servers as modern.
 
+## Dependency logging boundary
+
+Loading the MCP gateway sets the process-global `httpx` and `httpcore` logger
+thresholds to `WARNING`. This suppresses those dependencies' INFO and DEBUG
+transport records for every HTTPX client in that Interlock process, including
+MCP discovery and tool forwarding, without changing the root logger or any
+`interlock.*` application logger. Warning and error records remain enabled.
+
+This is default-process hardening, not protection against an adversarial host
+logging configuration. Operator code or logging configuration that later
+explicitly lowers the `httpx`, `httpcore`, or child-logger threshold can
+override the policy. Standalone scripts that never load the MCP gateway are
+also outside this process boundary.
+
 Discovery responses include a `server_drift` operation summary for tool
 additions and removals. Its `action` is derived from the same finding used for
 the audit decision, so the immediate API result and persisted audit record do
