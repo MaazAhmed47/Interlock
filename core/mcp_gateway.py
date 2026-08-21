@@ -1,5 +1,6 @@
 import re
 import json
+import logging
 import os
 import time
 import contextvars
@@ -48,6 +49,14 @@ from core.mcp_2026_protocol import (
     validate_json_value,
 )
 from core import drift_evidence
+
+# HTTPX logs status reason phrases at INFO, while HTTPCore logs raw response
+# headers at DEBUG. Both fields are controlled by an upstream server, so keep
+# those dependency namespaces at WARNING or above whenever the gateway is
+# loaded. This is deliberately narrower than changing the root or Interlock
+# application loggers.
+for _transport_logger_name in ("httpx", "httpcore"):
+    logging.getLogger(_transport_logger_name).setLevel(logging.WARNING)
 
 # Per-operation start time for gateway-path latency. Set at the top of each
 # entry point that logs audit events (tool-call proxy, server registration);
@@ -389,7 +398,7 @@ def _complete_upstream_result(
             "upstream_invalid_envelope",
             "MCP server returned a non-object JSON-RPC envelope.",
         )
-    if profile == MCP_UPSTREAM_2026_PROFILE and (
+    if (profile == MCP_UPSTREAM_2026_PROFILE or "error" in data) and (
         data.get("jsonrpc") != "2.0" or data.get("id") != request_id
     ):
         raise MCPUpstreamResponseError(
@@ -398,7 +407,7 @@ def _complete_upstream_result(
         )
     if "error" in data:
         upstream_error = data.get("error")
-        if profile == MCP_UPSTREAM_2026_PROFILE and (
+        if (
             "result" in data
             or not isinstance(upstream_error, dict)
             or isinstance(upstream_error.get("code"), bool)
@@ -410,13 +419,16 @@ def _complete_upstream_result(
                 "MCP server returned an invalid JSON-RPC error envelope.",
             )
         captured = upstream_error if isinstance(upstream_error, dict) else {}
+        upstream_code = captured.get("code")
+        safe_upstream_error = (
+            {"code": upstream_code}
+            if isinstance(upstream_code, int) and not isinstance(upstream_code, bool)
+            else None
+        )
         raise MCPUpstreamResponseError(
             "upstream_jsonrpc_error",
             "MCP server returned a JSON-RPC error.",
-            {
-                "code": captured.get("code"),
-                "message": str(captured.get("message") or "")[:200],
-            },
+            safe_upstream_error,
         )
     invalid_id = (
         data.get("id") != request_id
@@ -768,7 +780,7 @@ async def _fetch_tool_list_payload(
         auth_headers = _resolve_upstream_auth_headers(registered)
         profile = _upstream_protocol_profile(registered)
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
 
             async def send(method: str) -> Dict[str, Any]:
                 request_id = uuid.uuid4().hex
@@ -893,23 +905,38 @@ async def _fetch_tool_list_payload(
     except MCPUpstreamResponseError as exc:
         error = exc.error
         message = exc.message
-        if profile == MCP_UPSTREAM_LEGACY_PROFILE and error in {
-            "upstream_jsonrpc_error",
-            "upstream_invalid_envelope",
-        }:
+        legacy_discovery_error = profile == MCP_UPSTREAM_LEGACY_PROFILE and (
+            error == "upstream_jsonrpc_error"
+            or (
+                error == "upstream_invalid_envelope"
+                and message != "MCP server returned an invalid JSON-RPC error envelope."
+            )
+        )
+        if legacy_discovery_error:
             error = "mcp_discovery_error"
-            if exc.upstream_error:
-                message = str(exc.upstream_error)[:200]
         return {
             "ok": False,
             "error": error,
             "message": message,
             "server_url": server_url,
         }
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        return {
+            "ok": False,
+            "error": "upstream_http_error",
+            "message": f"MCP server returned HTTP {status or 'error'}.",
+            "server_url": server_url,
+        }
     except httpx.TimeoutException:
         return {"ok": False, "error": "MCP server timeout", "server_url": server_url}
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:200], "server_url": server_url}
+    except Exception:
+        return {
+            "ok": False,
+            "error": "mcp_discovery_error",
+            "message": "MCP discovery failed.",
+            "server_url": server_url,
+        }
 
 
 async def fetch_candidate_tool_surface(
@@ -1195,8 +1222,13 @@ async def discover_mcp_tools(
             "validations": validation_results,
             "server_drift": server_drift_summary,
         }
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:200], "server_url": server_url}
+    except Exception:
+        return {
+            "ok": False,
+            "error": "mcp_discovery_error",
+            "message": "MCP discovery failed.",
+            "server_url": server_url,
+        }
 
 
 # ── MCP Tool Call Proxy ───────────────────────────────────────────────────────
@@ -1675,7 +1707,7 @@ async def proxy_mcp_tool_call(
     try:
         server_url = ensure_safe_outbound_url(server["url"], context="MCP server")
         auth_headers = _resolve_upstream_auth_headers(server)
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
             request_id = uuid.uuid4().hex
             payload, protocol_headers = _upstream_request(
                 profile,
