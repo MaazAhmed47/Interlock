@@ -330,7 +330,9 @@ def test_discovery_http_status_text_is_never_exposed(profile, status, caplog):
         "message": f"MCP server returned HTTP {status}.",
         "server_url": "http://localhost:9799/mcp",
     }
-    client_factory.assert_called_once_with(timeout=1, follow_redirects=False)
+    client_factory.assert_called_once_with(
+        timeout=1, follow_redirects=False, trust_env=False
+    )
     exposed = json.dumps(outcome, sort_keys=True) + caplog.text
     assert all(sentinel not in exposed for sentinel in UPSTREAM_SENTINELS)
 
@@ -348,8 +350,8 @@ def test_mcp_discover_route_does_not_expose_redirect_metadata(caplog):
     with (
         patch("routes.mcp.proxy.require_scope", return_value=None),
         patch(
-            "routes.mcp.ensure_safe_outbound_url",
-            return_value="http://localhost:9799/mcp",
+            "routes.mcp.ensure_safe_outbound_url_async",
+            new=AsyncMock(return_value="http://localhost:9799/mcp"),
         ),
         patch("core.mcp_gateway.httpx.AsyncClient", return_value=client),
     ):
@@ -453,7 +455,9 @@ def test_tool_call_http_status_metadata_is_absent_from_all_evidence(
             )
         )
 
-    client_factory.assert_called_once_with(timeout=30.0, follow_redirects=False)
+    client_factory.assert_called_once_with(
+        timeout=30.0, follow_redirects=False, trust_env=False
+    )
     assert outcome["ok"] is False
     assert outcome["error"] == "upstream_http_error"
     assert outcome["message"] == f"MCP server returned HTTP {status}."
@@ -496,8 +500,8 @@ def test_real_http_transport_logs_never_expose_upstream_text(
         async def operation(server_url):
             _register(profile, url=server_url)
             with patch(
-                "core.mcp_gateway.ensure_safe_outbound_url",
-                return_value=server_url,
+                "core.mcp_gateway.ensure_safe_outbound_url_async",
+                new=AsyncMock(return_value=server_url),
             ):
                 if gateway_path == "discovery":
                     return await _fetch_tool_list_payload(server_url, 1, SERVER_ID)

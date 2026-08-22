@@ -4,6 +4,7 @@ import logging
 from models.schemas import ScanResult
 from typing import Optional
 from core.outbound_events import alert_reason, prompt_evidence
+from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
 
 logger = logging.getLogger("interlock.webhook")
 
@@ -82,16 +83,22 @@ async def fire_webhook(api_key: str, result: ScanResult) -> None:
     if result.threat_level.value not in WEBHOOK_TRIGGER_LEVELS:
         return
 
-    payload = _build_payload(result)
-
     try:
-        async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as client:
+        url = await ensure_safe_outbound_url_async(url, context="Per-key webhook")
+        payload = _build_payload(result)
+        async with httpx.AsyncClient(
+            timeout=WEBHOOK_TIMEOUT, follow_redirects=False, trust_env=False
+        ) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code >= 400:
                 logger.warning(
                     "Webhook returned non-2xx",
                     extra={"status": resp.status_code, "api_key_prefix": api_key[:8]},
                 )
+    except OutboundUrlRejected:
+        logger.warning(
+            "Webhook destination rejected", extra={"api_key_prefix": api_key[:8]}
+        )
     except httpx.TimeoutException:
         logger.warning("Webhook timeout", extra={"api_key_prefix": api_key[:8]})
     except Exception as e:

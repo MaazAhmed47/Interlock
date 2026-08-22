@@ -15,11 +15,13 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Set
 
 import jwt
+import httpx
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from core import db
+from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
 
 logger = logging.getLogger("interlock.admin")
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -44,6 +46,38 @@ OIDC_GROUP_ROLE_MAP_RAW = os.getenv("OIDC_GROUP_ROLE_MAP", "{}").strip() or "{}"
 _OIDC_JWKS_CLIENT = None
 _OIDC_JWKS_CLIENT_URL = ""
 _OIDC_LAST_CONFIG_ERROR_AT = 0.0
+
+
+class _GuardedPyJWKClient(jwt.PyJWKClient):
+    """PyJWT key selection with Interlock-controlled HTTP behavior."""
+
+    def fetch_data(self):
+        jwk_set = None
+        try:
+            canonical_url = ensure_safe_outbound_url(self.uri, context="OIDC JWKS")
+            with httpx.Client(
+                timeout=self.timeout,
+                follow_redirects=False,
+                trust_env=False,
+            ) as client:
+                response = client.get(canonical_url, headers=self.headers)
+                if response.is_redirect:
+                    raise jwt.exceptions.PyJWKClientConnectionError(
+                        "OIDC JWKS redirect was rejected"
+                    )
+                response.raise_for_status()
+                jwk_set = response.json()
+        except jwt.exceptions.PyJWKClientConnectionError:
+            raise
+        except (OutboundUrlRejected, httpx.HTTPError, ValueError) as exc:
+            raise jwt.exceptions.PyJWKClientConnectionError(
+                "OIDC JWKS fetch failed"
+            ) from exc
+        else:
+            return jwk_set
+        finally:
+            if self.jwk_set_cache is not None:
+                self.jwk_set_cache.put(jwk_set)
 
 
 @dataclass(frozen=True)
@@ -129,9 +163,10 @@ def _enforce_oidc_principal_allowlist(claims: Dict[str, Any]) -> None:
 
 def _get_oidc_signing_key(token: str):
     global _OIDC_JWKS_CLIENT, _OIDC_JWKS_CLIENT_URL
-    if _OIDC_JWKS_CLIENT is None or _OIDC_JWKS_CLIENT_URL != OIDC_JWKS_URL:
-        _OIDC_JWKS_CLIENT = jwt.PyJWKClient(OIDC_JWKS_URL)
-        _OIDC_JWKS_CLIENT_URL = OIDC_JWKS_URL
+    canonical_url = ensure_safe_outbound_url(OIDC_JWKS_URL, context="OIDC JWKS")
+    if _OIDC_JWKS_CLIENT is None or _OIDC_JWKS_CLIENT_URL != canonical_url:
+        _OIDC_JWKS_CLIENT = _GuardedPyJWKClient(canonical_url)
+        _OIDC_JWKS_CLIENT_URL = canonical_url
     return _OIDC_JWKS_CLIENT.get_signing_key_from_jwt(token).key
 
 

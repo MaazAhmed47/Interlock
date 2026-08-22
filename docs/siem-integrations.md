@@ -114,6 +114,16 @@ content handled by Interlock.
 
 ## Test A Provider
 
+Testing a SIEM destination can send configured credentials and sample event
+content, so `/siem/test` requires an API key with the `admin` scope.
+
+Production outbound protection rejects private and on-prem IP destinations,
+including hostnames with any private answer. Direct private SIEM delivery is
+therefore not supported by the Phase 1 production profile. Use a globally
+routable authenticated collector endpoint, or a deployment-controlled relay at
+an enforced egress/firewall boundary. Ambient HTTP proxy variables are not a
+supported relay mechanism because guarded clients intentionally ignore them.
+
 ```bash
 curl -X POST http://localhost:8001/siem/test \
   -H "x-api-key: <YOUR_INTERLOCK_API_KEY>" \

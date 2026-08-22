@@ -256,15 +256,19 @@ def cors_allowed_origins() -> list[str]:
 
 def protect_outbound_urls() -> bool:
     """Enable SSRF-oriented outbound URL validation."""
+    if is_production() or is_hosted():
+        return True
     raw = os.getenv("INTERLOCK_PROTECT_OUTBOUND_URLS")
     if raw is not None:
         return _truthy(raw)
-    return is_production()
+    return False
 
 
 def allow_private_outbound_urls() -> bool:
-    """Emergency/local override for private outbound URLs."""
-    return _truthy(os.getenv("INTERLOCK_ALLOW_PRIVATE_OUTBOUND"))
+    """Legacy local-only switch; never permits private production egress."""
+    return not is_production() and _truthy(
+        os.getenv("INTERLOCK_ALLOW_PRIVATE_OUTBOUND")
+    )
 
 
 def offline_demo_enabled() -> bool:

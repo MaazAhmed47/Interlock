@@ -19,7 +19,7 @@ from core.effective_permission import run_effective_permission_probe
 from core.effect_readback import run_effect_readback_observer
 from core.http_credentials import single_api_credential
 from core.limits import clamp_limit
-from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
+from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
 from core.mcp_gateway import (
     discover_mcp_tools,
     fetch_candidate_tool_surface,
@@ -151,10 +151,13 @@ async def mcp_register(
     """Register a new MCP server (requires manual verification before use)."""
     proxy.require_scope(x_api_key, "admin")
     try:
-        ensure_safe_outbound_url(request.url, context="MCP server")
+        canonical_url = await ensure_safe_outbound_url_async(
+            request.url, context="MCP server"
+        )
     except OutboundUrlRejected as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
+    payload["url"] = canonical_url
     result = register_mcp_server(request.server_id, payload)
     if result.get("error") in {
         "invalid_upstream_auth_config",
@@ -259,10 +262,12 @@ async def mcp_discover(
     """
     proxy.require_scope(x_api_key, "mcp.discover")
     try:
-        ensure_safe_outbound_url(request.server_url, context="MCP discovery")
+        server_url = await ensure_safe_outbound_url_async(
+            request.server_url, context="MCP discovery"
+        )
     except OutboundUrlRejected as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return await discover_mcp_tools(request.server_url, server_id=request.server_id)
+    return await discover_mcp_tools(server_url, server_id=request.server_id)
 
 
 def _candidate_summary(candidate: Optional[dict]) -> Optional[dict]:
@@ -312,11 +317,13 @@ async def mcp_rebaseline_discover(
     if not server:
         raise HTTPException(status_code=404, detail="MCP server not found.")
     try:
-        ensure_safe_outbound_url(server["url"], context="MCP discovery")
+        server_url = await ensure_safe_outbound_url_async(
+            server["url"], context="MCP discovery"
+        )
     except OutboundUrlRejected as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    result = await fetch_candidate_tool_surface(server["url"], server_id=server_id)
+    result = await fetch_candidate_tool_surface(server_url, server_id=server_id)
     if not result.get("ok"):
         snapshot = db.get_rebaseline_review_snapshot(server_id)
         if not snapshot.get("ok"):

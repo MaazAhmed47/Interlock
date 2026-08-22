@@ -161,11 +161,13 @@ curl -s -X POST http://localhost:8001/mcp/servers/eval-postgres/verify \
 > not an SSE stream or a multi‑step session handshake.
 >
 > **Networking:** from inside the container `localhost` is the container itself.
-> If your MCP server runs on the Docker host, use `host.docker.internal`. Outbound
-> URL protection is **off by default locally**; only if you run with
-> `INTERLOCK_ENV=production` (or enable `INTERLOCK_PROTECT_OUTBOUND_URLS`) and your
-> server is on a private/loopback address do you need
-> `INTERLOCK_ALLOW_PRIVATE_OUTBOUND=true`.
+> If your MCP server runs on the Docker host, use `host.docker.internal` in an
+> explicitly local development profile, where outbound protection is off by
+> default. Production always enables outbound protection and has no blanket
+> private-destination override. The bundled offline Compose proof is narrower:
+> `INTERLOCK_OFFLINE_DEMO=true` permits only its exact `mcp-mock` service name.
+>
+> hostname resolution rejection is a partial mitigation; DNS rebinding requires connection pinning or an enforced egress proxy/firewall.
 
 ---
 

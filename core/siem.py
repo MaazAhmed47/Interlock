@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, List
 from models.schemas import ScanResult
-from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
+from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
 from core.outbound_events import alert_reason, prompt_evidence
 
 # ── SIEM Provider Configurations ──────────────────────────────────────────────
@@ -316,7 +316,7 @@ async def send_to_siem(
     try:
         if provider == "datadog":
             region = config.get("region", "us")
-            url = ensure_safe_outbound_url(
+            url = await ensure_safe_outbound_url_async(
                 SIEM_PROVIDERS["datadog"]["url_template"].format(region=region),
                 context="Datadog SIEM",
             )
@@ -327,7 +327,9 @@ async def send_to_siem(
                 "DD-API-KEY": config["api_key"],
                 "Content-Type": "application/json",
             }
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(
+                timeout=5.0, follow_redirects=False, trust_env=False
+            ) as client:
                 resp = await client.post(url, json=[event], headers=headers)
                 return {
                     "provider": "datadog",
@@ -336,7 +338,7 @@ async def send_to_siem(
                 }
 
         elif provider == "splunk_hec":
-            url = ensure_safe_outbound_url(
+            url = await ensure_safe_outbound_url_async(
                 SIEM_PROVIDERS["splunk_hec"]["url_template"].format(
                     url=config["url"].rstrip("/")
                 ),
@@ -348,7 +350,10 @@ async def send_to_siem(
                 "Content-Type": "application/json",
             }
             async with httpx.AsyncClient(
-                timeout=5.0, verify=config.get("verify_ssl", True)
+                timeout=5.0,
+                verify=config.get("verify_ssl", True),
+                follow_redirects=False,
+                trust_env=False,
             ) as client:
                 resp = await client.post(url, json=event, headers=headers)
                 return {
@@ -359,7 +364,7 @@ async def send_to_siem(
 
         elif provider == "elastic":
             index = config.get("index", "interlock-logs")
-            url = ensure_safe_outbound_url(
+            url = await ensure_safe_outbound_url_async(
                 f"{config['url'].rstrip('/')}/{index}/_doc",
                 context="Elastic SIEM",
             )
@@ -369,7 +374,10 @@ async def send_to_siem(
                 "Content-Type": "application/json",
             }
             async with httpx.AsyncClient(
-                timeout=5.0, verify=config.get("verify_ssl", True)
+                timeout=5.0,
+                verify=config.get("verify_ssl", True),
+                follow_redirects=False,
+                trust_env=False,
             ) as client:
                 resp = await client.post(url, json=event, headers=headers)
                 return {
@@ -379,11 +387,13 @@ async def send_to_siem(
                 }
 
         elif provider == "slack":
+            url = await ensure_safe_outbound_url_async(
+                config["webhook_url"], context="Slack webhook"
+            )
             event = build_slack_event(result, api_key_prefix)
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                url = ensure_safe_outbound_url(
-                    config["webhook_url"], context="Slack webhook"
-                )
+            async with httpx.AsyncClient(
+                timeout=5.0, follow_redirects=False, trust_env=False
+            ) as client:
                 resp = await client.post(url, json=event)
                 return {
                     "provider": "slack",
@@ -402,15 +412,18 @@ async def send_to_siem(
                     "ok": True,
                     "reason": "below severity threshold",
                 }
+            url = await ensure_safe_outbound_url_async(
+                SIEM_PROVIDERS["pagerduty"]["url_template"],
+                context="PagerDuty SIEM",
+            )
             event = build_pagerduty_event(
                 result, config["integration_key"], api_key_prefix
             )
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(
+                timeout=5.0, follow_redirects=False, trust_env=False
+            ) as client:
                 resp = await client.post(
-                    ensure_safe_outbound_url(
-                        SIEM_PROVIDERS["pagerduty"]["url_template"],
-                        context="PagerDuty SIEM",
-                    ),
+                    url,
                     json=event,
                 )
                 return {
@@ -420,10 +433,14 @@ async def send_to_siem(
                 }
 
         elif provider == "webhook":
+            url = await ensure_safe_outbound_url_async(
+                config["url"], context="Webhook SIEM"
+            )
             payload = build_webhook_event(result, api_key_prefix)
             headers = config.get("headers", {})
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                url = ensure_safe_outbound_url(config["url"], context="Webhook SIEM")
+            async with httpx.AsyncClient(
+                timeout=5.0, follow_redirects=False, trust_env=False
+            ) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 return {
                     "provider": "webhook",

@@ -59,7 +59,7 @@ async def usage(x_api_key: Optional[str] = Header(None)):
 @router.post("/siem/test")
 async def test_siem(request: SIEMTestRequest, x_api_key: Optional[str] = Header(None)):
     """Test SIEM integration with a sample threat event."""
-    proxy.verify_key(x_api_key)
+    proxy.require_scope(x_api_key, "admin")
 
     test_result = ScanResult(
         is_threat=True,

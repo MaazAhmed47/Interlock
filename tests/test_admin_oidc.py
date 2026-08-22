@@ -1,4 +1,5 @@
 """Tests for OIDC admin authentication."""
+
 import json
 import os
 import sys
@@ -7,6 +8,7 @@ import time
 from pathlib import Path
 
 import jwt
+import httpx
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
@@ -20,8 +22,8 @@ os.environ.pop("DATABASE_URL", None)
 TEST_DB = tempfile.mktemp(suffix="_admin_oidc_test.db")
 os.environ["FIREWALL_DB_PATH"] = TEST_DB
 
-from core import db
-from core import admin
+from core import admin  # noqa: E402
+from core import db  # noqa: E402
 
 ISSUER = "https://idp.example.com/"
 AUDIENCE = "interlock-admin"
@@ -49,7 +51,7 @@ def oidc_keys(monkeypatch):
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_key = private_key.public_key()
 
-    old_values = {
+    values = {
         "OIDC_ADMIN_ENABLED": admin.OIDC_ADMIN_ENABLED,
         "OIDC_ISSUER": admin.OIDC_ISSUER,
         "OIDC_AUDIENCE": admin.OIDC_AUDIENCE,
@@ -64,29 +66,61 @@ def oidc_keys(monkeypatch):
         "OIDC_GROUP_ROLE_MAP_RAW": admin.OIDC_GROUP_ROLE_MAP_RAW,
     }
 
-    admin.OIDC_ADMIN_ENABLED = True
-    admin.OIDC_ISSUER = ISSUER
-    admin.OIDC_AUDIENCE = AUDIENCE
-    admin.OIDC_JWKS_URL = "https://idp.example.com/.well-known/jwks.json"
-    admin.OIDC_GROUPS_CLAIM = "groups"
-    admin.OIDC_ROLE_CLAIM = "interlock_role"
-    admin.OIDC_EMAIL_CLAIM = "email"
-    admin.OIDC_DEFAULT_ROLE = ""
-    admin.OIDC_ADMIN_EMAIL_ALLOWLIST = ""
-    admin.OIDC_ADMIN_DOMAIN_ALLOWLIST = ""
-    admin.OIDC_ALLOWED_ALGS = ["RS256"]
-    admin.OIDC_GROUP_ROLE_MAP_RAW = json.dumps({
-        "interlock-owners": "owner",
-        "interlock-operators": "operator",
-        "interlock-security": "security_reviewer",
-        "interlock-auditors": "auditor",
-    })
+    values.update(
+        {
+            "OIDC_ADMIN_ENABLED": True,
+            "OIDC_ISSUER": ISSUER,
+            "OIDC_AUDIENCE": AUDIENCE,
+            "OIDC_JWKS_URL": "https://idp.example.com/.well-known/jwks.json",
+            "OIDC_GROUPS_CLAIM": "groups",
+            "OIDC_ROLE_CLAIM": "interlock_role",
+            "OIDC_EMAIL_CLAIM": "email",
+            "OIDC_DEFAULT_ROLE": "",
+            "OIDC_ADMIN_EMAIL_ALLOWLIST": "",
+            "OIDC_ADMIN_DOMAIN_ALLOWLIST": "",
+            "OIDC_ALLOWED_ALGS": ["RS256"],
+            "OIDC_GROUP_ROLE_MAP_RAW": json.dumps(
+                {
+                    "interlock-owners": "owner",
+                    "interlock-operators": "operator",
+                    "interlock-security": "security_reviewer",
+                    "interlock-auditors": "auditor",
+                }
+            ),
+        }
+    )
+    for key, value in values.items():
+        monkeypatch.setattr(admin, key, value)
     monkeypatch.setattr(admin, "_get_oidc_signing_key", lambda token: public_key)
 
     yield private_key
 
-    for key, value in old_values.items():
-        setattr(admin, key, value)
+
+def test_oidc_jwks_redirect_is_rejected_without_second_request(monkeypatch):
+    monkeypatch.setenv("INTERLOCK_ENV", "development")
+    requests = []
+    real_client = httpx.Client
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(str(request.url))
+        return httpx.Response(
+            302,
+            headers={"Location": "http://redirect.audit.invalid/jwks"},
+            request=request,
+        )
+
+    def client_factory(**kwargs):
+        assert kwargs["follow_redirects"] is False
+        assert kwargs["trust_env"] is False
+        return real_client(transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(admin.httpx, "Client", client_factory)
+    client = admin._GuardedPyJWKClient("https://idp.audit.invalid/jwks")
+
+    with pytest.raises(jwt.exceptions.PyJWKClientConnectionError):
+        client.fetch_data()
+
+    assert requests == ["https://idp.audit.invalid/jwks"]
 
 
 def make_token(private_key, **claims):
@@ -101,7 +135,9 @@ def make_token(private_key, **claims):
         "iat": now,
     }
     payload.update(claims)
-    token = jwt.encode(payload, private_key, algorithm="RS256", headers={"kid": "test-key"})
+    token = jwt.encode(
+        payload, private_key, algorithm="RS256", headers={"kid": "test-key"}
+    )
     return token.decode("utf-8") if isinstance(token, bytes) else token
 
 
@@ -160,10 +196,14 @@ def test_oidc_rejects_unapproved_algorithm(oidc_keys):
 
 def test_oidc_email_allowlist_blocks_unapproved_principal(oidc_keys):
     admin.OIDC_ADMIN_EMAIL_ALLOWLIST = "security@example.com"
-    good_token = make_token(oidc_keys, email="security@example.com", groups=["interlock-operators"])
+    good_token = make_token(
+        oidc_keys, email="security@example.com", groups=["interlock-operators"]
+    )
     assert "keys" in admin.list_all_keys(authorization=f"Bearer {good_token}")
 
-    bad_token = make_token(oidc_keys, email="intruder@example.com", groups=["interlock-operators"])
+    bad_token = make_token(
+        oidc_keys, email="intruder@example.com", groups=["interlock-operators"]
+    )
     with pytest.raises(HTTPException) as exc:
         admin.list_all_keys(authorization=f"Bearer {bad_token}")
     assert exc.value.status_code == 403
@@ -172,5 +212,7 @@ def test_oidc_email_allowlist_blocks_unapproved_principal(oidc_keys):
 def test_oidc_domain_allowlist_allows_matching_domain(oidc_keys):
     admin.OIDC_ADMIN_EMAIL_ALLOWLIST = ""
     admin.OIDC_ADMIN_DOMAIN_ALLOWLIST = "example.com"
-    token = make_token(oidc_keys, email="security@example.com", groups=["interlock-operators"])
+    token = make_token(
+        oidc_keys, email="security@example.com", groups=["interlock-operators"]
+    )
     assert "keys" in admin.list_all_keys(authorization=f"Bearer {token}")

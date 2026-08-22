@@ -4,6 +4,7 @@
 import asyncio
 import logging
 import os
+import socket
 import sys
 import tempfile
 from pathlib import Path
@@ -27,6 +28,7 @@ from core.url_security import (
     OutboundUrlRejected,
     ensure_safe_outbound_url,
 )  # noqa: E402
+from models.schemas import SIEMTestRequest  # noqa: E402
 
 TEST_KEY = None  # minted in the seeded_db fixture via db.generate_key
 
@@ -256,14 +258,30 @@ def test_mcp_register_rejects_unsafe_url_in_production(monkeypatch):
     assert "not allowed" in str(exc.value.detail)
 
 
-def test_offline_allowlist_accepts_bundled_mock_and_rejects_other_hosts(monkeypatch):
+def test_offline_demo_accepts_bundled_mock_and_rejects_other_hosts(monkeypatch):
     allowed_server_id = "_test_offline_allowlisted_mock"
     rejected_server_id = "_test_offline_unallowlisted_host"
     db.unregister_mcp_server(allowed_server_id)
     db.unregister_mcp_server(rejected_server_id)
     monkeypatch.setenv("INTERLOCK_ENV", "local")
-    monkeypatch.setenv("INTERLOCK_ALLOW_PRIVATE_OUTBOUND", "true")
+    monkeypatch.setenv("INTERLOCK_OFFLINE_DEMO", "true")
+    monkeypatch.setenv("INTERLOCK_PROTECT_OUTBOUND_URLS", "true")
+    monkeypatch.delenv("INTERLOCK_ALLOW_PRIVATE_OUTBOUND", raising=False)
     monkeypatch.setenv("MCP_REGISTRY_ALLOWED_HOSTS", "mcp-mock")
+    monkeypatch.setattr(
+        "core.url_security.socket.getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("172.20.0.5", 9100),
+            )
+        ],
+    )
+    assert config.offline_demo_enabled() is True
+    assert config.is_production() is False
 
     try:
         accepted = run(
@@ -290,7 +308,7 @@ def test_offline_allowlist_accepts_bundled_mock_and_rejects_other_hosts(monkeypa
             )
 
         assert exc.value.status_code == 400
-        assert "Host 'not-allowlisted.invalid' is not allowed" in str(exc.value.detail)
+        assert "resolved to a non-global address" in str(exc.value.detail)
         assert db.lookup_mcp_server(rejected_server_id) is None
     finally:
         db.unregister_mcp_server(allowed_server_id)
@@ -317,9 +335,53 @@ def test_siem_test_does_not_call_private_webhook_in_production(monkeypatch):
             "test-key",
         )
     )
-
     assert out["ok"] is False
     assert out["error"] == "unsafe_outbound_url"
+
+
+def test_siem_test_rejects_non_admin_key_before_dispatch(monkeypatch):
+    generated = db.generate_key("free", label="siem-test-no-admin", scopes=["mcp.read"])
+    calls = []
+
+    async def fake_send(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"ok": True}
+
+    monkeypatch.setattr("core.siem.send_to_siem", fake_send)
+    try:
+        with pytest.raises(proxy.HTTPException) as exc:
+            run(
+                proxy.system_routes.test_siem(
+                    SIEMTestRequest(
+                        provider="webhook", config={"url": "https://example.test"}
+                    ),
+                    x_api_key=generated["raw_key"],
+                )
+            )
+        assert exc.value.status_code == 403
+        assert "admin" in str(exc.value.detail)
+        assert calls == []
+    finally:
+        db.revoke_key_by_id(generated["id"])
+
+
+def test_siem_test_allows_admin_key(monkeypatch):
+    calls = []
+
+    async def fake_send(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"ok": True}
+
+    monkeypatch.setattr("core.siem.send_to_siem", fake_send)
+
+    result = run(
+        proxy.system_routes.test_siem(
+            SIEMTestRequest(provider="webhook", config={"url": "https://example.test"}),
+            x_api_key=TEST_KEY,
+        )
+    )
+    assert result == {"ok": True}
+    assert len(calls) == 1
 
 
 def test_route_limits_are_clamped(monkeypatch):
