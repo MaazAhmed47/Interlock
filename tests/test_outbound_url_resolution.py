@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import threading
 from collections.abc import Callable
 
 import httpx
@@ -252,6 +253,69 @@ def test_async_resolver_timeout_is_bounded_without_blocking_event_loop(monkeypat
 
     asyncio.run(scenario())
     assert heartbeat_ran is True
+
+
+def test_default_system_resolver_runs_off_thread_and_times_out(monkeypatch):
+    _protected(monkeypatch)
+    resolver_started = threading.Event()
+    release_resolver = threading.Event()
+    resolver_finished = threading.Event()
+    resolver_threads: list[threading.Thread] = []
+    heartbeat_ran = False
+
+    def blocked_getaddrinfo(host: str, port: int, **_kwargs):
+        resolver_threads.append(threading.current_thread())
+        resolver_started.set()
+        release_resolver.wait()
+        resolver_finished.set()
+        return _resolver("1.1.1.1")(host, port)
+
+    monkeypatch.setattr(url_security.socket, "getaddrinfo", blocked_getaddrinfo)
+    safety_release = threading.Timer(1.0, release_resolver.set)
+    safety_release.start()
+
+    async def scenario():
+        nonlocal heartbeat_ran
+        task = asyncio.create_task(
+            url_security.ensure_safe_outbound_url_async(
+                "https://service.audit.invalid/hook",
+                context="test",
+                resolution_timeout_seconds=0.01,
+            )
+        )
+        try:
+            for _ in range(100):
+                if resolver_started.is_set():
+                    break
+                await asyncio.sleep(0.001)
+            assert resolver_started.is_set()
+            await asyncio.sleep(0)
+            assert release_resolver.is_set() is False
+            heartbeat_ran = True
+            with pytest.raises(OutboundUrlRejected, match="resolution timed out"):
+                await task
+        finally:
+            release_resolver.set()
+            for _ in range(100):
+                if resolver_finished.is_set():
+                    break
+                await asyncio.sleep(0.001)
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        release_resolver.set()
+        safety_release.cancel()
+        safety_release.join(timeout=1.0)
+        for thread in resolver_threads:
+            if thread is not threading.current_thread():
+                thread.join(timeout=1.0)
+
+    assert heartbeat_ran is True
+    assert resolver_finished.is_set()
+    assert len(resolver_threads) == 1
+    assert resolver_threads[0] is not threading.current_thread()
+    assert resolver_threads[0].is_alive() is False
 
 
 def test_development_default_preserves_local_infrastructure(monkeypatch):
