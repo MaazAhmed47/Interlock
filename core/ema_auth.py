@@ -20,6 +20,7 @@ import jwt
 from jwt.algorithms import RSAAlgorithm
 
 from core.ema_config import EMASettings, HMACKeyRing
+from core.url_security import ensure_safe_outbound_url_async
 
 _BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]*$")
 _KID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -196,13 +197,17 @@ class TrustedJWKSCache:
             pool=self.settings.jwks_connect_timeout_seconds,
         )
         try:
+            jwks_uri = await ensure_safe_outbound_url_async(
+                self.settings.jwks_uri, context="EMA JWKS"
+            )
             async with httpx.AsyncClient(
                 transport=self._transport,
                 timeout=timeout,
                 follow_redirects=False,
+                trust_env=False,
             ) as client:
                 body = await asyncio.wait_for(
-                    self._read_jwks_response(client),
+                    self._read_jwks_response(client, jwks_uri),
                     timeout=self.settings.jwks_total_timeout_seconds,
                 )
             document = json.loads(body)
@@ -223,10 +228,12 @@ class TrustedJWKSCache:
             if key_id in keys:
                 self._negative.pop(key_id, None)
 
-    async def _read_jwks_response(self, client: httpx.AsyncClient) -> bytes:
+    async def _read_jwks_response(
+        self, client: httpx.AsyncClient, jwks_uri: str
+    ) -> bytes:
         async with client.stream(
             "GET",
-            self.settings.jwks_uri,
+            jwks_uri,
             headers={"Accept": "application/json"},
         ) as response:
             if response.is_redirect or response.status_code != 200:

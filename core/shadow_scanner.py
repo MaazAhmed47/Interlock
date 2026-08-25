@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import httpx
 
 from core import db
+from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
 
 logger = logging.getLogger("interlock.shadow_scanner")
 
@@ -48,7 +49,22 @@ async def probe_target(
     url: str, probe_path: str = "/tools/list", client: httpx.AsyncClient | None = None
 ) -> ProbeResult:
     target = f"{url.rstrip('/')}{probe_path}"
-    _client = client or httpx.AsyncClient(timeout=_TIMEOUT)
+    try:
+        target = await ensure_safe_outbound_url_async(target, context="Shadow scan")
+    except OutboundUrlRejected:
+        return ProbeResult(
+            url=url,
+            responded=False,
+            looks_like_mcp=False,
+            auth_required=False,
+            tool_listing_available=False,
+            status_code=0,
+            error="unsafe_outbound_url",
+        )
+
+    _client = client or httpx.AsyncClient(
+        timeout=_TIMEOUT, follow_redirects=False, trust_env=False
+    )
     try:
         resp = await _client.get(target)
         if resp.status_code in (401, 403):

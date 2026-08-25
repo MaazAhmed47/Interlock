@@ -16,7 +16,7 @@ import httpx
 
 from core import db
 from core import drift_evidence
-from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
+from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
 
 EXPECTED_OUTCOMES = {"denied", "allowed"}
 OBSERVED_OUTCOMES = {
@@ -390,7 +390,9 @@ async def _call_upstream_for_observation(
     )
 
     try:
-        server_url = ensure_safe_outbound_url(server["url"], context="MCP probe")
+        server_url = await ensure_safe_outbound_url_async(
+            server["url"], context="MCP probe"
+        )
         headers = _resolve_upstream_auth_headers(server)
         payload = {
             "jsonrpc": "2.0",
@@ -401,7 +403,9 @@ async def _call_upstream_for_observation(
                 "arguments": probe.get("arguments") or {},
             },
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0, follow_redirects=False, trust_env=False
+        ) as client:
             resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
             body: Optional[Dict[str, Any]] = {}
             try:

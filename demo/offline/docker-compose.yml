@@ -32,9 +32,10 @@ services:
       INTERLOCK_ENV: local
       # Opt-in: seeds the fixed, clearly-labeled demo API key at startup.
       INTERLOCK_OFFLINE_DEMO: "true"
-      # The mock lives on the compose network under a single-label hostname.
-      INTERLOCK_ALLOW_PRIVATE_OUTBOUND: "true"
-      # Add the bundled mock explicitly; the registration guard stays enabled.
+      # Keep outbound protection enabled. Only the exact bundled mock hostname
+      # is allowed by the offline-demo profile; other private targets fail closed.
+      INTERLOCK_PROTECT_OUTBOUND_URLS: "true"
+      # Add the bundled mock explicitly; the registration guard also stays enabled.
       MCP_REGISTRY_ALLOWED_HOSTS: mcp-mock
       FIREWALL_DB_PATH: /app/data/firewall.db
       SHADOW_SCAN_ENABLED: "false"

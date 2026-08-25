@@ -1165,7 +1165,10 @@ Production/hosted deployments should set:
 - `INTERLOCK_ENV=production`
 - explicit `ALLOWED_ORIGINS` for the dashboard origin; `*` is rejected in production
 - `ENABLE_API_DOCS=false` unless the API docs are intentionally gated elsewhere
-- default outbound URL protection enabled; only set `INTERLOCK_ALLOW_PRIVATE_OUTBOUND=true` for controlled local/private deployments
+- outbound URL protection is mandatory in production; private destinations are rejected
+- the bundled offline Compose proof uses a narrow `mcp-mock` allowance and does not enable a general private-destination override
+- enforce a production egress proxy or firewall because application-level hostname checks are not a complete DNS-rebinding defense
+- guarded HTTP clients ignore ambient proxy variables; a production proxy must be an explicit future design or a transparent enforced network boundary
 
 Secrets hygiene:
 
@@ -1202,14 +1205,32 @@ Common variables:
 | `DATABASE_URL` | Optional Postgres connection string for hosted/production deployments. |
 | `REDIS_URL` | Optional Redis connection string for shared rate limits across workers/pods. |
 | `FIREWALL_DB_PATH` | Local SQLite path; defaults to `data/firewall.db`. |
-| `INTERLOCK_ENV` | Set to `production` for hosted deployments; local/dev keeps permissive defaults. |
+| `INTERLOCK_ENV` | Set to `production` for hosted deployments; local/dev is permissive only when no supported hosted-platform marker is present. |
 | `ALLOWED_ORIGINS` | Required in production; comma-separated dashboard origins for CORS. |
 | `ENABLE_API_DOCS` | Defaults to off in production and on in local/dev. |
-| `INTERLOCK_PROTECT_OUTBOUND_URLS` | Enables SSRF-oriented outbound URL checks; defaults on in production. |
-| `INTERLOCK_ALLOW_PRIVATE_OUTBOUND` | Override for controlled private/local outbound URLs; avoid on shared hosted deployments. |
+| `INTERLOCK_PROTECT_OUTBOUND_URLS` | Enables outbound URL checks in local/dev; protection is mandatory in production and hosted-platform environments. |
+| `INTERLOCK_ALLOW_PRIVATE_OUTBOUND` | Legacy local-only compatibility setting; it cannot disable the shared guard or permit private production egress. |
+| `INTERLOCK_OFFLINE_DEMO` | Enables the non-production Compose proof profile, including only the exact `mcp-mock` outbound allowance. |
 | `MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS` | Comma-separated allowlist of environment-variable names that registered MCP servers may use for upstream auth; default deny. |
 | `SHADOW_SCAN_ENABLED` | Opt-in background shadow MCP probing. |
 | `SHADOW_SCAN_INTERVAL` | Shadow scan interval in seconds. |
+
+---
+
+### Outbound destination limitation
+
+Interlock rejects non-global literal addresses and any hostname whose checked
+A/AAAA answer includes a non-global address when outbound protection is active.
+The check fails closed on resolution errors and covers configurable MCP, probe,
+readback, webhook, SIEM, shadow-scan, and JWKS destinations.
+
+hostname resolution rejection is a partial mitigation; DNS rebinding requires connection pinning or an enforced egress proxy/firewall.
+
+The current HTTP transports resolve hostnames again when connecting. Production
+deployments must therefore enforce destination policy at the network boundary;
+see [Outbound destination security](docs/outbound-destination-security.md).
+Guarded clients use `trust_env=False`, so ambient `HTTP_PROXY`, `HTTPS_PROXY`,
+`ALL_PROXY`, and `NO_PROXY` settings are unsupported for these paths.
 
 ---
 

@@ -9,7 +9,7 @@ import uuid
 from typing import Optional, Dict, Any
 from models.schemas import ScanResult, ThreatLevel
 from core.metadata_policy import evaluate_metadata_policy
-from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
+from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
 from core.tool_inspector import inspect_tool_call
 from core.tool_metadata import normalize_tool_metadata
 from core import db
@@ -768,7 +768,9 @@ async def _fetch_tool_list_payload(
     """
     profile = MCP_UPSTREAM_LEGACY_PROFILE
     try:
-        server_url = ensure_safe_outbound_url(server_url, context="MCP discovery")
+        server_url = await ensure_safe_outbound_url_async(
+            server_url, context="MCP discovery"
+        )
         registered = (
             db.lookup_mcp_server(server_id)
             if server_id
@@ -780,7 +782,9 @@ async def _fetch_tool_list_payload(
         auth_headers = _resolve_upstream_auth_headers(registered)
         profile = _upstream_protocol_profile(registered)
 
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, follow_redirects=False, trust_env=False
+        ) as client:
 
             async def send(method: str) -> Dict[str, Any]:
                 request_id = uuid.uuid4().hex
@@ -1705,9 +1709,13 @@ async def proxy_mcp_tool_call(
 
     # 5. Forward to actual MCP server
     try:
-        server_url = ensure_safe_outbound_url(server["url"], context="MCP server")
+        server_url = await ensure_safe_outbound_url_async(
+            server["url"], context="MCP server"
+        )
         auth_headers = _resolve_upstream_auth_headers(server)
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0, follow_redirects=False, trust_env=False
+        ) as client:
             request_id = uuid.uuid4().hex
             payload, protocol_headers = _upstream_request(
                 profile,

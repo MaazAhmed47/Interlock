@@ -66,7 +66,7 @@ from core import drift_evidence
 from core.mcp_drift import ACTION_BY_SEVERITY, SEVERITY_ORDER
 from core.mcp_drift import classify_server_drift, classify_tool_drift
 from core.mcp_gateway import fetch_candidate_tool_surface
-from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
+from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
 
 logger = logging.getLogger("interlock.ci_boundary_review")
 
@@ -340,14 +340,16 @@ async def _observe(
         "mutated_state": False,
     }
     try:
-        ensure_safe_outbound_url(server.get("url") or "", context="MCP discovery")
+        server_url = await ensure_safe_outbound_url_async(
+            server.get("url") or "", context="MCP discovery"
+        )
     except OutboundUrlRejected:
         observation["error_class"] = "registry_url_rejected"
         return observation, None, []
 
     try:
         result = await fetch_candidate_tool_surface(
-            server["url"],
+            server_url,
             timeout=boundary_review_timeout_seconds(),
             server_id=server_id,
             max_response_bytes=caps["max_response_bytes"],

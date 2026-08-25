@@ -22,7 +22,7 @@ import httpx
 from core import db
 from core import drift_evidence
 from core.effect_drift import build_effect_profile
-from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
+from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
 
 SCHEMA_ID = "interlock.readback-effect-drift-record"
 SCHEMA_VERSION = "1"
@@ -400,7 +400,7 @@ async def _call_upstream_tool(
     )
 
     try:
-        server_url = ensure_safe_outbound_url(
+        server_url = await ensure_safe_outbound_url_async(
             server["url"], context="MCP readback probe"
         )
         headers = _resolve_upstream_auth_headers(server)
@@ -410,7 +410,9 @@ async def _call_upstream_tool(
             "method": "tools/call",
             "params": {"name": tool_name, "arguments": arguments or {}},
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0, follow_redirects=False, trust_env=False
+        ) as client:
             resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
             status = getattr(resp, "status_code", None)
             body: Optional[Dict[str, Any]] = None

@@ -235,7 +235,9 @@ async def forward_to_provider(
 
     # Make request
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(
+            timeout=120.0, follow_redirects=False, trust_env=False
+        ) as client:
             resp = await client.post(url, json=body, headers=headers)
             data = resp.json()
 
