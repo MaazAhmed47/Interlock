@@ -46,9 +46,21 @@ Interlock should be evaluated as one runtime trust layer, not as a complete repl
 **Interlock mapping: Mapped**
 
 - Tool metadata is normalized and baselined at approval time.
+- Before first model-facing exposure, Interlock performs bounded recursive
+  inspection of explicit tool and JSON Schema documentation fields. Selected
+  high-confidence instruction, sensitive-resource egress, bidi-formatting,
+  zero-width concealment, normalization-divergence, and instruction-bearing
+  comment indicators place the exact raw definition in review/quarantine.
 - Schema and metadata changes can be detected as drift.
 - Response scanning can inspect tool output before it reaches the next model step.
 - High-risk changes can be held for review instead of silently trusted.
+
+The inspection projection never replaces or normalizes the raw schema. Limits
+fail into review, while ordinary multilingual text, Persian/Arabic joining
+characters, and emoji ZWJ sequences are not rejected solely for being non-ASCII.
+This is deterministic indicator coverage, not comprehensive semantic
+prompt-injection or Unicode-confusable detection, intent/provenance enforcement,
+OWASP certification, or a full MCP conformance claim.
 
 ---
 

@@ -603,7 +603,7 @@ Interlock maintains a practical coverage map against OWASP MCP Top 10-style risk
 |---|---|---|
 | MCP01 Token Mismanagement & Secret Exposure | Mapped | Response scanning, secret redaction, audit |
 | MCP02 Privilege Escalation via Scope Creep | Mapped | Metadata baselines, drift detection, quarantine |
-| MCP03 Tool Poisoning | Mapped | Full-schema tool validation and baseline comparison |
+| MCP03 Tool Poisoning | Mapped | Bounded model-facing definition-text inspection, raw-definition baselines, and response scanning |
 | MCP04 Supply Chain Attacks | Mapped | Provenance metadata, trusted registry policy, hash/version drift |
 | MCP05 Command Injection & Execution | Mapped | Tool argument inspection and policy enforcement |
 | MCP06 Intent Flow Subversion | Mapped | Tool-response prompt injection detection |
@@ -652,7 +652,7 @@ flowchart LR
 |---|---|
 | MCP gateway | Proxies MCP tool calls through trust, whitelist, inspection, RBAC, forwarding, response scan, and audit. |
 | Tool metadata model | Normalizes tool `effects`, `side_effect`, `data_classes`, externality, identity mode, and confidence. |
-| Tool-definition validation | Detects suspicious tool names, description injection, dangerous schema fields, and risky metadata. |
+| Tool-definition validation | Deterministically inspects bounded model-facing text in tool descriptions and selected JSON Schema documentation fields for high-confidence instruction, sensitive-resource egress, bidi/control, normalization-divergence, and comment-smuggling indicators. Raw definitions are not rewritten. |
 | Full-schema drift detection | Detects changes in descriptions, parameters, types, defaults, enums, required fields, effects, and data classes. |
 | Quarantine workflow | Blocks high-risk drift until an operator approves a new baseline or keeps the tool quarantined. |
 | Runtime RBAC | Enforces role-aware policy before every tool call. Built-in roles include support, devops, finance, readonly, data analyst, and admin. |
@@ -662,6 +662,15 @@ flowchart LR
 | Provenance checks | Enforces source registry, package, version, source URL, and hash policy for MCP servers. |
 | Shadow MCP discovery | Probes operator-provided targets for unmanaged MCP servers and tracks review state. |
 | Audit trail | Records allow, deny, monitor, quarantine, provenance, shadow, and response-scan decisions. |
+
+Definition-text inspection is bounded by traversal depth, visited nodes, text
+fields, per-field length, and cumulative inspected characters. A breached limit
+requires review instead of silently passing as clean. Findings retain only safe
+field paths, detector categories, code-point classes, and text digests; the raw
+definition remains unchanged for registry review and hash comparison. The
+detector does not provide comprehensive prompt-injection prevention, Unicode
+confusable detection, intent causality, OWASP certification, or MCP conformance,
+and it cannot protect calls that bypass Interlock.
 
 ---
 

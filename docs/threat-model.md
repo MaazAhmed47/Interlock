@@ -35,7 +35,7 @@ The main boundary is the gateway. Agents and MCP servers are not assumed to be f
 
 | Threat | Control |
 |---|---|
-| MCP tool poisoning | tool-definition validation, metadata normalization, baseline comparison |
+| MCP tool poisoning | bounded model-facing definition-text inspection, metadata normalization, baseline comparison |
 | Post-approval drift | schema/capability/provenance drift detection and quarantine |
 | Privilege escalation | role-aware RBAC before tool execution |
 | Dangerous tool arguments | SQL, shell, file, code, SSRF, and path traversal inspection |
@@ -50,6 +50,10 @@ The main boundary is the gateway. Agents and MCP servers are not assumed to be f
 ## Out Of Scope Or Not Guaranteed
 
 - Interlock does not guarantee that every malicious prompt or tool response is detected.
+- Definition-text inspection covers selected high-confidence deterministic
+  indicators. It does not provide general semantic prompt-injection,
+  Unicode-confusable, or causal intent detection, and it does not categorically
+  reject multilingual text.
 - Interlock does not replace secure MCP server implementation.
 - Interlock does not replace identity provider, SSO, endpoint protection, or network security controls.
 - Shadow discovery only probes operator-configured targets. It does not discover every server in an enterprise network automatically.

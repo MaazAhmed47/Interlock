@@ -25,7 +25,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from threading import Lock
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Sequence
 from urllib.parse import urlparse
 from core import audit_envelope
 from core import drift_evidence
@@ -4098,8 +4098,58 @@ def seed_mcp_servers() -> None:
 # ── MCP tool metadata registry ────────────────────────────────────────────────
 
 
+def _definition_inspection_drift(
+    findings: List[Dict[str, Any]], previous_types: Optional[Sequence[str]] = None
+) -> Dict[str, Any]:
+    """Build bounded, text-free drift evidence for definition inspection."""
+    safe_types = [*(previous_types or []), "definition_text_poisoning"]
+    safe_reasons: List[str] = []
+    for finding in list(findings or [])[:32]:
+        category = str(finding.get("category") or "")
+        path = str(finding.get("path") or "")
+        text_hash = str(finding.get("text_sha256") or "")
+        code_points = finding.get("code_point_categories") or []
+        if not re.fullmatch(r"[a-z0-9_]{1,64}", category):
+            continue
+        if not path.startswith("/") or len(path) > 256 or not path.isascii():
+            continue
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", text_hash):
+            continue
+        safe_code_points = [
+            str(value)
+            for value in list(code_points)[:8]
+            if re.fullmatch(r"[a-z0-9_]{1,64}", str(value))
+        ]
+        safe_types.append(category)
+        reason = f"category={category} path={path} text={text_hash}"
+        if safe_code_points:
+            reason += " code_points=" + ",".join(safe_code_points)
+        if finding.get("truncated") is True:
+            reason += " truncated=true"
+        safe_reasons.append(reason)
+
+    safe_reasons = _unique_list(safe_reasons)
+    if not safe_reasons:
+        safe_reasons = [
+            "category=definition_text_poisoning path=/@inspection "
+            "text=sha256:"
+            + hashlib.sha256(b"bounded-definition-inspection").hexdigest()
+        ]
+    return {
+        "severity": "critical",
+        "action": "quarantine",
+        "types": _unique_list(safe_types),
+        "reasons": safe_reasons,
+        "findings": [],
+    }
+
+
 def upsert_mcp_tool_metadata(
-    server_id: str, tool: dict, normalized_metadata: dict
+    server_id: str,
+    tool: dict,
+    normalized_metadata: dict,
+    *,
+    definition_inspection_findings: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Insert or update normalized metadata for one discovered MCP tool."""
     assert_not_production_fixture_write(server_id, "MCP tool metadata upsert")
@@ -4205,6 +4255,14 @@ def upsert_mcp_tool_metadata(
                     "findings": [],
                 }
 
+            if definition_inspection_findings:
+                drift = _definition_inspection_drift(
+                    definition_inspection_findings,
+                    drift.get("types") or [],
+                )
+                status = "quarantined"
+                last_changed = last_changed or now
+
             conn.execute(
                 """
                 UPDATE mcp_tool_metadata
@@ -4244,6 +4302,10 @@ def upsert_mcp_tool_metadata(
                 ),
             )
         else:
+            if definition_inspection_findings:
+                drift = _definition_inspection_drift(definition_inspection_findings)
+                status = "quarantined"
+                last_changed = now
             conn.execute(
                 """
                 INSERT INTO mcp_tool_metadata
