@@ -33,6 +33,7 @@ if _repo_root not in sys.path:
 
 import asyncio  # noqa: E402
 from core import db  # noqa: E402
+from core import drift_evidence  # noqa: E402
 from core.mcp_gateway import discover_mcp_tools, proxy_mcp_tool_call  # noqa: E402
 
 
@@ -651,7 +652,12 @@ def run():
         s = "R"
         before = _st(fixture_id("m4"), "query_customers").get("status")
         db.approve_mcp_tool_baseline(
-            fixture_id("m4"), "query_customers", reviewer="operator"
+            fixture_id("m4"),
+            "query_customers",
+            expected_surface_hash=drift_evidence.raw_tool_definition_surface_hash(
+                _st(fixture_id("m4"), "query_customers")["raw_tool_definition"]
+            ),
+            reviewer="operator",
         )
         _disc(fixture_id("m4"), [QC_V2])  # re-discover the now-approved surface
         st = _st(fixture_id("m4"), "query_customers")

@@ -79,11 +79,19 @@ export default function MCPGateway() {
       setActionMsg(m => ({ ...m, [k]: 'Demo mode - connect an API key to review tools' }))
       return
     }
-    const fn = approve ? api.approveTool : api.quarantineTool
     const msg = approve ? 'Approved' : 'Quarantined'
     const reason = approve ? 'Approved via dashboard' : 'Quarantined via dashboard'
     try {
-      await fn(tool.server_id, tool.tool_name, { reviewer: 'operator', reason })
+      if (approve) {
+        if (!tool.review_surface_hash) throw new Error('Reviewed surface hash is unavailable')
+        await api.approveTool(tool.server_id, tool.tool_name, {
+          expected_surface_hash: tool.review_surface_hash,
+          reviewer: 'operator',
+          reason,
+        })
+      } else {
+        await api.quarantineTool(tool.server_id, tool.tool_name, { reviewer: 'operator', reason })
+      }
       setActionMsg(m => ({ ...m, [k]: msg }))
       window.setTimeout(() => void refreshMcp(), 800)
     } catch (e) {

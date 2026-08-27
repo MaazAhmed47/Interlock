@@ -183,12 +183,24 @@ def _register_clean(
         },
     )
     assert discovered["ok"] is True
+    review_tools = _request(
+        services,
+        "GET",
+        "/mcp/tools",
+        params={"server_id": server_id},
+    )["tools"]
+    review_hashes = {
+        item["tool_name"]: item["review_surface_hash"] for item in review_tools
+    }
     for tool in tools:
         _request(
             services,
             "POST",
             f"/mcp/tools/{server_id}/{tool}/approve",
-            json={"reason": "Approved synthetic test boundary."},
+            json={
+                "expected_surface_hash": review_hashes[tool],
+                "reason": "Approved synthetic test boundary.",
+            },
         )
 
 
@@ -853,11 +865,25 @@ def test_public_inventory_has_same_eligible_fields_before_and_after_approval(
         and event.get("action") == "approve"
     }
 
+    current_review = _request(
+        live_services,
+        "GET",
+        "/mcp/tools",
+        params={"server_id": server_id},
+    )["tools"]
+    reviewed_hash = next(
+        item["review_surface_hash"]
+        for item in current_review
+        if item["tool_name"] == "read_customer"
+    )
     approved = _request(
         live_services,
         "POST",
         f"/mcp/tools/{server_id}/read_customer/approve",
-        json={"reason": "Endpoint-backed approval-state regression."},
+        json={
+            "expected_surface_hash": reviewed_hash,
+            "reason": "Endpoint-backed approval-state regression.",
+        },
     )
     assert approved["ok"] is True
     after = _request(

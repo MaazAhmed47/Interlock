@@ -355,12 +355,19 @@ def _discover(client: Any) -> dict:
 
 
 def _approve(client: Any, tool_name: str, reason: str) -> dict:
+    review_hash = _tool_row(client).get("review_surface_hash")
+    if not isinstance(review_hash, str):
+        raise JourneyError("review surface hash was unavailable")
     return _expect(
         _gateway(
             client,
             "POST",
             f"/mcp/tools/{SERVER_ID}/{tool_name}/approve",
-            {"reviewer": "local-evaluator", "reason": reason},
+            {
+                "expected_surface_hash": review_hash,
+                "reviewer": "local-evaluator",
+                "reason": reason,
+            },
         ),
         f"approve {tool_name} baseline",
     )
@@ -800,12 +807,16 @@ def apply_operator_action(client: Any, output_dir: Path | str, action: str) -> d
             "run and review the evaluator proof before choosing an action"
         )
     if normalized == "approve":
+        review_hash = _tool_row(client).get("review_surface_hash")
+        if not isinstance(review_hash, str):
+            raise JourneyError("review surface hash was unavailable")
         payload = _expect(
             _gateway(
                 client,
                 "POST",
                 f"/mcp/tools/{SERVER_ID}/{TOOL_NAME}/approve",
                 {
+                    "expected_surface_hash": review_hash,
                     "reviewer": "local-evaluator",
                     "reason": "Evaluator accepted the changed per-tool boundary.",
                 },

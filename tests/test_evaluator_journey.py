@@ -134,6 +134,7 @@ class FakeEvaluatorClient:
                 "tools": [
                     {
                         "tool_name": "read_file",
+                        "review_surface_hash": "sha256:" + "a" * 64,
                         "status": "active" if self.phase == 1 else "quarantined",
                         "drift_action": "allow" if self.phase == 1 else "quarantine",
                         "drift_severity": "none" if self.phase == 1 else "critical",

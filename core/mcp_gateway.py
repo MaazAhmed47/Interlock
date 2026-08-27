@@ -1,5 +1,6 @@
 import re
 import json
+import hashlib
 import logging
 import os
 import time
@@ -49,6 +50,7 @@ from core.mcp_2026_protocol import (
     validate_json_value,
 )
 from core import drift_evidence
+from core.mcp_definition_inspector import inspect_tool_definition_text
 
 # HTTPX logs status reason phrases at INFO, while HTTPCore logs raw response
 # headers at DEBUG. Both fields are controlled by an upstream server, so keep
@@ -471,16 +473,6 @@ SUSPICIOUS_TOOL_NAMES = [
     r".*\.\.\/.*",  # path traversal in name
 ]
 
-SUSPICIOUS_DESCRIPTIONS = [
-    r"unrestricted",
-    r"no.{0,10}sandbox",
-    r"bypass.{0,10}(security|safety|restriction)",
-    r"execute.{0,30}(arbitrary|user|untrusted)",
-    r"full.{0,10}(system|admin|root).{0,10}access",
-    r"download.{0,30}execute",
-    r"reverse.{0,5}shell",
-]
-
 DANGEROUS_SCHEMA_FIELDS = [
     "command",
     "shell_cmd",
@@ -505,12 +497,20 @@ def _malformed_tool_result(tool: Any, reason: str) -> ScanResult:
         threat_level=ThreatLevel.HIGH,
         threat_type="MCP_MALFORMED_TOOL_DEFINITION",
         reason=reason,
-        original_prompt=f"Tool definition: {json.dumps(tool, default=str)[:300]}",
+        original_prompt="MCP tool definition rejected as malformed.",
         safe_to_proceed=False,
         confidence=0.95,
         layer_caught="MCP Gateway - Tool Validator",
         tool_metadata=normalize_tool_metadata({}),
     )
+
+
+def _safe_tool_label(value: Any) -> str:
+    text = str(value or "")
+    if re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", text):
+        return text
+    digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:12]
+    return f"tool-sha256-{digest}"
 
 
 def _schema_nodes(schema: Any):
@@ -563,7 +563,7 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
     Validate a tool definition from an MCP server BEFORE exposing it to agents.
     Catches:
     - Suspicious tool names (eval, execute, delete_all)
-    - Malicious descriptions (prompt injections in tool descriptions)
+    - High-confidence poisoning in bounded model-facing definition text
     - Dangerous schema fields (raw command inputs)
     - Hidden instructions in descriptions
     """
@@ -572,7 +572,6 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
             tool, "MCP tool definition must be a JSON object."
         )
 
-    metadata = normalize_tool_metadata(tool)
     raw_name = tool.get("name")
     if not isinstance(raw_name, str) or not raw_name.strip():
         return _malformed_tool_result(
@@ -580,72 +579,72 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
         )
 
     name = raw_name.strip().lower()
-    raw_description = tool.get("description", "")
-    description = "" if raw_description is None else str(raw_description).lower()
+    safe_name = _safe_tool_label(raw_name.strip())
     raw_schema = tool.get("inputSchema", {}) or tool.get("input_schema", {})
     schema = raw_schema if isinstance(raw_schema, dict) else {}
 
-    # 1. Check for malicious tool names
+    # 1. Inspect a separate bounded projection before recursive metadata
+    # inference. The raw definition remains
+    # untouched for storage, hashing, comparison, evidence, and forwarding.
+    inspection = inspect_tool_definition_text(tool)
+    if inspection.requires_review:
+        metadata = {} if inspection.limit_exceeded else normalize_tool_metadata(tool)
+        metadata = {**metadata, "definition_inspection": inspection.to_metadata()}
+        categories = sorted({finding.category for finding in inspection.findings})
+        legacy_top_level = all(
+            finding.path == "/description"
+            and finding.category
+            in {"legacy_description_risk", "model_directed_instruction"}
+            for finding in inspection.findings
+        )
+        return ScanResult(
+            is_threat=True,
+            threat_level=ThreatLevel.CRITICAL,
+            threat_type=(
+                "MCP_TOOL_DESCRIPTION_INJECTION"
+                if legacy_top_level
+                else "MCP_TOOL_DEFINITION_POISONING"
+            ),
+            reason=(
+                "MCP tool definition requires explicit review after bounded "
+                f"text inspection ({', '.join(categories[:6])})."
+            ),
+            original_prompt=f"MCP tool definition: {safe_name}",
+            safe_to_proceed=False,
+            confidence=0.99,
+            layer_caught="MCP Gateway - Definition Text Inspector",
+            tool_metadata=metadata,
+        )
+
+    metadata = normalize_tool_metadata(tool)
+
+    # 2. Check for malicious tool names
     for pattern in SUSPICIOUS_TOOL_NAMES:
         if re.match(pattern, name, re.IGNORECASE):
             return ScanResult(
                 is_threat=True,
                 threat_level=ThreatLevel.HIGH,
                 threat_type="MALICIOUS_MCP_TOOL_NAME",
-                reason=f"Tool name '{name}' matches suspicious pattern '{pattern}'. Possible MCP supply chain attack.",
-                original_prompt=f"Tool definition: {json.dumps(tool)[:300]}",
+                reason=(
+                    f"Tool '{safe_name}' matches a suspicious name pattern. "
+                    "Possible MCP supply chain attack."
+                ),
+                original_prompt=f"MCP tool definition: {safe_name}",
                 safe_to_proceed=False,
                 confidence=0.95,
                 layer_caught="MCP Gateway — Tool Validator",
                 tool_metadata=metadata,
             )
 
-    # 2. Check for prompt injection in description
-    for pattern in SUSPICIOUS_DESCRIPTIONS:
-        if re.search(pattern, description, re.IGNORECASE):
-            return ScanResult(
-                is_threat=True,
-                threat_level=ThreatLevel.CRITICAL,
-                threat_type="MCP_TOOL_DESCRIPTION_INJECTION",
-                reason=f"Tool description contains suspicious pattern '{pattern}'. Possible hidden instruction in tool definition.",
-                original_prompt=f"Tool: {name} | Description: {description[:200]}",
-                safe_to_proceed=False,
-                confidence=0.95,
-                layer_caught="MCP Gateway — Tool Validator",
-                tool_metadata=metadata,
-            )
-
-    # 3. Check for prompt injection patterns in description
-    injection_patterns = [
-        r"ignore (all |previous )?(instructions|prompts)",
-        r"forget (everything|all|your)",
-        r"system prompt",
-        r"reveal (your|the) (prompt|instructions)",
-        r"act as (an? )?(unrestricted|admin|root)",
-    ]
-    for pattern in injection_patterns:
-        if re.search(pattern, description, re.IGNORECASE):
-            return ScanResult(
-                is_threat=True,
-                threat_level=ThreatLevel.CRITICAL,
-                threat_type="MCP_TOOL_DESCRIPTION_INJECTION",
-                reason="Hidden prompt injection detected in tool description.",
-                original_prompt=f"Tool: {name}",
-                safe_to_proceed=False,
-                confidence=0.99,
-                layer_caught="MCP Gateway — Tool Validator",
-                tool_metadata=metadata,
-            )
-
-    # 4. Check schema for dangerous parameter fields
+    # 3. Check schema for dangerous parameter fields
     dangerous_field = _find_dangerous_schema_field(schema)
     if dangerous_field:
         return ScanResult(
             is_threat=True,
             threat_level=ThreatLevel.HIGH,
             threat_type="MCP_DANGEROUS_SCHEMA",
-            reason=f"Tool '{name}' accepts dangerous parameter '{dangerous_field}'. Allows arbitrary command/code execution.",
-            original_prompt=f"Tool: {name} | Schema: {json.dumps(schema)[:200]}",
+            reason=f"Tool '{safe_name}' accepts dangerous parameter '{dangerous_field}'. Allows arbitrary command/code execution.",
+            original_prompt=f"MCP tool definition: {safe_name}",
             safe_to_proceed=False,
             confidence=0.92,
             layer_caught="MCP Gateway - Tool Validator",
@@ -658,8 +657,11 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
             is_threat=True,
             threat_level=ThreatLevel.HIGH,
             threat_type="MCP_DANGEROUS_SCHEMA",
-            reason=f"Tool '{name}' exposes bulk-destructive schema value '{destructive_value}'.",
-            original_prompt=f"Tool: {name} | Schema: {json.dumps(schema)[:200]}",
+            reason=(
+                f"Tool '{safe_name}' exposes bulk-destructive schema value "
+                f"'{destructive_value}'."
+            ),
+            original_prompt=f"MCP tool definition: {safe_name}",
             safe_to_proceed=False,
             confidence=0.9,
             layer_caught="MCP Gateway - Tool Validator",
@@ -673,22 +675,23 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
                 is_threat=True,
                 threat_level=ThreatLevel.HIGH,
                 threat_type="MCP_DANGEROUS_SCHEMA",
-                reason=f"Tool '{name}' accepts dangerous parameter '{field}'. Allows arbitrary command/code execution.",
-                original_prompt=f"Tool: {name} | Schema: {json.dumps(schema)[:200]}",
+                reason=f"Tool '{safe_name}' accepts dangerous parameter '{field}'. Allows arbitrary command/code execution.",
+                original_prompt=f"MCP tool definition: {safe_name}",
                 safe_to_proceed=False,
                 confidence=0.92,
                 layer_caught="MCP Gateway — Tool Validator",
                 tool_metadata=metadata,
             )
 
-    # 5. Check for excessively long descriptions (token smuggling)
+    # 4. Check for excessively long descriptions (token smuggling)
+    description = str(tool.get("description") or "")
     if len(description) > 2000:
         return ScanResult(
             is_threat=True,
             threat_level=ThreatLevel.MEDIUM,
             threat_type="MCP_OVERSIZED_DESCRIPTION",
             reason=f"Tool description is {len(description)} chars. Possible token smuggling attack.",
-            original_prompt=f"Tool: {name}",
+            original_prompt=f"MCP tool definition: {safe_name}",
             safe_to_proceed=False,
             confidence=0.85,
             layer_caught="MCP Gateway — Tool Validator",
@@ -700,7 +703,7 @@ def validate_mcp_tool_definition(tool: dict) -> ScanResult:
         threat_level=ThreatLevel.SAFE,
         threat_type=None,
         reason=f"MCP tool '{name}' passed validation.",
-        original_prompt=f"Tool: {name}",
+        original_prompt=f"MCP tool definition: {safe_name}",
         safe_to_proceed=True,
         confidence=0.97,
         layer_caught="MCP Gateway — Tool Validator",
@@ -1035,6 +1038,39 @@ async def fetch_candidate_tool_surface(
     }
 
 
+def _definition_inspection_findings(validation: ScanResult) -> list[dict[str, Any]]:
+    inspection = (validation.tool_metadata or {}).get("definition_inspection") or {}
+    findings = inspection.get("findings")
+    return list(findings) if isinstance(findings, list) else []
+
+
+def _is_exact_approved_definition(server_id: str, tool: Any) -> bool:
+    if not isinstance(tool, dict):
+        return False
+    stored = db.lookup_mcp_tool_metadata(server_id, str(tool.get("name") or ""))
+    if not stored:
+        return False
+    return bool(
+        stored.get("status") == "active"
+        and (stored.get("drift_severity") or "none") == "none"
+        and (stored.get("drift_action") or "allow") == "allow"
+        and stored.get("raw_tool_definition") == tool
+    )
+
+
+def _approved_definition_validation(validation: ScanResult) -> ScanResult:
+    return validation.model_copy(
+        update={
+            "is_threat": False,
+            "threat_level": ThreatLevel.SAFE,
+            "threat_type": None,
+            "reason": "Exact stored MCP definition was explicitly approved.",
+            "safe_to_proceed": True,
+            "confidence": 1.0,
+        }
+    )
+
+
 async def discover_mcp_tools(
     server_url: str,
     timeout: float = 10.0,
@@ -1146,13 +1182,27 @@ async def discover_mcp_tools(
             validation = validate_mcp_tool_definition(tool)
             registry = {"persisted": False, "reason": "server_id_not_registered"}
             tool_name = tool.get("name", "").strip() if isinstance(tool, dict) else ""
+            definition_findings = _definition_inspection_findings(validation)
+            if (
+                registry_server_id
+                and definition_findings
+                and _is_exact_approved_definition(registry_server_id, tool)
+            ):
+                validation = _approved_definition_validation(validation)
+                definition_findings = []
+            definition_requires_review = bool(definition_findings)
             quarantined_by_drift = False
             drift_block_reason = ""
-            if registry_server_id and not validation.is_threat:
+            if registry_server_id and (
+                not validation.is_threat or definition_requires_review
+            ):
                 registry = db.upsert_mcp_tool_metadata(
                     registry_server_id,
                     tool,
                     validation.tool_metadata or {},
+                    definition_inspection_findings=(
+                        definition_findings if definition_requires_review else None
+                    ),
                 )
                 if registry.get("ok") is False:
                     return {
@@ -1165,11 +1215,17 @@ async def discover_mcp_tools(
                         "server_url": server_url,
                     }
                 registry["persisted"] = True
+                if definition_requires_review:
+                    quarantined_by_drift = True
+                    drift_block_reason = (
+                        "Tool definition requires explicit review after bounded "
+                        "model-facing text inspection."
+                    )
                 # A new destructive/exfiltration tool passes the static
                 # validator (ordinary CRUD is handled by RBAC at call time),
                 # so the DRIFT path must quarantine it: it was just inserted
                 # active, flip it to quarantined before it can be used.
-                if tool_name and tool_name in quarantine_added:
+                elif tool_name and tool_name in quarantine_added:
                     db.mark_mcp_tool_added_drift(
                         registry_server_id,
                         tool_name,
@@ -1193,7 +1249,15 @@ async def discover_mcp_tools(
                 # Record DETECTION at discovery (no-op for unchanged tools):
                 # a drift_detected receipt distinct from call-time enforcement.
                 if tool_name:
-                    _emit_discovery_drift_receipt(registry_server_id, tool_name)
+                    _emit_discovery_drift_receipt(
+                        registry_server_id,
+                        tool_name,
+                        matched_rule=(
+                            "definition_text_inspection"
+                            if definition_requires_review
+                            else "drift_detected"
+                        ),
+                    )
             validation_results.append(
                 {
                     "tool_name": (tool.get("name") if isinstance(tool, dict) else None),
@@ -1209,7 +1273,12 @@ async def discover_mcp_tools(
             )
 
             if validation.is_threat:
-                blocked_tools.append({"tool": tool, "reason": validation.reason})
+                blocked_tools.append(
+                    {
+                        "tool": {"name": tool_name},
+                        "reason": validation.reason,
+                    }
+                )
             elif quarantined_by_drift:
                 blocked_tools.append({"tool": tool, "reason": drift_block_reason})
             else:
@@ -2168,14 +2237,24 @@ def _stored_tool_drift_context(
     # break the call path.
     baseline_surface_hash = ""
     current_surface_hash = ""
+    drift_types = list(stored_tool.get("drift_types") or [])
+    inspection_bound = "definition_text_poisoning" in drift_types
     try:
         previous_def = stored_tool.get("previous_tool_definition") or {}
         current_def = stored_tool.get("raw_tool_definition") or {}
-        if previous_def:
+        if inspection_bound and previous_def:
+            baseline_surface_hash = drift_evidence.raw_tool_definition_surface_hash(
+                previous_def
+            )
+        elif previous_def:
             canonical = drift_evidence.canonical_surface_json(previous_def)
             baseline_surface_hash = drift_evidence.tool_surface_hash(previous_def)
             db.save_tool_surface_snapshot(baseline_surface_hash, canonical)
-        if current_def:
+        if inspection_bound and current_def:
+            current_surface_hash = drift_evidence.raw_tool_definition_surface_hash(
+                current_def
+            )
+        elif current_def:
             canonical = drift_evidence.canonical_surface_json(current_def)
             current_surface_hash = drift_evidence.tool_surface_hash(current_def)
             db.save_tool_surface_snapshot(current_surface_hash, canonical)
@@ -2187,7 +2266,7 @@ def _stored_tool_drift_context(
         "status": status,
         "severity": severity,
         "action": action,
-        "types": list(stored_tool.get("drift_types") or []),
+        "types": drift_types,
         "reasons": list(stored_tool.get("drift_reasons") or []),
         "last_changed": stored_tool.get("last_changed"),
         "previous_schema_hash": stored_tool.get("previous_schema_hash"),
@@ -2224,7 +2303,9 @@ def _attach_drift_context(
     audit["drift_current_hash"] = drift.get("current_surface_hash") or ""
 
 
-def _emit_discovery_drift_receipt(server_id: str, tool_name: str) -> None:
+def _emit_discovery_drift_receipt(
+    server_id: str, tool_name: str, matched_rule: str = "drift_detected"
+) -> None:
     """Emit a discovery-time ``drift_detected`` Security Receipt / audit event the
     moment discovery detects a tool drifted — a new destructive/exfiltration tool,
     or an existing approved tool escalating its capability under the same name.
@@ -2246,12 +2327,16 @@ def _emit_discovery_drift_receipt(server_id: str, tool_name: str) -> None:
                 "tool_name": tool_name,
                 "role": "system",
                 "action": drift["action"],
-                "matched_rule": "drift_detected",
+                "matched_rule": matched_rule,
                 "reason": _drift_reason(
                     drift,
                     f"Capability drift detected at discovery for '{tool_name}'.",
                 ),
-                "blocked_by": "",
+                "blocked_by": (
+                    "definition_text_inspection"
+                    if matched_rule == "definition_text_inspection"
+                    else ""
+                ),
                 "drift_status": drift["status"],
                 "drift_severity": drift["severity"],
                 "drift_action": drift["action"],

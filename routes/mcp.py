@@ -1,9 +1,11 @@
+import json
 import re
 import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 import proxy
 from config import (
@@ -11,7 +13,7 @@ from config import (
     ci_boundary_review_max_request_bytes,
 )
 from core import db
-from core.http_body import TOO_LARGE, discard_bounded_body
+from core.http_body import MALFORMED, TOO_LARGE, discard_bounded_body, read_bounded_body
 from core.http_cache_headers import NO_STORE_HEADERS as _NO_STORE_HEADERS
 from core.chain_drift import run_chain_analysis
 from core.ci_boundary_review import run_boundary_review
@@ -38,6 +40,8 @@ from models.schemas import (
     MCPRegisterRequest,
     MCPServerEnvironmentRequest,
     MCPToolCallRequest,
+    MCPToolApprovalRequest,
+    MCPToolApprovalResponse,
     MCPToolReviewRequest,
     MCPToolValidateRequest,
 )
@@ -50,6 +54,7 @@ control_plane_router = APIRouter(
 MAX_MCP_SERVER_LIMIT = 100
 MAX_MCP_TOOL_LIMIT = 500
 MAX_MCP_AUDIT_LIMIT = 500
+MAX_MCP_VALIDATE_BODY_BYTES = 256 * 1024
 
 
 def _derived_identity(key_record: dict) -> dict:
@@ -640,11 +645,14 @@ async def mcp_drifted_tools(
     }
 
 
-@control_plane_router.post("/mcp/tools/{server_id}/{tool_name}/approve")
+@control_plane_router.post(
+    "/mcp/tools/{server_id}/{tool_name}/approve",
+    response_model=MCPToolApprovalResponse,
+)
 async def mcp_approve_tool_baseline(
     server_id: str,
     tool_name: str,
-    request: MCPToolReviewRequest,
+    request: MCPToolApprovalRequest,
     x_api_key: Optional[str] = Header(None),
 ):
     """Approve the current MCP tool definition as the new trusted baseline.
@@ -657,15 +665,35 @@ async def mcp_approve_tool_baseline(
     result = db.approve_mcp_tool_baseline(
         server_id,
         tool_name,
+        expected_surface_hash=request.expected_surface_hash,
         reviewer=identity["reviewer"],
         reason=request.reason or "",
         principal_id=identity["principal_id"],
     )
+    if result.get("error") == "stale_tool_surface":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "stale_tool_surface",
+                "current_surface_hash": result.get("current_surface_hash") or "",
+            },
+        )
     if not result.get("ok"):
         raise HTTPException(status_code=404, detail="MCP tool metadata not found.")
-    tool = dict(result)
-    tool.pop("ok", None)
-    return {"ok": True, "tool": tool}
+    return {
+        "ok": True,
+        "approval": {
+            key: result[key]
+            for key in (
+                "server_id",
+                "tool_name",
+                "status",
+                "approved_surface_hash",
+                "approval_audit_id",
+                "approved_at",
+            )
+        },
+    }
 
 
 @control_plane_router.post("/mcp/tools/{server_id}/{tool_name}/quarantine")
@@ -778,13 +806,26 @@ async def mcp_audit(limit: int = 100, x_api_key: Optional[str] = Header(None)):
 
 
 @router.post("/mcp/validate-tool")
-async def mcp_validate(
-    request: MCPToolValidateRequest, x_api_key: Optional[str] = Header(None)
-):
+async def mcp_validate(request: Request, x_api_key: Optional[str] = Header(None)):
     """Validate a single MCP tool definition for security issues."""
     proxy.require_scope(x_api_key, "mcp.discover")
+    body, body_error = await read_bounded_body(request, MAX_MCP_VALIDATE_BODY_BYTES)
+    if body_error == TOO_LARGE:
+        raise HTTPException(status_code=413, detail={"error": "request_body_too_large"})
+    if body_error == MALFORMED or body is None:
+        raise HTTPException(status_code=400, detail={"error": "malformed_request_body"})
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail={"error": "malformed_json"})
+    try:
+        parsed = MCPToolValidateRequest.model_validate(payload)
+    except ValidationError:
+        raise HTTPException(
+            status_code=422, detail={"error": "invalid_tool_definition_request"}
+        )
     start = time.time()
-    result = validate_mcp_tool_definition(request.tool_definition)
+    result = validate_mcp_tool_definition(parsed.tool_definition)
     result.scan_time_ms = round((time.time() - start) * 1000, 2)
     result.risk_score = calculate_risk_score(result)
     return result

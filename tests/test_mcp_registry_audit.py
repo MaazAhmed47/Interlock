@@ -10,7 +10,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 _tmp_db = tempfile.mktemp(suffix="_mcp_registry_test.db")
-import core.db as db
+import core.db as db  # noqa: E402
+from core import drift_evidence  # noqa: E402
 db.DB_PATH = _tmp_db
 db.init_db()
 db.seed_mcp_servers()
@@ -182,14 +183,15 @@ try:
     approved = db.approve_mcp_tool_baseline(
         "trusted-filesystem",
         "share_file",
+        expected_surface_hash=drift_evidence.raw_tool_definition_surface_hash(
+            db.lookup_mcp_tool_metadata("trusted-filesystem", "share_file")["raw_tool_definition"]
+        ),
         reviewer="maaz",
         reason="Reviewed updated sharing tool.",
     )
     assert approved["ok"] is True
     assert approved["status"] == "active"
-    assert approved["drift_severity"] == "none"
-    assert approved["drift_action"] == "allow"
-    assert approved["drift_types"] == []
+    assert approved["approved_surface_hash"].startswith("sha256:")
 
     loaded = db.lookup_mcp_tool_metadata("trusted-filesystem", "share_file")
     assert loaded["status"] == "active"
@@ -227,7 +229,11 @@ try:
     print("  OK")
 
     print("Test 9: approving or quarantining a missing tool returns not_found ...")
-    missing_approve = db.approve_mcp_tool_baseline("trusted-filesystem", "missing_tool")
+    missing_approve = db.approve_mcp_tool_baseline(
+        "trusted-filesystem",
+        "missing_tool",
+        expected_surface_hash="sha256:" + "0" * 64,
+    )
     missing_quarantine = db.quarantine_mcp_tool("trusted-filesystem", "missing_tool")
     assert missing_approve == {"ok": False, "error": "not_found"}
     assert missing_quarantine == {"ok": False, "error": "not_found"}

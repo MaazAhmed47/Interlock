@@ -603,7 +603,7 @@ Interlock maintains a practical coverage map against OWASP MCP Top 10-style risk
 |---|---|---|
 | MCP01 Token Mismanagement & Secret Exposure | Mapped | Response scanning, secret redaction, audit |
 | MCP02 Privilege Escalation via Scope Creep | Mapped | Metadata baselines, drift detection, quarantine |
-| MCP03 Tool Poisoning | Mapped | Full-schema tool validation and baseline comparison |
+| MCP03 Tool Poisoning | Mapped | Bounded model-facing definition-text inspection, raw-definition baselines, and response scanning |
 | MCP04 Supply Chain Attacks | Mapped | Provenance metadata, trusted registry policy, hash/version drift |
 | MCP05 Command Injection & Execution | Mapped | Tool argument inspection and policy enforcement |
 | MCP06 Intent Flow Subversion | Mapped | Tool-response prompt injection detection |
@@ -652,7 +652,7 @@ flowchart LR
 |---|---|
 | MCP gateway | Proxies MCP tool calls through trust, whitelist, inspection, RBAC, forwarding, response scan, and audit. |
 | Tool metadata model | Normalizes tool `effects`, `side_effect`, `data_classes`, externality, identity mode, and confidence. |
-| Tool-definition validation | Detects suspicious tool names, description injection, dangerous schema fields, and risky metadata. |
+| Tool-definition validation | Deterministically inspects bounded model-facing text in tool descriptions and selected JSON Schema documentation fields for high-confidence instruction, sensitive-resource egress, bidi/control, normalization-divergence, and comment-smuggling indicators. Raw definitions are not rewritten. |
 | Full-schema drift detection | Detects changes in descriptions, parameters, types, defaults, enums, required fields, effects, and data classes. |
 | Quarantine workflow | Blocks high-risk drift until an operator approves a new baseline or keeps the tool quarantined. |
 | Runtime RBAC | Enforces role-aware policy before every tool call. Built-in roles include support, devops, finance, readonly, data analyst, and admin. |
@@ -662,6 +662,22 @@ flowchart LR
 | Provenance checks | Enforces source registry, package, version, source URL, and hash policy for MCP servers. |
 | Shadow MCP discovery | Probes operator-provided targets for unmanaged MCP servers and tracks review state. |
 | Audit trail | Records allow, deny, monitor, quarantine, provenance, shadow, and response-scan decisions. |
+
+Definition-text inspection is bounded while enumerating children and building
+pending work, as well as by traversal depth, visited nodes, text fields,
+per-field length, and cumulative inspected characters. A breached limit requires
+review instead of silently passing as clean. Findings retain only safe
+field paths, detector categories, code-point classes, and text digests; the raw
+definition remains unchanged for registry review and hash comparison. The
+`/mcp/validate-tool` route caps streamed request bytes before JSON/Pydantic
+parsing. Per-tool approval requires the exact `review_surface_hash` shown by the
+review inventory; a stale hash returns HTTP 409 without activating the current
+surface. The approval response and its audit/receipt bind that accepted hash but
+do not return the raw definition.
+
+The detector does not provide comprehensive prompt-injection prevention, Unicode
+confusable detection, intent causality, OWASP certification, or MCP conformance,
+and it cannot protect calls that bypass Interlock.
 
 ---
 
@@ -1061,7 +1077,7 @@ Expected: risky metadata/effect warnings and a validation decision.
 | `POST /scan` | Direct prompt scan path. |
 | `POST /scan/output` | Output data-leak scan path. |
 | `POST /inspect/tool-call` | Tool argument inspection plus optional role RBAC. |
-| `POST /mcp/validate-tool` | Validate an MCP tool definition (`mcp.discover`). |
+| `POST /mcp/validate-tool` | Validate an MCP tool definition through a 256 KiB pre-parse body bound (`mcp.discover`). |
 | `POST /mcp/servers` | Register an MCP server (`admin` API-key scope). |
 | `GET /mcp/servers` | List registered MCP servers (`mcp.read`). |
 | `POST /mcp/discover` | Discover and validate tools from an MCP server (`mcp.discover`). |
@@ -1072,7 +1088,7 @@ Expected: risky metadata/effect warnings and a validation decision.
 | `POST /mcp/servers/{server_id}/environment` | Store non-production/probe-enabled state (`admin` API-key scope). |
 | `POST /mcp/servers/{server_id}/rebaseline` | Clear and rediscover a baseline (`admin` API-key scope). |
 | `DELETE /mcp/servers/{server_id}` | Unregister a server (`admin` API-key scope). |
-| `POST /mcp/tools/{server_id}/{tool_name}/approve` | Approve current tool definition (`admin` API-key scope). |
+| `POST /mcp/tools/{server_id}/{tool_name}/approve` | Approve exactly the reviewed tool surface by required `expected_surface_hash` (`admin` API-key scope; stale hashes receive HTTP 409). |
 | `POST /mcp/tools/{server_id}/{tool_name}/quarantine` | Quarantine a tool (`admin` API-key scope). |
 | `GET /mcp/audit` | List global MCP audit events (`admin` API-key scope). |
 | `POST /mcp/servers/{server_id}/probes/run` | Run an effective-permission probe (`mcp.probe` plus stored probe-enabled state). |

@@ -25,6 +25,7 @@ TEST_DB = tempfile.mktemp(suffix="_reviewer_identity.db")
 os.environ.setdefault("FIREWALL_DB_PATH", TEST_DB)
 
 from core import db  # noqa: E402
+from core import drift_evidence  # noqa: E402
 import proxy  # noqa: E402
 
 ATTACKER_REVIEWER = "attacker-chosen-reviewer"
@@ -108,10 +109,17 @@ def test_approve_ignores_caller_supplied_reviewer(client, admin_identity):
     raw_key, key_prefix = admin_identity
     server_id = seed_server("_identity_approve")
     try:
+        stored = db.lookup_mcp_tool_metadata(server_id, "read_document")
         response = client.post(
             f"/mcp/tools/{server_id}/read_document/approve",
             headers={"x-api-key": raw_key},
-            json={"reviewer": ATTACKER_REVIEWER, "reason": "baseline ok"},
+            json={
+                "expected_surface_hash": drift_evidence.raw_tool_definition_surface_hash(
+                    stored["raw_tool_definition"]
+                ),
+                "reviewer": ATTACKER_REVIEWER,
+                "reason": "baseline ok",
+            },
         )
         assert response.status_code == 200, response.text
         assert_derived_identity(latest_audit_row("tool_baseline_approved"), key_prefix)

@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ThreatLevel(str, Enum):
@@ -102,6 +102,28 @@ class MCPToolValidateRequest(BaseModel):
 class MCPToolReviewRequest(BaseModel):
     reviewer: Optional[str] = "operator"
     reason: Optional[str] = ""
+
+
+class MCPToolApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_surface_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    reviewer: Optional[str] = "operator"
+    reason: Optional[str] = ""
+
+
+class MCPToolApprovalResult(BaseModel):
+    server_id: str
+    tool_name: str
+    status: str
+    approved_surface_hash: str
+    approval_audit_id: int
+    approved_at: str
+
+
+class MCPToolApprovalResponse(BaseModel):
+    ok: bool
+    approval: MCPToolApprovalResult
 
 
 class ReceiptVerifyRequest(BaseModel):

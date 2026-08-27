@@ -57,7 +57,11 @@ def test_runtime_key_is_denied_and_admin_key_reaches_every_control_plane_route()
         (
             "post",
             f"/mcp/tools/{server_id}/read_document/approve",
-            {"reviewer": "test", "reason": "reviewed"},
+            {
+                "expected_surface_hash": "sha256:" + "0" * 64,
+                "reviewer": "test",
+                "reason": "reviewed",
+            },
         ),
         (
             "post",
@@ -92,6 +96,10 @@ def test_runtime_key_is_denied_and_admin_key_reaches_every_control_plane_route()
                 "ok": True,
                 "server_id": server_id,
                 "tool_name": "read_document",
+                "status": "active",
+                "approved_surface_hash": "sha256:" + "0" * 64,
+                "approval_audit_id": 1,
+                "approved_at": "2026-08-26T00:00:00+00:00",
             },
         ),
         patch(
