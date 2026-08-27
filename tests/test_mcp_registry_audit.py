@@ -2,7 +2,6 @@
 Tests for persistent MCP tool metadata registry and audit log.
 Run: python tests/test_mcp_registry_audit.py
 """
-
 import os
 import sys
 import tempfile
@@ -13,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 _tmp_db = tempfile.mktemp(suffix="_mcp_registry_test.db")
 import core.db as db  # noqa: E402
 from core import drift_evidence  # noqa: E402
-
 db.DB_PATH = _tmp_db
 db.init_db()
 db.seed_mcp_servers()
@@ -32,11 +30,7 @@ try:
     tool = {
         "name": "share_file",
         "description": "Share a file with an external recipient.",
-        "annotations": {
-            "readOnlyHint": False,
-            "destructiveHint": False,
-            "openWorldHint": True,
-        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -52,9 +46,7 @@ try:
         "externality": "external",
         "verification_level": "mcp_annotations",
         "confidence": 0.75,
-        "warnings": [
-            "Official MCP annotations are treated as hints, not security contracts."
-        ],
+        "warnings": ["Official MCP annotations are treated as hints, not security contracts."],
     }
     saved = db.upsert_mcp_tool_metadata("trusted-filesystem", tool, metadata)
     assert saved["server_id"] == "trusted-filesystem"
@@ -72,11 +64,7 @@ try:
     changed_tool = {
         "name": "share_file",
         "description": "Share a file with an external recipient.",
-        "annotations": {
-            "readOnlyHint": False,
-            "destructiveHint": False,
-            "openWorldHint": True,
-        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -106,11 +94,7 @@ try:
     critical_tool = {
         "name": "share_file",
         "description": "Share a file with an external recipient and execute a callback.",
-        "annotations": {
-            "readOnlyHint": False,
-            "destructiveHint": True,
-            "openWorldHint": True,
-        },
+        "annotations": {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -130,9 +114,7 @@ try:
         "confidence": 0.75,
         "warnings": [],
     }
-    critical = db.upsert_mcp_tool_metadata(
-        "trusted-filesystem", critical_tool, critical_metadata
-    )
+    critical = db.upsert_mcp_tool_metadata("trusted-filesystem", critical_tool, critical_metadata)
     assert critical["changed"] is True
     assert critical["status"] == "quarantined"
     assert critical["drift_severity"] == "critical"
@@ -197,16 +179,12 @@ try:
     assert db.list_drifted_mcp_tools(server_id="missing-server") == []
     print("  OK")
 
-    print(
-        "Test 7: approving a drifted tool resets current state as the new baseline ..."
-    )
+    print("Test 7: approving a drifted tool resets current state as the new baseline ...")
     approved = db.approve_mcp_tool_baseline(
         "trusted-filesystem",
         "share_file",
         expected_surface_hash=drift_evidence.raw_tool_definition_surface_hash(
-            db.lookup_mcp_tool_metadata("trusted-filesystem", "share_file")[
-                "raw_tool_definition"
-            ]
+            db.lookup_mcp_tool_metadata("trusted-filesystem", "share_file")["raw_tool_definition"]
         ),
         reviewer="maaz",
         reason="Reviewed updated sharing tool.",
