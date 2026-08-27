@@ -112,6 +112,37 @@ CONTENT_METADATA_D = {
 
 ACTOR = {"reviewer": "ops (key:lf-pg)", "principal_id": "lf-pg"}
 
+APPROVAL_TOOL_A = {
+    "name": "read_document",
+    "description": "Read one document.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {"path": {"type": "string", "description": "Version A."}},
+    },
+}
+APPROVAL_TOOL_B = {
+    **APPROVAL_TOOL_A,
+    "inputSchema": {
+        "type": "object",
+        "properties": {"path": {"type": "string", "description": "Version B."}},
+    },
+}
+
+
+def _quarantine_for_review(pg_db, tool):
+    pg_db.upsert_mcp_tool_metadata(
+        SERVER_ID,
+        tool,
+        CONTENT_METADATA_C,
+        definition_inspection_findings=[
+            {
+                "category": "model_directed_instruction",
+                "path": "/inputSchema/properties/path/description",
+                "text_sha256": "sha256:" + "f" * 64,
+            }
+        ],
+    )
+
 
 def _content_entry(tool=TOOL_CONTENT_C, metadata=CONTENT_METADATA_C):
     return {"tool": tool, "normalized_metadata": metadata}
@@ -1458,3 +1489,71 @@ def test_injected_failure_rolls_back_transactionally_on_postgres(pg_db, monkeypa
     )
     assert retry["ok"] is True
     assert pg_db.verify_audit_chain()["valid"] is True
+
+
+def test_per_tool_approval_rejects_stale_surface_on_postgres(pg_db):
+    from core import drift_evidence
+
+    _quarantine_for_review(pg_db, APPROVAL_TOOL_A)
+    reviewed_a = drift_evidence.raw_tool_definition_surface_hash(APPROVAL_TOOL_A)
+    _quarantine_for_review(pg_db, APPROVAL_TOOL_B)
+
+    stale = pg_db.approve_mcp_tool_baseline(
+        SERVER_ID,
+        "read_document",
+        expected_surface_hash=reviewed_a,
+        reviewer=ACTOR["reviewer"],
+        principal_id=ACTOR["principal_id"],
+    )
+    assert stale["ok"] is False
+    assert stale["error"] == "stale_tool_surface"
+    stored = pg_db.lookup_mcp_tool_metadata(SERVER_ID, "read_document")
+    assert stored["raw_tool_definition"] == APPROVAL_TOOL_B
+    assert stored["status"] == "quarantined"
+    assert not any(
+        row.get("matched_rule") == "tool_baseline_approved"
+        for row in pg_db.list_mcp_audit_logs(100)
+    )
+
+
+def test_per_tool_approval_and_audit_bind_matching_surface_on_postgres(pg_db):
+    from core import drift_evidence
+
+    _quarantine_for_review(pg_db, APPROVAL_TOOL_B)
+    reviewed = drift_evidence.raw_tool_definition_surface_hash(APPROVAL_TOOL_B)
+    result = pg_db.approve_mcp_tool_baseline(
+        SERVER_ID,
+        "read_document",
+        expected_surface_hash=reviewed,
+        reviewer=ACTOR["reviewer"],
+        principal_id=ACTOR["principal_id"],
+    )
+    assert result["ok"] is True
+    assert result["approved_surface_hash"] == reviewed
+    audit = pg_db.get_mcp_audit_log(result["approval_audit_id"])
+    assert audit["drift_baseline_hash"] == reviewed
+    assert audit["drift_current_hash"] == reviewed
+    assert pg_db.verify_mcp_audit_record(audit["id"])["chain_verified"] is True
+
+
+def test_per_tool_approval_audit_failure_rolls_back_on_postgres(pg_db, monkeypatch):
+    from core import drift_evidence
+
+    _quarantine_for_review(pg_db, APPROVAL_TOOL_B)
+    reviewed = drift_evidence.raw_tool_definition_surface_hash(APPROVAL_TOOL_B)
+
+    def fail_append(_conn, _event):
+        raise RuntimeError("injected pg approval audit failure")
+
+    monkeypatch.setattr(pg_db, "_append_mcp_audit_event", fail_append)
+    with pytest.raises(RuntimeError, match="injected pg approval audit failure"):
+        pg_db.approve_mcp_tool_baseline(
+            SERVER_ID,
+            "read_document",
+            expected_surface_hash=reviewed,
+            reviewer=ACTOR["reviewer"],
+            principal_id=ACTOR["principal_id"],
+        )
+    stored = pg_db.lookup_mcp_tool_metadata(SERVER_ID, "read_document")
+    assert stored["status"] == "quarantined"
+    assert stored["raw_tool_definition"] == APPROVAL_TOOL_B

@@ -170,6 +170,11 @@ def canonical_json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def raw_tool_definition_surface_hash(tool: Any) -> str:
+    """Hash one raw MCP tool definition without rewriting its JSON values."""
+    return "sha256:" + hashlib.sha256(canonical_json_bytes(tool)).hexdigest()
+
+
 def _digest_bytes(data: bytes) -> str:
     return f"{DIGEST_ALG}:{hashlib.sha256(data).hexdigest()}"
 

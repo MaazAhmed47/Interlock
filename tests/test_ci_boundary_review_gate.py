@@ -552,7 +552,11 @@ CI_FORBIDDEN_ROUTES = [
     (
         "post",
         f"/mcp/tools/{SERVER_ID}/read_document/approve",
-        {"reviewer": "ci", "reason": "ci"},
+        {
+            "expected_surface_hash": "sha256:" + "0" * 64,
+            "reviewer": "ci",
+            "reason": "ci",
+        },
     ),
     (
         "post",

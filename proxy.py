@@ -45,6 +45,7 @@ from models.schemas import (  # noqa: F401
     MCPRebaselineRequest,
     MCPRegisterRequest,
     MCPToolCallRequest,
+    MCPToolApprovalRequest,
     MCPToolReviewRequest,
     MCPToolValidateRequest,
     SIEMTestRequest,

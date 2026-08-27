@@ -182,11 +182,12 @@ curl -s -X POST http://localhost:8001/mcp/discover \
   -d '{"server_url":"https://your-host.example.com/mcp","server_id":"eval-postgres"}' | jq
 ```
 
-Confirm your write/DDL/role tools are baselined and clean:
+Confirm your write/DDL/role tools are baselined and clean, and retain the exact
+review hash for the definition you inspect:
 
 ```bash
 curl -s "http://localhost:8001/mcp/tools?server_id=eval-postgres" -H "x-api-key: $RUNTIME_KEY" \
-  | jq '.tools[] | {tool_name, status, drift_severity, drift_action}'
+  | jq '.tools[] | {tool_name, status, drift_severity, drift_action, review_surface_hash}'
 ```
 
 You want to see your high‑risk tools with `status: "active"`, `drift_severity: "none"`.
@@ -195,13 +196,18 @@ Optionally **pin** the current surface as an explicit operator‑approved baseli
 (belt‑and‑suspenders; resets drift state to clean):
 
 ```bash
+REVIEW_SURFACE_HASH="$(curl -s 'http://localhost:8001/mcp/tools?server_id=eval-postgres' \
+  -H "x-api-key: $RUNTIME_KEY" \
+  | jq -r '.tools[] | select(.tool_name == "write_query") | .review_surface_hash')"
 curl -s -X POST http://localhost:8001/mcp/tools/eval-postgres/write_query/approve \
   -H "x-api-key: $ADMIN_KEY" -H "Content-Type: application/json" \
-  -d '{"reason":"Initial trusted baseline"}'
+  -d "{\"expected_surface_hash\":\"$REVIEW_SURFACE_HASH\",\"reason\":\"Initial trusted baseline\"}"
 ```
 
 The recorded reviewer and `principal_id` come from the authenticated admin key;
-caller-supplied reviewer text is ignored for compatibility.
+caller-supplied reviewer text is ignored for compatibility. The exact reviewed
+hash is required. A stale hash returns HTTP 409 without activating a changed
+surface, and the bounded approval response does not return the raw definition.
 
 > **Naming gotcha for DB tools.** The discovery‑time validator pre‑blocks tools
 > whose **name** matches `execute*/eval*/run*`, `delete*/drop*/truncate*/wipe*`,

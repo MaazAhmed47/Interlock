@@ -193,10 +193,27 @@ class Demo:
         return payload
 
     def approve(self, server_id, tool_name, reason):
+        status, inventory = self.gw("GET", f"/mcp/tools?server_id={server_id}")
+        if status != 200:
+            die(f"read review surface {server_id}/{tool_name} failed [{status}]")
+        review_hash = next(
+            (
+                item.get("review_surface_hash")
+                for item in (inventory or {}).get("tools", [])
+                if item.get("tool_name") == tool_name
+            ),
+            None,
+        )
+        if not isinstance(review_hash, str):
+            die(f"review surface {server_id}/{tool_name} was unavailable")
         status, payload = self.gw(
             "POST",
             f"/mcp/tools/{server_id}/{tool_name}/approve",
-            {"reviewer": "demo-operator", "reason": reason},
+            {
+                "expected_surface_hash": review_hash,
+                "reviewer": "demo-operator",
+                "reason": reason,
+            },
         )
         if status != 200:
             die(f"approve {server_id}/{tool_name} failed [{status}]: {payload}")

@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from core import db
+from core import drift_evidence
 from core import receipt as receipt_mod
 from core import receipt_verify
 from core.mcp_gateway import (
@@ -757,6 +758,9 @@ def test_poison_added_after_clean_discovery_is_quarantined_until_explicit_review
         approved = db.approve_mcp_tool_baseline(
             server_id,
             "read_note",
+            expected_surface_hash=drift_evidence.raw_tool_definition_surface_hash(
+                poisoned
+            ),
             reviewer="synthetic-reviewer",
             reason="Synthetic explicit review.",
             principal_id="test-principal",

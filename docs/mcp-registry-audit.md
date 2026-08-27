@@ -191,10 +191,20 @@ rebaseline, and delete routes.
 ```http
 POST /mcp/tools/{server_id}/{tool_name}/approve
 {
+  "expected_surface_hash": "sha256:<64 lowercase hex characters>",
   "reviewer": "maaz",
   "reason": "Reviewed expected schema update."
 }
 ```
+
+Use the current `review_surface_hash` from the server-scoped `GET /mcp/tools`
+inventory (or `GET /mcp/tools/drifted` for a held tool) after reviewing that
+exact definition. The server
+re-reads and compares the current raw-definition hash inside the activation
+transaction. A stale hash receives HTTP 409 and changes no approval, baseline,
+audit, or receipt state. Successful responses contain bounded approval identity,
+timestamp, audit id, and accepted hash fields; they do not return the raw tool
+definition.
 
 Keep or mark a tool quarantined:
 

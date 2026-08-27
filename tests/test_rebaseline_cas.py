@@ -1186,17 +1186,23 @@ def test_status_writers_take_the_rebaseline_lock_on_postgres(monkeypatch):
         "_mcp_tool_metadata_row_to_dict",
         lambda _row: {
             "normalized_metadata": {},
+            "raw_tool_definition": {},
             "drift_types": [],
             "drift_reasons": [],
         },
     )
     monkeypatch.setattr(db, "lookup_mcp_tool_metadata", lambda *_args: {})
     monkeypatch.setattr(db, "log_mcp_audit_event", lambda _event: {})
+    monkeypatch.setattr(db, "_append_mcp_audit_event", lambda _conn, _event: {"id": 1})
     calls = [
         lambda: db.mark_mcp_tool_removed(SERVER_ID, "tool"),
         lambda: db.mark_mcp_tool_added_drift(SERVER_ID, "tool"),
         lambda: db.mark_mcp_tool_effective_permission_drift(SERVER_ID, "tool"),
-        lambda: db.approve_mcp_tool_baseline(SERVER_ID, "tool"),
+        lambda: db.approve_mcp_tool_baseline(
+            SERVER_ID,
+            "tool",
+            expected_surface_hash=drift_evidence.raw_tool_definition_surface_hash({}),
+        ),
         lambda: db.quarantine_mcp_tool(SERVER_ID, "tool"),
         lambda: db.mark_mcp_tool_external_reach_drift(
             SERVER_ID, "tool", ["external_reach_expansion"]

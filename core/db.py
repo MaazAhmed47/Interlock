@@ -4326,7 +4326,7 @@ def upsert_mcp_tool_metadata(
                     json.dumps(tool or {}),
                     first_seen,
                     now,
-                    None,
+                    last_changed,
                     status,
                     drift["severity"],
                     drift["action"],
@@ -4537,6 +4537,12 @@ def list_mcp_tool_metadata(
                  ORDER BY server_id ASC, tool_name ASC
                 """).fetchall()
     tools = [_mcp_tool_metadata_row_to_dict(r) for r in rows]
+    for tool in tools:
+        raw_definition = tool.get("raw_tool_definition")
+        if isinstance(raw_definition, dict):
+            tool["review_surface_hash"] = (
+                drift_evidence.raw_tool_definition_surface_hash(raw_definition)
+            )
     return _annotate_mcp_tools_with_server_registry(
         tools, demo_visible_only=demo_visible_only
     )
@@ -4764,6 +4770,12 @@ def list_drifted_mcp_tools(
                  ORDER BY last_changed DESC, server_id ASC, tool_name ASC
                 """).fetchall()
     tools = [_mcp_tool_metadata_row_to_dict(r) for r in rows]
+    for tool in tools:
+        raw_definition = tool.get("raw_tool_definition")
+        if isinstance(raw_definition, dict):
+            tool["review_surface_hash"] = (
+                drift_evidence.raw_tool_definition_surface_hash(raw_definition)
+            )
     return _annotate_mcp_tools_with_server_registry(
         tools, demo_visible_only=demo_visible_only
     )
@@ -4772,14 +4784,18 @@ def list_drifted_mcp_tools(
 def approve_mcp_tool_baseline(
     server_id: str,
     tool_name: str,
+    *,
+    expected_surface_hash: str,
     reviewer: str = "operator",
     reason: str = "",
     principal_id: str = "",
 ) -> Dict[str, Any]:
-    """Approve the current stored MCP tool definition as the new trusted baseline."""
+    """CAS-approve exactly the reviewed raw MCP tool definition surface."""
     reviewer = reviewer or "operator"
     reason = reason or "Approved current MCP tool definition as the new baseline."
     t0 = time.perf_counter()
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", expected_surface_hash or "") is None:
+        return {"ok": False, "error": "invalid_surface_hash"}
 
     with (
         _db_lock,
@@ -4797,6 +4813,24 @@ def approve_mcp_tool_baseline(
             return {"ok": False, "error": "not_found"}
 
         current = _mcp_tool_metadata_row_to_dict(row)
+        raw_definition = current.get("raw_tool_definition")
+        if not isinstance(raw_definition, dict):
+            return {"ok": False, "error": "corrupt_raw_tool_definition"}
+        current_surface_hash = drift_evidence.raw_tool_definition_surface_hash(
+            raw_definition
+        )
+        if expected_surface_hash != current_surface_hash:
+            return {
+                "ok": False,
+                "error": "stale_tool_surface",
+                "current_surface_hash": current_surface_hash,
+            }
+        if _is_postgres_conn(conn):
+            conn.execute(
+                "SELECT pg_advisory_xact_lock(?)",
+                (_audit_chain_lock_key("mcp_audit_log"),),
+            )
+        approved_at = datetime.now(timezone.utc).isoformat()
         conn.execute(
             """
             UPDATE mcp_tool_metadata
@@ -4812,37 +4846,46 @@ def approve_mcp_tool_baseline(
             """,
             (server_id, tool_name),
         )
+        metadata = current.get("normalized_metadata") or {}
+        saved_audit = _append_mcp_audit_event(
+            conn,
+            {
+                "server_id": server_id,
+                "tool_name": tool_name,
+                "role": reviewer,
+                "principal_id": principal_id,
+                "action": "approve",
+                "matched_rule": "tool_baseline_approved",
+                "reason": reason,
+                "effects": metadata.get("effects") or [],
+                "side_effect": metadata.get("side_effect") or "unknown",
+                "data_classes": metadata.get("data_classes") or [],
+                "externality": metadata.get("externality") or "unknown",
+                "verification_level": metadata.get("verification_level") or "unknown",
+                "confidence": metadata.get("confidence") or 0.0,
+                "warnings": metadata.get("warnings") or [],
+                "argument_keys": [],
+                "blocked_by": "operator_review",
+                "drift_status": "active",
+                "drift_severity": "none",
+                "drift_action": "allow",
+                "drift_types": [],
+                "drift_reasons": [],
+                "drift_baseline_hash": current_surface_hash,
+                "drift_current_hash": current_surface_hash,
+                "scan_time_ms": round((time.perf_counter() - t0) * 1000, 2),
+            },
+        )
 
-    metadata = current.get("normalized_metadata") or {}
-    log_mcp_audit_event(
-        {
-            "server_id": server_id,
-            "tool_name": tool_name,
-            "role": reviewer,
-            "principal_id": principal_id,
-            "action": "approve",
-            "matched_rule": "tool_baseline_approved",
-            "reason": reason,
-            "effects": metadata.get("effects") or [],
-            "side_effect": metadata.get("side_effect") or "unknown",
-            "data_classes": metadata.get("data_classes") or [],
-            "externality": metadata.get("externality") or "unknown",
-            "verification_level": metadata.get("verification_level") or "unknown",
-            "confidence": metadata.get("confidence") or 0.0,
-            "warnings": metadata.get("warnings") or [],
-            "argument_keys": [],
-            "blocked_by": "operator_review",
-            "drift_status": "active",
-            "drift_severity": "none",
-            "drift_action": "allow",
-            "drift_types": [],
-            "drift_reasons": [],
-            "scan_time_ms": round((time.perf_counter() - t0) * 1000, 2),
-        }
-    )
-
-    updated = lookup_mcp_tool_metadata(server_id, tool_name) or {}
-    return {"ok": True, **updated}
+    return {
+        "ok": True,
+        "server_id": server_id,
+        "tool_name": tool_name,
+        "status": "active",
+        "approved_surface_hash": current_surface_hash,
+        "approval_audit_id": int(saved_audit["id"]),
+        "approved_at": approved_at,
+    }
 
 
 def quarantine_mcp_tool(

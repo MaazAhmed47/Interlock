@@ -7,6 +7,7 @@ safe metadata: categories, bounded JSON paths, code-point classes, and hashes.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 import hashlib
 import re
@@ -20,6 +21,8 @@ MAX_VISITED_NODES = 2_048
 MAX_TEXT_FIELDS = 256
 MAX_TEXT_LENGTH = 4_096
 MAX_INSPECTED_CHARACTERS = 65_536
+MAX_ENUMERATED_CHILDREN = 2_048
+MAX_PENDING_ITEMS = 512
 
 _TEXT_KEYS = {"title", "description", "$comment"}
 _STRING_VALUE_KEYS = {"default"}
@@ -136,6 +139,9 @@ class DefinitionInspection:
     inspected_fields: int
     inspected_characters: int
     limit_exceeded: bool
+    visited_nodes: int
+    enumerated_children: int
+    pending_peak: int
 
     @property
     def requires_review(self) -> bool:
@@ -148,14 +154,63 @@ class DefinitionInspection:
             "inspected_fields": self.inspected_fields,
             "inspected_characters": self.inspected_characters,
             "limit_exceeded": self.limit_exceeded,
+            "visited_nodes": self.visited_nodes,
+            "enumerated_children": self.enumerated_children,
+            "pending_peak": self.pending_peak,
             "limits": {
                 "max_depth": MAX_TRAVERSAL_DEPTH,
                 "max_nodes": MAX_VISITED_NODES,
                 "max_text_fields": MAX_TEXT_FIELDS,
                 "max_text_length": MAX_TEXT_LENGTH,
                 "max_characters": MAX_INSPECTED_CHARACTERS,
+                "max_enumerated_children": MAX_ENUMERATED_CHILDREN,
+                "max_pending_items": MAX_PENDING_ITEMS,
             },
         }
+
+
+@dataclass
+class _InspectionBudget:
+    """Work counters enforced while untrusted containers are enumerated.
+
+    ``visited_nodes`` counts unique container objects removed from the queue;
+    ``enumerated_children`` counts every child offered during traversal,
+    including primitive or invalid schema children; and ``pending_peak`` is the
+    largest number of container references retained for later inspection.
+    """
+
+    visited_nodes: int = 0
+    enumerated_children: int = 0
+    pending_peak: int = 0
+    limit_exceeded: bool = False
+
+    def take_node(self) -> bool:
+        if self.visited_nodes >= MAX_VISITED_NODES:
+            self.limit_exceeded = True
+            return False
+        self.visited_nodes += 1
+        return True
+
+    def enqueue(
+        self,
+        pending: deque[tuple[Any, str, int, str]],
+        child: Any,
+        child_path: str,
+        depth: int,
+        mode: str,
+    ) -> bool:
+        if self.enumerated_children >= MAX_ENUMERATED_CHILDREN:
+            self.limit_exceeded = True
+            return False
+        self.enumerated_children += 1
+        if not isinstance(child, (dict, list)):
+            return True
+        if len(pending) >= MAX_PENDING_ITEMS:
+            self.limit_exceeded = True
+            return False
+        pending.append((child, child_path, depth, mode))
+        self.pending_peak = max(self.pending_peak, len(pending))
+        return True
 
 
 def _digest(text: str) -> str:
@@ -194,121 +249,141 @@ def _contains_sensitive_egress(text: str) -> bool:
     return _detect_description_exfiltration("", text) is not None
 
 
-def _extract_text_fields(tool: Any) -> tuple[list[_TextField], bool, int]:
+def _extract_text_fields(tool: Any) -> tuple[list[_TextField], _InspectionBudget]:
     fields: list[_TextField] = []
     visited: set[int] = set()
-    nodes = 0
-    limit_exceeded = False
+    budget = _InspectionBudget()
 
-    def add(path: str, value: Any, *, control_only: bool = False) -> None:
-        nonlocal limit_exceeded
+    def add(path: str, value: Any, *, control_only: bool = False) -> bool:
         if not isinstance(value, str):
-            return
+            return True
         if len(fields) >= MAX_TEXT_FIELDS:
-            limit_exceeded = True
-            return
+            budget.limit_exceeded = True
+            return False
         fields.append(_TextField(path=path, text=value, control_only=control_only))
+        return True
 
     if not isinstance(tool, dict):
-        return fields, False, nodes
+        return fields, budget
     add("/name", tool.get("name"), control_only=True)
     for key in ("title", "description"):
-        add(_path("", key), tool.get(key))
+        if not add(_path("", key), tool.get(key)):
+            return fields, budget
 
-    stack: list[tuple[Any, str, int, str]] = []
+    pending: deque[tuple[Any, str, int, str]] = deque()
     for key in ("inputSchema", "outputSchema", "input_schema", "output_schema"):
         value = tool.get(key)
-        if isinstance(value, dict):
-            stack.append((value, _path("", key), 1, "schema"))
-    for key in _META_CONTAINER_KEYS:
+        if not budget.enqueue(pending, value, _path("", key), 1, "schema"):
+            return fields, budget
+    for key in sorted(_META_CONTAINER_KEYS):
         value = tool.get(key)
-        if isinstance(value, dict):
-            stack.append((value, _path("", key), 1, "metadata"))
+        if not budget.enqueue(pending, value, _path("", key), 1, "metadata"):
+            return fields, budget
 
-    while stack:
-        node, node_path, depth, mode = stack.pop()
+    while pending and not budget.limit_exceeded:
+        node, node_path, depth, mode = pending.popleft()
         if depth > MAX_TRAVERSAL_DEPTH:
-            limit_exceeded = True
-            continue
+            budget.limit_exceeded = True
+            break
         if not isinstance(node, (dict, list)):
             continue
         identity = id(node)
         if identity in visited:
             continue
         visited.add(identity)
-        nodes += 1
-        if nodes > MAX_VISITED_NODES:
-            limit_exceeded = True
+        if not budget.take_node():
             break
 
         if isinstance(node, list):
-            for index in reversed(range(len(node))):
-                child = node[index]
-                if isinstance(child, (dict, list)):
-                    stack.append((child, _path(node_path, index), depth + 1, mode))
+            for index, child in enumerate(node):
+                if not budget.enqueue(
+                    pending, child, _path(node_path, index), depth + 1, mode
+                ):
+                    break
             continue
 
         text_keys = _TEXT_KEYS | _MODEL_FACING_EXTENSION_KEYS
         if mode == "metadata":
             text_keys = text_keys | {"help", "instructions", "summary"}
         for key in sorted(text_keys):
-            add(_path(node_path, key), node.get(key))
+            if not add(_path(node_path, key), node.get(key)):
+                break
+        if budget.limit_exceeded:
+            break
         for key in _STRING_VALUE_KEYS:
-            add(_path(node_path, key), node.get(key))
+            if not add(_path(node_path, key), node.get(key)):
+                break
+        if budget.limit_exceeded:
+            break
         for key in _STRING_LIST_KEYS:
             values = node.get(key)
             if isinstance(values, list):
                 for index, value in enumerate(values):
-                    add(_path(_path(node_path, key), index), value)
+                    if not add(_path(_path(node_path, key), index), value):
+                        break
+            if budget.limit_exceeded:
+                break
+        if budget.limit_exceeded:
+            break
 
         if mode == "metadata":
-            for key, child in reversed(list(node.items())):
-                if isinstance(child, (dict, list)):
-                    stack.append((child, _path(node_path, key), depth + 1, mode))
+            for key, child in node.items():
+                if not budget.enqueue(
+                    pending, child, _path(node_path, key), depth + 1, mode
+                ):
+                    break
             continue
 
-        for key in sorted(_SCHEMA_MAP_KEYS, reverse=True):
+        for key in sorted(_SCHEMA_MAP_KEYS):
             mapping = node.get(key)
             if isinstance(mapping, dict):
-                for child_key, child in reversed(list(mapping.items())):
-                    if isinstance(child, dict):
-                        stack.append(
-                            (
-                                child,
-                                _path(_path(node_path, key), child_key),
-                                depth + 1,
-                                "schema",
-                            )
-                        )
-        for key in sorted(_SCHEMA_SINGLE_KEYS, reverse=True):
+                for child_key, child in mapping.items():
+                    if not budget.enqueue(
+                        pending,
+                        child,
+                        _path(_path(node_path, key), child_key),
+                        depth + 1,
+                        "schema",
+                    ):
+                        break
+                if budget.limit_exceeded:
+                    break
+        if budget.limit_exceeded:
+            break
+        for key in sorted(_SCHEMA_SINGLE_KEYS):
             child = node.get(key)
-            if isinstance(child, dict):
-                stack.append((child, _path(node_path, key), depth + 1, "schema"))
-        for key in sorted(_SCHEMA_LIST_KEYS, reverse=True):
+            if child is not None:
+                if not budget.enqueue(
+                    pending, child, _path(node_path, key), depth + 1, "schema"
+                ):
+                    break
+        if budget.limit_exceeded:
+            break
+        for key in sorted(_SCHEMA_LIST_KEYS):
             children = node.get(key)
             if isinstance(children, list):
-                for index in reversed(range(len(children))):
-                    child = children[index]
-                    if isinstance(child, dict):
-                        stack.append(
-                            (
-                                child,
-                                _path(_path(node_path, key), index),
-                                depth + 1,
-                                "schema",
-                            )
-                        )
+                for index, child in enumerate(children):
+                    if not budget.enqueue(
+                        pending,
+                        child,
+                        _path(_path(node_path, key), index),
+                        depth + 1,
+                        "schema",
+                    ):
+                        break
+                if budget.limit_exceeded:
+                    break
 
-    return fields, limit_exceeded, nodes
+    return fields, budget
 
 
 def inspect_tool_definition_text(tool: Any) -> DefinitionInspection:
-    fields, traversal_limited, _ = _extract_text_fields(tool)
+    fields, budget = _extract_text_fields(tool)
     findings: list[DefinitionTextFinding] = []
     seen: set[tuple[str, str]] = set()
     inspected_characters = 0
     inspected_fields = 0
-    limit_exceeded = traversal_limited
+    limit_exceeded = budget.limit_exceeded
 
     def add_finding(
         category: str,
@@ -436,4 +511,7 @@ def inspect_tool_definition_text(tool: Any) -> DefinitionInspection:
         inspected_fields=inspected_fields,
         inspected_characters=inspected_characters,
         limit_exceeded=limit_exceeded,
+        visited_nodes=budget.visited_nodes,
+        enumerated_children=budget.enumerated_children,
+        pending_peak=budget.pending_peak,
     )

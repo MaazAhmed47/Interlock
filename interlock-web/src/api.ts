@@ -208,6 +208,7 @@ export interface MCPTool {
   externality?: string | string[];
   data_classes?: string | string[];
   last_seen?: string;
+  review_surface_hash?: string;
   server_registry_class?: string;
   server_registry_note?: string;
   server_demo_visible?: boolean;
@@ -864,7 +865,7 @@ export const api = {
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     return request<{ tools: MCPTool[] }>('GET', `/mcp/tools/drifted${suffix}`)
   },
-  approveTool: (server_id: string, tool_name: string, payload: { reviewer?: string; reason?: string }) =>
+  approveTool: (server_id: string, tool_name: string, payload: { expected_surface_hash: string; reviewer?: string; reason?: string }) =>
     request<{ ok: boolean }>('POST', `/mcp/tools/${encodeURIComponent(server_id)}/${encodeURIComponent(tool_name)}/approve`, payload),
   quarantineTool: (server_id: string, tool_name: string, payload: { reviewer?: string; reason?: string }) =>
     request<{ ok: boolean }>('POST', `/mcp/tools/${encodeURIComponent(server_id)}/${encodeURIComponent(tool_name)}/quarantine`, payload),

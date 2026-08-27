@@ -54,6 +54,10 @@ The main boundary is the gateway. Agents and MCP servers are not assumed to be f
   indicators. It does not provide general semantic prompt-injection,
   Unicode-confusable, or causal intent detection, and it does not categorically
   reject multilingual text.
+- Definition inspection bounds enumeration and pending work. Exhausted limits
+  require review. Per-tool operator approval is privileged and compare-and-swap
+  bound to the exact reviewed raw-definition hash; stale approval changes no
+  active state, and the approval response omits the raw definition.
 - Interlock does not replace secure MCP server implementation.
 - Interlock does not replace identity provider, SSO, endpoint protection, or network security controls.
 - Shadow discovery only probes operator-configured targets. It does not discover every server in an enterprise network automatically.

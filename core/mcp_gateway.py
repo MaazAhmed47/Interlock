@@ -2243,22 +2243,16 @@ def _stored_tool_drift_context(
         previous_def = stored_tool.get("previous_tool_definition") or {}
         current_def = stored_tool.get("raw_tool_definition") or {}
         if inspection_bound and previous_def:
-            baseline_surface_hash = (
-                "sha256:"
-                + hashlib.sha256(
-                    drift_evidence.canonical_json_bytes(previous_def)
-                ).hexdigest()
+            baseline_surface_hash = drift_evidence.raw_tool_definition_surface_hash(
+                previous_def
             )
         elif previous_def:
             canonical = drift_evidence.canonical_surface_json(previous_def)
             baseline_surface_hash = drift_evidence.tool_surface_hash(previous_def)
             db.save_tool_surface_snapshot(baseline_surface_hash, canonical)
         if inspection_bound and current_def:
-            current_surface_hash = (
-                "sha256:"
-                + hashlib.sha256(
-                    drift_evidence.canonical_json_bytes(current_def)
-                ).hexdigest()
+            current_surface_hash = drift_evidence.raw_tool_definition_surface_hash(
+                current_def
             )
         elif current_def:
             canonical = drift_evidence.canonical_surface_json(current_def)

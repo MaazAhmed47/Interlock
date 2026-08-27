@@ -517,12 +517,32 @@ async def run_proof(
                     or discovered.get("safe_tools") != 1
                 ):
                     raise ProofError("Initial Interlock discovery failed.")
+                review_payload = await _json_request(
+                    client,
+                    "GET",
+                    f"{interlock_url}/mcp/tools?server_id={SERVER_ID}",
+                    api_key=raw_key,
+                )
+                review_tools = review_payload.get("tools") or []
+                reviewed_hash = next(
+                    (
+                        item.get("review_surface_hash")
+                        for item in review_tools
+                        if item.get("tool_name") == "read_customer"
+                    ),
+                    None,
+                )
+                if not isinstance(reviewed_hash, str):
+                    raise ProofError("Tool review surface hash was unavailable.")
                 approval_result = await _json_request(
                     client,
                     "POST",
                     f"{interlock_url}/mcp/tools/{SERVER_ID}/read_customer/approve",
                     api_key=raw_key,
-                    json={"reason": "Approved narrow synthetic read-only boundary."},
+                    json={
+                        "expected_surface_hash": reviewed_hash,
+                        "reason": "Approved narrow synthetic read-only boundary.",
+                    },
                 )
                 if approval_result.get("ok") is not True:
                     raise ProofError("Explicit tool approval endpoint failed.")

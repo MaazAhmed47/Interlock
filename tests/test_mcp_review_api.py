@@ -15,6 +15,7 @@ _tmp_db = tempfile.mktemp(suffix="_mcp_review_api_test.db")
 os.environ["FIREWALL_DB_PATH"] = _tmp_db
 
 from core import db  # noqa: E402
+from core import drift_evidence  # noqa: E402
 import proxy  # noqa: E402
 
 TEST_KEY = None  # minted below via db.generate_key after init_db
@@ -175,7 +176,12 @@ try:
         proxy.mcp_approve_tool_baseline(
             "clean-proof-docs",
             "read_profile",
-            request=proxy.MCPToolReviewRequest(
+            request=proxy.MCPToolApprovalRequest(
+                expected_surface_hash=drift_evidence.raw_tool_definition_surface_hash(
+                    db.lookup_mcp_tool_metadata("clean-proof-docs", "read_profile")[
+                        "raw_tool_definition"
+                    ]
+                ),
                 reviewer="maaz",
                 reason="Expected optional format field.",
             ),
@@ -183,8 +189,8 @@ try:
         )
     )
     assert data["ok"] is True
-    assert data["tool"]["status"] == "active"
-    assert data["tool"]["drift_action"] == "allow"
+    assert data["approval"]["status"] == "active"
+    assert data["approval"]["approved_surface_hash"].startswith("sha256:")
 
     data = asyncio.run(
         proxy.mcp_drifted_tools(server_id="clean-proof-docs", x_api_key=TEST_KEY)
@@ -216,7 +222,10 @@ try:
             proxy.mcp_approve_tool_baseline(
                 "clean-proof-docs",
                 "missing_tool",
-                request=proxy.MCPToolReviewRequest(reviewer="maaz"),
+                request=proxy.MCPToolApprovalRequest(
+                    expected_surface_hash="sha256:" + "0" * 64,
+                    reviewer="maaz",
+                ),
                 x_api_key=TEST_KEY,
             )
         )
