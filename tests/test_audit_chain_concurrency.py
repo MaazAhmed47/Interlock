@@ -285,6 +285,13 @@ with db.get_conn() as conn:
         "TRUNCATE mcp_audit_log, admin_audit_log, audit_chain_checkpoints "
         "RESTART IDENTITY"
     )
+    counts = conn.execute(
+        "SELECT "
+        "(SELECT COUNT(*) FROM mcp_audit_log) AS mcp_count, "
+        "(SELECT COUNT(*) FROM admin_audit_log) AS admin_count, "
+        "(SELECT COUNT(*) FROM audit_chain_checkpoints) AS checkpoint_count"
+    ).fetchone()
+    assert all(int(value) == 0 for value in dict(counts).values()), counts
 print("RESET_OK")
 """
 
@@ -349,10 +356,20 @@ def _run_snippet(src, args, timeout=120):
     return proc.stdout
 
 
-@pytest.mark.parametrize("table", ["mcp", "admin"])
-def test_concurrent_replica_appends_cannot_fork_the_chain(table, tmp_path):
+@pytest.fixture
+def clean_race_database():
+    """Reset before and after each destructive real-Postgres race case."""
     url = _race_db_url()
     _run_snippet(_RESET_SRC, [url])
+    yield url
+    _run_snippet(_RESET_SRC, [url])
+
+
+@pytest.mark.parametrize("table", ["mcp", "admin"])
+def test_concurrent_replica_appends_cannot_fork_the_chain(
+    table, tmp_path, clean_race_database
+):
+    url = clean_race_database
 
     sync_dir = tmp_path / f"sync-{table}"
     sync_dir.mkdir()

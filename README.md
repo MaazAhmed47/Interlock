@@ -1147,6 +1147,21 @@ Run the complete current suite with `python3 -m pytest tests -q -s`. Use the [CI
 
 Additional regression tests cover DB behavior, judge fail modes, webhooks, metadata policy, MCP DB helpers, metadata normalization, and drift.
 
+### PostgreSQL security tests
+
+CI runs the PostgreSQL security suite against an official, job-scoped PostgreSQL 16 service with synthetic test data. The suite exercises per-server advisory locks, exact-surface approval and rebaseline compare-and-swap behavior, stale-review rejection without state changes, matching approvals, concurrent reviewer/discovery serialization, transaction and audit-failure rollback, audit/receipt hash binding, timestamp lifecycle, cross-server lock isolation, and fixture cleanup. A machine-readable JUnit gate fails if a selected PostgreSQL case skips or a required security case is absent.
+
+SQLite remains the default lightweight local path. To run the same focused suite locally, start a disposable PostgreSQL instance, set `INTERLOCK_TEST_DATABASE_URL` only for the test process, and run:
+
+```powershell
+$env:INTERLOCK_TEST_DATABASE_URL = "postgresql://interlock_test:<test-password>@127.0.0.1:<test-port>/interlock_test"
+python -m pytest tests/test_postgres_rebaseline_cas.py tests/test_postgres_ci_boundary_review_gate.py tests/test_audit_chain_concurrency.py -q -ra --tb=short --junitxml=postgres-security-junit.xml
+Remove-Item Env:INTERLOCK_TEST_DATABASE_URL
+python scripts/verify_postgres_security_junit.py postgres-security-junit.xml
+```
+
+Use a new disposable database containing synthetic data only. Never point these destructive fixtures at production, a managed customer database, or any database with data that must be retained. This CI evidence does not certify production PostgreSQL, managed-provider equivalence, every transaction isolation level, multi-node or multi-region behavior, replication, failover, deployment provenance, or freedom from all races.
+
 ---
 
 ## Deployment State

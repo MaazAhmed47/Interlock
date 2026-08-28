@@ -39,6 +39,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 SERVER_ID = "_pg_rebaseline_cas_server"
+SECOND_SERVER_ID = "_pg_rebaseline_cas_server_b"
+FIXTURE_SERVER_IDS = (SERVER_ID, SECOND_SERVER_ID)
 
 TOOL_A = {
     "name": "list_avatars",
@@ -183,8 +185,8 @@ def clean_state(pg_db):
         conn.execute("DELETE FROM mcp_audit_log")
         conn.execute("DELETE FROM audit_chain_checkpoints")
         conn.execute(
-            "DELETE FROM mcp_servers WHERE server_id = ?",
-            (SERVER_ID,),
+            "DELETE FROM mcp_servers WHERE server_id IN (?, ?)",
+            FIXTURE_SERVER_IDS,
         )
     pg_db.register_mcp_server(
         SERVER_ID,
@@ -199,6 +201,41 @@ def clean_state(pg_db):
     pg_db.verify_mcp_server(SERVER_ID)
     yield
     pg_db.unregister_mcp_server(SERVER_ID)
+    pg_db.unregister_mcp_server(SECOND_SERVER_ID)
+    with pg_db.get_conn() as conn:
+        conn.execute("DELETE FROM mcp_rebaseline_candidates")
+        conn.execute("DELETE FROM mcp_baseline_versions")
+        conn.execute("DELETE FROM mcp_tool_metadata")
+        conn.execute(
+            "DELETE FROM mcp_audit_log WHERE server_id IN (?, ?)",
+            FIXTURE_SERVER_IDS,
+        )
+        conn.execute("DELETE FROM audit_chain_checkpoints")
+        remaining = {
+            table: int(
+                dict(
+                    conn.execute(
+                        f"SELECT COUNT(*) AS n FROM {table} "
+                        "WHERE server_id IN (?, ?)",
+                        FIXTURE_SERVER_IDS,
+                    ).fetchone()
+                )["n"]
+            )
+            for table in (
+                "mcp_servers",
+                "mcp_tool_metadata",
+                "mcp_rebaseline_candidates",
+                "mcp_baseline_versions",
+                "mcp_audit_log",
+            )
+        }
+    assert remaining == {
+        "mcp_servers": 0,
+        "mcp_tool_metadata": 0,
+        "mcp_rebaseline_candidates": 0,
+        "mcp_baseline_versions": 0,
+        "mcp_audit_log": 0,
+    }
 
 
 def _validated(pg_db, tools):
@@ -513,6 +550,62 @@ def test_stale_hashes_are_rejected_on_postgres(pg_db):
         pg_db.get_active_baseline(SERVER_ID)["surface_hash"] == active["surface_hash"]
     )
     assert pg_db.list_baseline_versions(SERVER_ID) == []
+
+
+def test_server_advisory_lock_does_not_serialize_another_server_on_postgres(
+    pg_db, monkeypatch
+):
+    """A transaction holding server A's lock must not block server B."""
+    monkeypatch.setattr(pg_db, "_db_lock", _NoOpLock())
+    pg_db.register_mcp_server(
+        SECOND_SERVER_ID,
+        {
+            "url": "http://localhost:9782/mcp",
+            "description": "PG rebaseline lock-isolation server",
+            "allowed_tools": [],
+            "blocked_tools": [],
+            "rate_limit": 10,
+        },
+    )
+    pg_db.verify_mcp_server(SECOND_SERVER_ID)
+    validated = _validated(pg_db, [TOOL_B])
+    completed = threading.Event()
+    results = {}
+    errors = []
+
+    def stage_server_b():
+        try:
+            results["candidate"] = pg_db.save_rebaseline_candidate(
+                SECOND_SERVER_ID, validated, "ops-b"
+            )
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            completed.set()
+
+    with pg_db.get_conn() as blocker:
+        blocker.execute("BEGIN")
+        blocker.execute(
+            "SELECT pg_advisory_xact_lock(?)",
+            (pg_db._rebaseline_lock_key(SERVER_ID),),
+        )
+        worker = threading.Thread(target=stage_server_b)
+        worker.start()
+        try:
+            completed_while_a_locked = completed.wait(timeout=10)
+        finally:
+            blocker.execute("ROLLBACK")
+
+    worker.join(timeout=15)
+    assert completed_while_a_locked, "server B waited on server A's advisory lock"
+    assert not worker.is_alive(), "server B worker did not terminate"
+    assert errors == []
+    assert results["candidate"]["server_id"] == SECOND_SERVER_ID
+    stored = pg_db.get_rebaseline_candidate(SECOND_SERVER_ID)
+    assert (
+        stored["candidate_surface_hash"]
+        == results["candidate"]["candidate_surface_hash"]
+    )
 
 
 class _NoOpLock:
@@ -1421,27 +1514,42 @@ def test_concurrent_promotes_exactly_one_succeeds_on_postgres(pg_db, monkeypatch
     monkeypatch.setattr(pg_db, "_db_lock", _NoOpLock())
 
     results = []
-    barrier = threading.Barrier(2)
+    errors = []
+    result_lock = threading.Lock()
+    barrier = threading.Barrier(3)
+    actors = (
+        {"reviewer": "reviewer-a", "principal_id": "principal-a"},
+        {"reviewer": "reviewer-b", "principal_id": "principal-b"},
+    )
 
-    def attempt():
-        barrier.wait()
-        results.append(
-            pg_db.promote_rebaseline_candidate(
+    def attempt(actor):
+        try:
+            barrier.wait(timeout=10)
+            result = pg_db.promote_rebaseline_candidate(
                 SERVER_ID,
                 active["surface_hash"],
                 candidate["candidate_surface_hash"],
-                actor=ACTOR,
+                actor=actor,
             )
-        )
+            with result_lock:
+                results.append((actor, result))
+        except BaseException as exc:
+            with result_lock:
+                errors.append(exc)
 
-    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    threads = [threading.Thread(target=attempt, args=(actor,)) for actor in actors]
     for t in threads:
         t.start()
+    barrier.wait(timeout=10)
     for t in threads:
-        t.join()
+        t.join(timeout=30)
 
-    assert sorted(r["ok"] for r in results) == [False, True], results
-    loser = next(r for r in results if not r["ok"])
+    assert all(not t.is_alive() for t in threads), "reviewer worker did not terminate"
+    assert errors == []
+    assert len(results) == 2
+    assert sorted(result["ok"] for _actor, result in results) == [False, True], results
+    winner_actor, winner = next(item for item in results if item[1]["ok"])
+    loser = next(result for _actor, result in results if not result["ok"])
     assert loser["error"] in ("stale_rebaseline_state", "no_candidate")
 
     assert (
@@ -1449,6 +1557,16 @@ def test_concurrent_promotes_exactly_one_succeeds_on_postgres(pg_db, monkeypatch
         == candidate["candidate_surface_hash"]
     )
     assert len(pg_db.list_baseline_versions(SERVER_ID)) == 2
+    audit_rows = [
+        row
+        for row in pg_db.list_mcp_audit_logs(100)
+        if row.get("server_id") == SERVER_ID
+        and row.get("matched_rule") == "rebaseline_promoted"
+    ]
+    assert len(audit_rows) == 1
+    assert audit_rows[0]["id"] == winner["audit"]["audit_id"]
+    assert audit_rows[0]["role"] == winner_actor["reviewer"]
+    assert audit_rows[0]["principal_id"] == winner_actor["principal_id"]
     assert pg_db.verify_audit_chain()["valid"] is True
 
 
@@ -1457,6 +1575,13 @@ def test_injected_failure_rolls_back_transactionally_on_postgres(pg_db, monkeypa
     candidate = pg_db.save_rebaseline_candidate(
         SERVER_ID, _validated(pg_db, [TOOL_C]), "ops"
     )
+    before = {
+        "active": pg_db.get_active_baseline(SERVER_ID),
+        "candidate": pg_db.get_rebaseline_candidate(SERVER_ID),
+        "versions": pg_db.list_baseline_versions(SERVER_ID),
+        "audits": pg_db.list_mcp_audit_logs(100),
+        "counts": _server_state_counts(pg_db),
+    }
 
     def boom(conn, server_id, candidate_row):
         raise RuntimeError("injected pg promote failure")
@@ -1471,14 +1596,14 @@ def test_injected_failure_rolls_back_transactionally_on_postgres(pg_db, monkeypa
         )
     monkeypatch.undo()
 
-    assert (
-        pg_db.get_active_baseline(SERVER_ID)["surface_hash"] == active["surface_hash"]
-    )
-    assert (
-        pg_db.get_rebaseline_candidate(SERVER_ID)["candidate_surface_hash"]
-        == candidate["candidate_surface_hash"]
-    )
-    assert pg_db.list_baseline_versions(SERVER_ID) == []
+    after = {
+        "active": pg_db.get_active_baseline(SERVER_ID),
+        "candidate": pg_db.get_rebaseline_candidate(SERVER_ID),
+        "versions": pg_db.list_baseline_versions(SERVER_ID),
+        "audits": pg_db.list_mcp_audit_logs(100),
+        "counts": _server_state_counts(pg_db),
+    }
+    assert after == before
     assert pg_db.verify_audit_chain()["valid"] is True
 
     retry = pg_db.promote_rebaseline_candidate(
@@ -1497,6 +1622,12 @@ def test_per_tool_approval_rejects_stale_surface_on_postgres(pg_db):
     _quarantine_for_review(pg_db, APPROVAL_TOOL_A)
     reviewed_a = drift_evidence.raw_tool_definition_surface_hash(APPROVAL_TOOL_A)
     _quarantine_for_review(pg_db, APPROVAL_TOOL_B)
+    before = pg_db.lookup_mcp_tool_metadata(SERVER_ID, "read_document")
+    approval_rows_before = [
+        row
+        for row in pg_db.list_mcp_audit_logs(100)
+        if row.get("matched_rule") == "tool_baseline_approved"
+    ]
 
     stale = pg_db.approve_mcp_tool_baseline(
         SERVER_ID,
@@ -1508,12 +1639,13 @@ def test_per_tool_approval_rejects_stale_surface_on_postgres(pg_db):
     assert stale["ok"] is False
     assert stale["error"] == "stale_tool_surface"
     stored = pg_db.lookup_mcp_tool_metadata(SERVER_ID, "read_document")
-    assert stored["raw_tool_definition"] == APPROVAL_TOOL_B
-    assert stored["status"] == "quarantined"
-    assert not any(
-        row.get("matched_rule") == "tool_baseline_approved"
+    assert stored == before
+    approval_rows_after = [
+        row
         for row in pg_db.list_mcp_audit_logs(100)
-    )
+        if row.get("matched_rule") == "tool_baseline_approved"
+    ]
+    assert approval_rows_after == approval_rows_before
 
 
 def test_per_tool_approval_and_audit_bind_matching_surface_on_postgres(pg_db):
@@ -1541,6 +1673,12 @@ def test_per_tool_approval_audit_failure_rolls_back_on_postgres(pg_db, monkeypat
 
     _quarantine_for_review(pg_db, APPROVAL_TOOL_B)
     reviewed = drift_evidence.raw_tool_definition_surface_hash(APPROVAL_TOOL_B)
+    before = pg_db.lookup_mcp_tool_metadata(SERVER_ID, "read_document")
+    approval_rows_before = [
+        row
+        for row in pg_db.list_mcp_audit_logs(100)
+        if row.get("matched_rule") == "tool_baseline_approved"
+    ]
 
     def fail_append(_conn, _event):
         raise RuntimeError("injected pg approval audit failure")
@@ -1555,5 +1693,62 @@ def test_per_tool_approval_audit_failure_rolls_back_on_postgres(pg_db, monkeypat
             principal_id=ACTOR["principal_id"],
         )
     stored = pg_db.lookup_mcp_tool_metadata(SERVER_ID, "read_document")
-    assert stored["status"] == "quarantined"
-    assert stored["raw_tool_definition"] == APPROVAL_TOOL_B
+    assert stored == before
+    approval_rows_after = [
+        row
+        for row in pg_db.list_mcp_audit_logs(100)
+        if row.get("matched_rule") == "tool_baseline_approved"
+    ]
+    assert approval_rows_after == approval_rows_before
+
+
+def test_per_tool_approval_timestamp_lifecycle_on_postgres(pg_db):
+    from datetime import datetime
+
+    from core import drift_evidence
+
+    _quarantine_for_review(pg_db, APPROVAL_TOOL_A)
+    first = pg_db.lookup_mcp_tool_metadata(SERVER_ID, "read_document")
+    first_changed = first["last_changed"]
+    assert datetime.fromisoformat(first_changed).tzinfo is not None
+    assert (
+        pg_db.lookup_mcp_tool_metadata(SERVER_ID, "read_document")["last_changed"]
+        == first_changed
+    )
+
+    reviewed_a = drift_evidence.raw_tool_definition_surface_hash(APPROVAL_TOOL_A)
+    _quarantine_for_review(pg_db, APPROVAL_TOOL_B)
+    changed = pg_db.lookup_mcp_tool_metadata(SERVER_ID, "read_document")
+    changed_at = changed["last_changed"]
+    assert datetime.fromisoformat(changed_at).tzinfo is not None
+
+    stale = pg_db.approve_mcp_tool_baseline(
+        SERVER_ID,
+        "read_document",
+        expected_surface_hash=reviewed_a,
+        reviewer=ACTOR["reviewer"],
+        principal_id=ACTOR["principal_id"],
+    )
+    assert stale["ok"] is False
+    assert stale["error"] == "stale_tool_surface"
+    assert (
+        pg_db.lookup_mcp_tool_metadata(SERVER_ID, "read_document")["last_changed"]
+        == changed_at
+    )
+
+    reviewed_b = drift_evidence.raw_tool_definition_surface_hash(APPROVAL_TOOL_B)
+    approved = pg_db.approve_mcp_tool_baseline(
+        SERVER_ID,
+        "read_document",
+        expected_surface_hash=reviewed_b,
+        reviewer=ACTOR["reviewer"],
+        principal_id=ACTOR["principal_id"],
+    )
+    assert approved["ok"] is True
+    stored = pg_db.lookup_mcp_tool_metadata(SERVER_ID, "read_document")
+    assert stored["status"] == "active"
+    assert stored["last_changed"] is None
+    audit = pg_db.get_mcp_audit_log(approved["approval_audit_id"])
+    assert audit["drift_baseline_hash"] == reviewed_b
+    assert audit["drift_current_hash"] == reviewed_b
+    assert pg_db.verify_mcp_audit_record(audit["id"])["chain_verified"] is True
