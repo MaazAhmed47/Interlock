@@ -6,12 +6,9 @@ in the Postgres hash chain (advisory-lock serialized, `RETURNING id`) and still
 verifies; the surface-snapshot, baseline, and drift-queue reads round-trip
 through psycopg2 types; and the new `mcp.review` scope survives the Postgres
 `scopes` column. The gate itself is exercised as a real subprocess against a
-live uvicorn-served app, exactly as in the SQLite suite.
-
-  docker run -d --name interlock-cigate-pg -e POSTGRES_PASSWORD=cigatepw \
-      -p 54345:5432 postgres:16
-  INTERLOCK_TEST_DATABASE_URL=postgresql://postgres:cigatepw@127.0.0.1:54345/postgres \
-      python -m pytest tests/test_postgres_ci_boundary_review_gate.py
+live uvicorn-served app, exactly as in the SQLite suite. These destructive
+tests require the positive disposable-database authorization documented in
+README.md.
 
 Skipped when the env var is absent (same convention as the other PG suites).
 """
@@ -29,6 +26,11 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
+from scripts.postgres_test_database import (
+    BOUNDARY_REVIEW_OWNED_TABLES,
+    assert_disposable_database,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -53,26 +55,12 @@ from tests.test_ci_boundary_review_gate import (  # noqa: E402
 SERVER_ID = "_test_pg_ci_gate_server"
 QUARANTINE_SERVER_ID = "_test_pg_ci_gate_quarantined"
 PG_SERVER_IDS = (SERVER_ID, QUARANTINE_SERVER_ID)
-PG_GATE_TRUNCATE_TABLES = (
-    "ci_review_idempotency",
-    "tool_surface_snapshots",
-    "mcp_rebaseline_candidates",
-    "mcp_baseline_versions",
-    "mcp_response_profiles",
-    "mcp_external_reach_profiles",
-    "mcp_effect_profiles",
-    "mcp_permission_probes",
-    "mcp_tool_metadata",
-    "mcp_audit_log",
-    "audit_chain_checkpoints",
-    "mcp_servers",
-    "api_keys",
-    "usage_log",
-)
+PG_GATE_TRUNCATE_TABLES = BOUNDARY_REVIEW_OWNED_TABLES
 
 
 def _reset_postgres_gate_fixture(pg_db):
     with pg_db.get_conn() as conn:
+        assert_disposable_database(conn, database_url=DB_URL)
         conn.execute(
             "TRUNCATE "
             + ", ".join(PG_GATE_TRUNCATE_TABLES)
@@ -108,6 +96,15 @@ def _postgres_unique_drift_surface(marker):
 
 @pytest.fixture(scope="module")
 def pg_db():
+    import psycopg2
+
+    raw = psycopg2.connect(DB_URL)
+    try:
+        raw.autocommit = True
+        assert_disposable_database(raw, database_url=DB_URL)
+    finally:
+        raw.close()
+
     os.environ["DATABASE_URL"] = str(DB_URL)
     os.environ["PYTHON_DOTENV_DISABLED"] = "1"
 
@@ -116,10 +113,11 @@ def pg_db():
     db = importlib.reload(db)
     assert db.USE_POSTGRES, "test must exercise the Postgres path"
     db.init_db()
-    yield db
-
-    os.environ.pop("DATABASE_URL", None)
-    importlib.reload(db)
+    try:
+        yield db
+    finally:
+        os.environ.pop("DATABASE_URL", None)
+        importlib.reload(db)
 
 
 @pytest.fixture
@@ -147,47 +145,48 @@ def pg_gate(pg_db, tmp_path):
             }
         )
 
-    with _serve(upstream) as upstream_url:
-        for server_id in PG_SERVER_IDS:
-            pg_db.register_mcp_server(
-                server_id,
-                {
-                    "url": f"{upstream_url}/mcp",
-                    "description": "PG CI boundary review fixture",
-                    "allowed_tools": ["read_document", "list_documents"],
-                    "blocked_tools": [],
-                    "environment": "non_production",
-                },
-            )
-            pg_db.verify_mcp_server(server_id)
-            for tool in BASE_TOOLS:
-                pg_db.upsert_mcp_tool_metadata(
-                    server_id, tool, normalize_tool_metadata(tool)
+    try:
+        with _serve(upstream) as upstream_url:
+            for server_id in PG_SERVER_IDS:
+                pg_db.register_mcp_server(
+                    server_id,
+                    {
+                        "url": f"{upstream_url}/mcp",
+                        "description": "PG CI boundary review fixture",
+                        "allowed_tools": ["read_document", "list_documents"],
+                        "blocked_tools": [],
+                        "environment": "non_production",
+                    },
                 )
-        pg_db.quarantine_mcp_tool(
-            QUARANTINE_SERVER_ID,
-            "read_document",
-            reviewer="fixture",
-            reason="fixture quarantine",
-        )
-        ci_key = pg_db.generate_key(
-            "developer",
-            label="pg-ci-boundary-gate",
-            scopes=["mcp.review"],
-            role="readonly_agent",
-        )["raw_key"]
+                pg_db.verify_mcp_server(server_id)
+                for tool in BASE_TOOLS:
+                    pg_db.upsert_mcp_tool_metadata(
+                        server_id, tool, normalize_tool_metadata(tool)
+                    )
+            pg_db.quarantine_mcp_tool(
+                QUARANTINE_SERVER_ID,
+                "read_document",
+                reviewer="fixture",
+                reason="fixture quarantine",
+            )
+            ci_key = pg_db.generate_key(
+                "developer",
+                label="pg-ci-boundary-gate",
+                scopes=["mcp.review"],
+                role="readonly_agent",
+            )["raw_key"]
 
-        with _serve(proxy.app) as base_url:
-            yield {
-                "base_url": base_url,
-                "state": state,
-                "ci_key": ci_key,
-                "db": pg_db,
-            }
-
-    _reset_postgres_gate_fixture(pg_db)
-    proxy._key_record_cache.clear()
-    proxy._usage_cache.clear()
+            with _serve(proxy.app) as base_url:
+                yield {
+                    "base_url": base_url,
+                    "state": state,
+                    "ci_key": ci_key,
+                    "db": pg_db,
+                }
+    finally:
+        _reset_postgres_gate_fixture(pg_db)
+        proxy._key_record_cache.clear()
+        proxy._usage_cache.clear()
 
 
 def run_gate(live, output_dir: Path, server_id: str = SERVER_ID, *extra: str):

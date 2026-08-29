@@ -20,12 +20,8 @@ Two layers of coverage:
    chain concurrently. Asserts no fork, contiguous ids, full-chain
    verification, and rows == append calls.
 
-Run the adversarial test against a disposable Docker Postgres:
-
-    docker run -d --name interlock-race-pg -e POSTGRES_PASSWORD=racepw \
-        -p 54329:5432 postgres:16
-    INTERLOCK_TEST_DATABASE_URL=postgresql://postgres:racepw@127.0.0.1:54329/postgres \
-        python -m pytest tests/test_audit_chain_concurrency.py -q
+The real-Postgres cases are destructive and require the positive disposable-
+database authorization documented in README.md.
 
 INTERLOCK_CHAIN_TEST_WRITERS / INTERLOCK_CHAIN_TEST_APPENDS scale the load.
 """
@@ -275,16 +271,27 @@ os.environ["DATABASE_URL"] = sys.argv[1]
 sys.path.insert(0, os.getcwd())
 
 from core import db
+from scripts.postgres_test_database import AUDIT_CHAIN_OWNED_TABLES, assert_disposable_database
 
 assert db.USE_POSTGRES, "reset must run against Postgres"
+with db.get_conn() as conn:
+    assert_disposable_database(conn, database_url=sys.argv[1])
 db.init_db()
 with db.get_conn() as conn:
+    assert_disposable_database(conn, database_url=sys.argv[1])
     # Checkpoints too: an empty chain resumes from the newest retention
     # checkpoint's boundary hash, and this test wants a true GENESIS start.
     conn.execute(
-        "TRUNCATE mcp_audit_log, admin_audit_log, audit_chain_checkpoints "
+        "TRUNCATE " + ", ".join(AUDIT_CHAIN_OWNED_TABLES) + " "
         "RESTART IDENTITY"
     )
+    counts = conn.execute(
+        "SELECT "
+        "(SELECT COUNT(*) FROM mcp_audit_log) AS mcp_count, "
+        "(SELECT COUNT(*) FROM admin_audit_log) AS admin_count, "
+        "(SELECT COUNT(*) FROM audit_chain_checkpoints) AS checkpoint_count"
+    ).fetchone()
+    assert all(int(value) == 0 for value in dict(counts).values()), counts
 print("RESET_OK")
 """
 
@@ -325,11 +332,6 @@ def _race_db_url():
             f"{DB_URL_ENV} not set; the adversarial race test needs a "
             f"disposable Postgres (see module docstring)"
         )
-    if db.is_production_database_url(url):
-        pytest.skip(
-            "refusing to run the destructive race test against a "
-            "production-like database"
-        )
     return url
 
 
@@ -349,10 +351,22 @@ def _run_snippet(src, args, timeout=120):
     return proc.stdout
 
 
-@pytest.mark.parametrize("table", ["mcp", "admin"])
-def test_concurrent_replica_appends_cannot_fork_the_chain(table, tmp_path):
+@pytest.fixture
+def clean_race_database():
+    """Reset before and after each destructive real-Postgres race case."""
     url = _race_db_url()
     _run_snippet(_RESET_SRC, [url])
+    try:
+        yield url
+    finally:
+        _run_snippet(_RESET_SRC, [url])
+
+
+@pytest.mark.parametrize("table", ["mcp", "admin"])
+def test_concurrent_replica_appends_cannot_fork_the_chain(
+    table, tmp_path, clean_race_database
+):
+    url = clean_race_database
 
     sync_dir = tmp_path / f"sync-{table}"
     sync_dir.mkdir()

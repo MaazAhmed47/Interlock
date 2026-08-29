@@ -1147,6 +1147,73 @@ Run the complete current suite with `python3 -m pytest tests -q -s`. Use the [CI
 
 Additional regression tests cover DB behavior, judge fail modes, webhooks, metadata policy, MCP DB helpers, metadata normalization, and drift.
 
+### PostgreSQL security tests
+
+CI runs the PostgreSQL security suite against an official, job-scoped PostgreSQL 16 service with synthetic test data. Pull-request runs explicitly check out the PR head SHA, verify it against the event head before installing dependencies, and use that verified SHA in the evidence directory and artifact name. The suite exercises per-server advisory locks, exact-surface approval and rebaseline compare-and-swap behavior, stale-review rejection without state changes, matching approvals, concurrent reviewer/discovery serialization, transaction and audit-failure rollback, audit/receipt hash binding, timestamp lifecycle, cross-server lock isolation, and fixture cleanup.
+
+The CI gate first collects every node ID from these three files into a same-SHA manifest, then compares the complete JUnit testcase set to that manifest:
+
+- `tests/test_postgres_rebaseline_cas.py`
+- `tests/test_postgres_ci_boundary_review_gate.py`
+- `tests/test_audit_chain_concurrency.py`
+
+The verifier rejects missing, stale, partial, duplicated, skipped, failed, errored, xfailed, or xpassed evidence and inconsistent JUnit counters. Cleanup must leave every table owned by these fixtures empty, including `tool_surface_snapshots`.
+
+SQLite remains the default lightweight local path. PostgreSQL execution is destructive and disposable-only: use a freshly created `interlock_test` database containing no useful data, the `interlock_test` role, an allowed local host (`localhost`, `127.0.0.1`, or `::1`), the exact destructive-test confirmation, and the fresh session marker created by the setup command. The CI-only service hostname is `postgres`. Merely naming an existing database `interlock_test` is not sufficient authorization.
+
+From a clean checkout with the project virtual environment active, this PowerShell example creates and removes its own disposable PostgreSQL 16 container and runs the exact CI evidence chain:
+
+```powershell
+$container = "interlock-postgres-security-$PID"
+$evidence = Join-Path $env:TEMP "interlock-postgres-security-$([guid]::NewGuid().ToString('N'))"
+$runId = "local-$([guid]::NewGuid().ToString('N'))"
+$token = python -c "import secrets; print(secrets.token_urlsafe(32))"
+$prepared = $false
+
+try {
+    docker run -d --name $container `
+        -e POSTGRES_USER=interlock_test `
+        -e POSTGRES_PASSWORD=interlock_local_disposable_only `
+        -e POSTGRES_DB=interlock_test `
+        -p 127.0.0.1::5432 `
+        --health-cmd "pg_isready -U interlock_test -d interlock_test" `
+        --health-interval 2s --health-timeout 3s --health-retries 20 `
+        postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    $healthy = $false
+    foreach ($attempt in 1..30) {
+        if ((docker inspect --format '{{.State.Health.Status}}' $container) -eq 'healthy') {
+            $healthy = $true
+            break
+        }
+        Start-Sleep -Seconds 1
+    }
+    if (-not $healthy) { throw 'Disposable PostgreSQL did not become healthy' }
+    $port = (docker port $container 5432/tcp).Split(':')[-1]
+    $env:INTERLOCK_TEST_DATABASE_URL = "postgresql://interlock_test:interlock_local_disposable_only@127.0.0.1:$port/interlock_test"
+    $env:INTERLOCK_ALLOW_DESTRUCTIVE_TEST_DATABASE = "interlock-disposable-only"
+    $env:INTERLOCK_DESTRUCTIVE_TEST_RUN_ID = $runId
+    $env:INTERLOCK_DESTRUCTIVE_TEST_SESSION_TOKEN = $token
+    New-Item -ItemType Directory -Path $evidence | Out-Null
+    $sha = (git rev-parse HEAD).Trim()
+
+    python -m scripts.postgres_test_database prepare
+    $prepared = $true
+    python -m scripts.collect_postgres_security_manifest --output "$evidence/collection-manifest.json" --source-sha $sha --run-nonce $runId
+    python -m scripts.run_postgres_security_tests --manifest "$evidence/collection-manifest.json" --junit "$evidence/postgres-security-junit.xml" --execution "$evidence/execution.json" --source-sha $sha --run-nonce $runId
+    python -m scripts.verify_postgres_security_junit --manifest "$evidence/collection-manifest.json" --junit "$evidence/postgres-security-junit.xml" --execution "$evidence/execution.json" --source-sha $sha --run-nonce $runId
+    python -m scripts.postgres_test_database verify-clean
+} finally {
+    if ($prepared) { python -m scripts.postgres_test_database clear }
+    Remove-Item Env:INTERLOCK_TEST_DATABASE_URL -ErrorAction SilentlyContinue
+    Remove-Item Env:INTERLOCK_ALLOW_DESTRUCTIVE_TEST_DATABASE -ErrorAction SilentlyContinue
+    Remove-Item Env:INTERLOCK_DESTRUCTIVE_TEST_RUN_ID -ErrorAction SilentlyContinue
+    Remove-Item Env:INTERLOCK_DESTRUCTIVE_TEST_SESSION_TOKEN -ErrorAction SilentlyContinue
+    docker rm -f $container
+}
+```
+
+Never point these fixtures at a development database containing useful data, production, a managed provider, a customer database, or private infrastructure. This CI evidence does not certify production PostgreSQL, managed-provider equivalence, every transaction isolation level, multi-node or multi-region behavior, replication, failover, deployment provenance, or freedom from all races.
+
 ---
 
 ## Deployment State
