@@ -83,6 +83,10 @@ def _assert_exact_source_binding(job):
     assert "github.event.pull_request.head.sha" in identity["run"]
     assert "github.sha" in identity["run"]
     assert "expected source SHA is missing" in identity["run"]
+    assert (
+        'git config --global --add safe.directory "$GITHUB_WORKSPACE"'
+        in identity["run"]
+    )
     assert 'if [ "$actual" != "$expected" ]' in identity["run"]
     assert "git status --porcelain --untracked-files=all" in identity["run"]
 

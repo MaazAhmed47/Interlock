@@ -98,6 +98,9 @@ jobs:
             echo "::error::expected source SHA is missing"
             exit 1
           fi
+          # checkout's safe-directory setting is made with a temporary HOME;
+          # register only this job's exact workspace for subsequent git reads.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           actual="$(git rev-parse HEAD)"
           if [ "$actual" != "$expected" ]; then
             echo "::error::checked-out source SHA does not match the event source"
