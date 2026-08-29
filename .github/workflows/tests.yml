@@ -53,6 +53,7 @@ jobs:
   postgres-security:
     name: PostgreSQL security tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     container:
@@ -61,50 +62,127 @@ jobs:
       postgres:
         image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
         env:
-          POSTGRES_USER: interlock_ci
+          POSTGRES_USER: interlock_test
           POSTGRES_PASSWORD: interlock_ci_disposable_only
-          POSTGRES_DB: interlock_ci
+          POSTGRES_DB: interlock_test
         options: >-
-          --health-cmd "pg_isready -U interlock_ci -d interlock_ci"
+          --health-cmd "pg_isready -U interlock_test -d interlock_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
     steps:
-      - uses: actions/checkout@v4
+      # Pull-request workflows default to a synthetic merge ref. These two
+      # explicit paths make the tested source identity auditable.
+      - name: Checkout pull-request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Checkout event SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checked-out source identity
+        id: source
+        run: |
+          event_name='${{ github.event_name }}'
+          if [ "$event_name" = "pull_request" ]; then
+            expected='${{ github.event.pull_request.head.sha }}'
+          else
+            expected='${{ github.sha }}'
+          fi
+          if [ -z "$expected" ]; then
+            echo "::error::expected source SHA is missing"
+            exit 1
+          fi
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::checked-out source SHA does not match the event source"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "::error::checked-out source tree is not clean"
+            exit 1
+          fi
+          run_nonce='${{ github.run_id }}-${{ github.run_attempt }}-'"$actual"
+          session_token="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          echo "::add-mask::$session_token"
+          evidence_dir="postgres-security-evidence-$actual-${{ github.run_id }}-${{ github.run_attempt }}"
+          if [ -e "$evidence_dir" ]; then
+            echo "::error::fresh evidence directory already exists"
+            exit 1
+          fi
+          mkdir "$evidence_dir"
+          echo "sha=$actual" >> "$GITHUB_OUTPUT"
+          echo "run_nonce=$run_nonce" >> "$GITHUB_OUTPUT"
+          echo "session_token=$session_token" >> "$GITHUB_OUTPUT"
+          echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
+          echo "Verified PostgreSQL security source SHA: $actual"
 
       - name: Install PostgreSQL test dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # These fixtures call core.db.init_db(), the repository's authoritative
-      # idempotent schema initializer. The URL is intentionally scoped to this
-      # one pytest process and names only the job-local service-network host.
-      - name: Run PostgreSQL security cases
-        env:
-          INTERLOCK_TEST_DATABASE_URL: postgresql://interlock_ci:interlock_ci_disposable_only@postgres:5432/interlock_ci
-        run: >-
-          python -m pytest
-          tests/test_postgres_rebaseline_cas.py
-          tests/test_postgres_ci_boundary_review_gate.py
-          tests/test_audit_chain_concurrency.py
-          -q -ra --tb=short
-          --junitxml=postgres-security-junit.xml
+      - name: Authorize disposable PostgreSQL session
+        id: authorize
+        env: &postgres-test-env
+          INTERLOCK_TEST_DATABASE_URL: postgresql://interlock_test:interlock_ci_disposable_only@postgres:5432/interlock_test
+          INTERLOCK_ALLOW_DESTRUCTIVE_TEST_DATABASE: interlock-disposable-only
+          INTERLOCK_DESTRUCTIVE_TEST_RUN_ID: ${{ steps.source.outputs.run_nonce }}
+          INTERLOCK_DESTRUCTIVE_TEST_SESSION_TOKEN: ${{ steps.source.outputs.session_token }}
+        run: python -m scripts.postgres_test_database prepare
 
-      # Pytest returns zero when every selected case skips. Verify the JUnit
-      # model instead of parsing console prose, and require named CAS/locking/
-      # rollback/receipt cases plus zero skips, failures, or errors.
+      - name: Collect PostgreSQL security manifest
+        run: >-
+          python -m scripts.collect_postgres_security_manifest
+          --output ${{ steps.source.outputs.evidence_dir }}/collection-manifest.json
+          --source-sha ${{ steps.source.outputs.sha }}
+          --run-nonce ${{ steps.source.outputs.run_nonce }}
+
+      # These fixtures call core.db.init_db(), the repository's authoritative
+      # idempotent schema initializer. Destructive SQL is guarded by the exact
+      # disposable database identity and fresh session marker above.
+      - name: Run PostgreSQL security cases
+        env: *postgres-test-env
+        run: >-
+          python -m scripts.run_postgres_security_tests
+          --manifest ${{ steps.source.outputs.evidence_dir }}/collection-manifest.json
+          --junit ${{ steps.source.outputs.evidence_dir }}/postgres-security-junit.xml
+          --execution ${{ steps.source.outputs.evidence_dir }}/execution.json
+          --source-sha ${{ steps.source.outputs.sha }}
+          --run-nonce ${{ steps.source.outputs.run_nonce }}
+
+      # Compare actual testcase records to the exact same-source collection;
+      # top-level JUnit counts alone are never accepted as execution proof.
       - name: Prove PostgreSQL cases executed
         run: >-
-          python scripts/verify_postgres_security_junit.py
-          postgres-security-junit.xml
+          python -m scripts.verify_postgres_security_junit
+          --manifest ${{ steps.source.outputs.evidence_dir }}/collection-manifest.json
+          --junit ${{ steps.source.outputs.evidence_dir }}/postgres-security-junit.xml
+          --execution ${{ steps.source.outputs.evidence_dir }}/execution.json
+          --source-sha ${{ steps.source.outputs.sha }}
+          --run-nonce ${{ steps.source.outputs.run_nonce }}
+
+      - name: Verify PostgreSQL cleanup
+        if: always() && steps.source.outcome == 'success' && steps.authorize.outcome == 'success'
+        env: *postgres-test-env
+        run: python -m scripts.postgres_test_database verify-clean
+
+      - name: Clear disposable PostgreSQL session marker
+        if: always() && steps.source.outcome == 'success' && steps.authorize.outcome == 'success'
+        env: *postgres-test-env
+        run: python -m scripts.postgres_test_database clear
 
       - name: Upload PostgreSQL security report
-        if: always()
+        if: always() && steps.source.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: postgres-security-${{ github.sha }}
-          path: postgres-security-junit.xml
+          name: postgres-security-${{ steps.source.outputs.sha }}
+          path: ${{ steps.source.outputs.evidence_dir }}
           if-no-files-found: error
           retention-days: 30
 

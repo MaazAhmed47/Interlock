@@ -5,12 +5,8 @@ What only Postgres can prove: the promote transaction's per-server
 advisory-lock serialization across connections that do NOT share the
 process-local ``_db_lock`` (like N replicas), true transactional rollback of
 the multi-statement promote, and psycopg2 type/parameter behavior for the
-new candidate/version tables. These tests run against a disposable Postgres:
-
-  docker run -d --name interlock-v3-pg -e POSTGRES_PASSWORD=v3pw \
-      -p 54333:5432 postgres:16
-  INTERLOCK_TEST_DATABASE_URL=postgresql://postgres:v3pw@127.0.0.1:54333/postgres \
-      python -m pytest tests/test_postgres_rebaseline_cas.py
+new candidate/version tables. These destructive tests require the positive
+disposable-database authorization documented in README.md.
 
 Skipped when the env var is absent (same convention as the other PG suites).
 """
@@ -27,6 +23,11 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
+from scripts.postgres_test_database import (
+    REBASELINE_OWNED_TABLES,
+    assert_disposable_database,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -40,7 +41,6 @@ pytestmark = pytest.mark.skipif(
 
 SERVER_ID = "_pg_rebaseline_cas_server"
 SECOND_SERVER_ID = "_pg_rebaseline_cas_server_b"
-FIXTURE_SERVER_IDS = (SERVER_ID, SECOND_SERVER_ID)
 
 TOOL_A = {
     "name": "list_avatars",
@@ -156,11 +156,14 @@ def pg_db():
     import psycopg2
 
     raw = psycopg2.connect(DB_URL)
-    raw.autocommit = True
-    with raw.cursor() as cur:
-        cur.execute("DROP TABLE IF EXISTS mcp_rebaseline_candidates CASCADE")
-        cur.execute("DROP TABLE IF EXISTS mcp_baseline_versions CASCADE")
-    raw.close()
+    try:
+        raw.autocommit = True
+        assert_disposable_database(raw, database_url=DB_URL)
+        with raw.cursor() as cur:
+            cur.execute("DROP TABLE IF EXISTS mcp_rebaseline_candidates CASCADE")
+            cur.execute("DROP TABLE IF EXISTS mcp_baseline_versions CASCADE")
+    finally:
+        raw.close()
 
     os.environ["DATABASE_URL"] = DB_URL
     os.environ["PYTHON_DOTENV_DISABLED"] = "1"
@@ -170,24 +173,16 @@ def pg_db():
     db = importlib.reload(db)
     assert db.USE_POSTGRES, "test must exercise the Postgres path"
     db.init_db()
-    yield db
-
-    os.environ.pop("DATABASE_URL", None)
-    importlib.reload(db)
+    try:
+        yield db
+    finally:
+        os.environ.pop("DATABASE_URL", None)
+        importlib.reload(db)
 
 
 @pytest.fixture(autouse=True)
 def clean_state(pg_db):
-    with pg_db.get_conn() as conn:
-        conn.execute("DELETE FROM mcp_rebaseline_candidates")
-        conn.execute("DELETE FROM mcp_baseline_versions")
-        conn.execute("DELETE FROM mcp_tool_metadata")
-        conn.execute("DELETE FROM mcp_audit_log")
-        conn.execute("DELETE FROM audit_chain_checkpoints")
-        conn.execute(
-            "DELETE FROM mcp_servers WHERE server_id IN (?, ?)",
-            FIXTURE_SERVER_IDS,
-        )
+    _clear_rebaseline_state(pg_db)
     pg_db.register_mcp_server(
         SERVER_ID,
         {
@@ -199,43 +194,33 @@ def clean_state(pg_db):
         },
     )
     pg_db.verify_mcp_server(SERVER_ID)
-    yield
-    pg_db.unregister_mcp_server(SERVER_ID)
-    pg_db.unregister_mcp_server(SECOND_SERVER_ID)
+    try:
+        yield
+    finally:
+        _clear_rebaseline_state(pg_db)
+
+
+def _clear_rebaseline_state(pg_db):
     with pg_db.get_conn() as conn:
+        assert_disposable_database(conn, database_url=DB_URL)
         conn.execute("DELETE FROM mcp_rebaseline_candidates")
         conn.execute("DELETE FROM mcp_baseline_versions")
         conn.execute("DELETE FROM mcp_tool_metadata")
-        conn.execute(
-            "DELETE FROM mcp_audit_log WHERE server_id IN (?, ?)",
-            FIXTURE_SERVER_IDS,
-        )
+        conn.execute("DELETE FROM tool_surface_snapshots")
+        conn.execute("DELETE FROM mcp_audit_log")
         conn.execute("DELETE FROM audit_chain_checkpoints")
+        conn.execute("DELETE FROM mcp_servers")
         remaining = {
             table: int(
                 dict(
                     conn.execute(
-                        f"SELECT COUNT(*) AS n FROM {table} "
-                        "WHERE server_id IN (?, ?)",
-                        FIXTURE_SERVER_IDS,
+                        f"SELECT COUNT(*) AS n FROM {table}",
                     ).fetchone()
                 )["n"]
             )
-            for table in (
-                "mcp_servers",
-                "mcp_tool_metadata",
-                "mcp_rebaseline_candidates",
-                "mcp_baseline_versions",
-                "mcp_audit_log",
-            )
+            for table in REBASELINE_OWNED_TABLES
         }
-    assert remaining == {
-        "mcp_servers": 0,
-        "mcp_tool_metadata": 0,
-        "mcp_rebaseline_candidates": 0,
-        "mcp_baseline_versions": 0,
-        "mcp_audit_log": 0,
-    }
+    assert remaining == dict.fromkeys(REBASELINE_OWNED_TABLES, 0)
 
 
 def _validated(pg_db, tools):
@@ -626,6 +611,20 @@ def _advisory_waiters(pg_db) -> int:
     return int(dict(row)["n"])
 
 
+def _advisory_waiters_for_key(pg_db, key: int) -> int:
+    unsigned = key & ((1 << 64) - 1)
+    class_id = unsigned >> 32
+    object_id = unsigned & 0xFFFFFFFF
+    with pg_db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM pg_locks "
+            "WHERE locktype = 'advisory' AND NOT granted "
+            "AND classid::bigint = ? AND objid::bigint = ? AND objsubid = 1",
+            (class_id, object_id),
+        ).fetchone()
+    return int(dict(row)["n"])
+
+
 def _wait_for(predicate, timeout=10.0, interval=0.05):
     import time
 
@@ -849,10 +848,10 @@ def test_quarantine_waits_for_promote_and_is_not_silently_lost_on_postgres(
         SERVER_ID, _validated(pg_db, [changed_tool_a]), "ops"
     )
     monkeypatch.setattr(pg_db, "_db_lock", _NoOpLock())
-    monkeypatch.setattr(pg_db, "log_mcp_audit_event", lambda _event: {})
 
     promote_at_seam = threading.Event()
     release_promote = threading.Event()
+    quarantine_about_to_enter = threading.Event()
     quarantine_done = threading.Event()
     real_replace = pg_db._replace_tool_metadata_from_candidate
     results = {}
@@ -879,6 +878,7 @@ def test_quarantine_waits_for_promote_and_is_not_silently_lost_on_postgres(
 
     def quarantine():
         try:
+            quarantine_about_to_enter.set()
             results["quarantine"] = pg_db.quarantine_mcp_tool(
                 SERVER_ID, TOOL_A["name"], reviewer="ops"
             )
@@ -893,15 +893,23 @@ def test_quarantine_waits_for_promote_and_is_not_silently_lost_on_postgres(
     assert promote_at_seam.wait(timeout=15), "promotion never reached replace seam"
     quarantine_thread.start()
     try:
-        quarantine_finished_inside_promote = quarantine_done.wait(timeout=2)
+        assert quarantine_about_to_enter.wait(timeout=10)
+        expected_key = pg_db._rebaseline_lock_key(SERVER_ID)
+        quarantine_waited = _wait_for(
+            lambda: _advisory_waiters_for_key(pg_db, expected_key) == 1
+        )
+        quarantine_finished_while_waiting = quarantine_done.is_set()
+        protected_before_release = pg_db.lookup_mcp_tool_metadata(
+            SERVER_ID, TOOL_A["name"]
+        )
     finally:
         release_promote.set()
         promote_thread.join(timeout=30)
         quarantine_thread.join(timeout=30)
 
-    assert (
-        not quarantine_finished_inside_promote
-    ), "quarantine updated the old row inside promotion and can be overwritten"
+    assert quarantine_waited, "quarantine never waited on the expected server lock"
+    assert not quarantine_finished_while_waiting
+    assert protected_before_release["status"] != "quarantined"
     assert not promote_thread.is_alive() and not quarantine_thread.is_alive()
     assert errors == []
     assert results["promote"]["ok"] is True
@@ -909,6 +917,14 @@ def test_quarantine_waits_for_promote_and_is_not_silently_lost_on_postgres(
     stored = pg_db.lookup_mcp_tool_metadata(SERVER_ID, TOOL_A["name"])
     assert stored["status"] == "quarantined"
     assert "operator_quarantine" in stored["drift_types"]
+    audit_rows = [
+        row
+        for row in pg_db.list_mcp_audit_logs(100)
+        if row.get("server_id") == SERVER_ID
+        and row.get("matched_rule") == "operator_quarantine"
+    ]
+    assert len(audit_rows) == 1
+    assert audit_rows[0]["role"] == "ops"
 
 
 def test_metadata_rederivation_waits_for_promote_and_reads_promoted_row_on_postgres(
