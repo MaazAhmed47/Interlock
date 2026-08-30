@@ -1321,12 +1321,24 @@ direct HTTP fallback.
 
 In Interlock’s explicit enforced egress profile, enumerated server-side HTTP(S) clients are configured to use a required forward proxy, ignore ambient proxy environment variables, and disable automatic redirects. Connection-time destination enforcement still requires the separately validated proxy and deployment-level direct-egress denial.
 
-This is application plumbing only. It is not complete SSRF prevention,
-universal DNS-rebinding prevention, direct-egress denial from application code,
-a Render Phase 2 claim, protection for unenumerated protocols, future clients,
-or unmanaged SDK transports, or production/managed-provider certification. See
+The repository also includes a dedicated, hermetic
+`deploy/phase2-docker/compose.yaml` reference profile. It pins Squid 7.6.0.1 by
+digest, enables the Phase 1 URL guard and enforced application profile, and puts
+Interlock on an internal dual-stack network with no IPv4 or IPv6 default route.
+Squid is the only application-side service that also joins the separate
+synthetic-origin and denied-sink networks. The
+exact-head CI job retains a hash-bound manifest and rejects missing, duplicate,
+skipped, xfailed, xpassed, failed, errored, malformed, stale, or
+counter-inconsistent case evidence.
+
+In the tested Docker Phase 2 profile at the documented source SHA, Squid image digest, policy hash, and Compose configuration, Interlock’s enumerated server-side HTTP(S) paths are forced through a non-intercepting forward proxy. The profile rejects the tested private, metadata, raw-IP, mixed-answer, and rebinding destinations at proxy connection time while preserving end-to-end client TLS verification.
+
+This is deployment-specific Docker evidence. It is not complete SSRF prevention, universal DNS-rebinding prevention, Render enforcement, Kubernetes enforcement, managed-database certification, protection for unenumerated protocols, or protection against an allowed destination.
+
+Application code alone still does not provide direct-egress denial. See
 [Outbound destination security](docs/outbound-destination-security.md) for the
-enumerated inventory and remaining deployment requirements.
+enumerated inventory, reproducibility command, cache/refresh limitation, and
+remaining deployment requirements.
 
 ---
 

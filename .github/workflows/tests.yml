@@ -189,6 +189,85 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  phase2-docker:
+    name: Docker Phase 2 egress profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout pull-request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Checkout event SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checked-out source identity
+        id: source
+        shell: bash
+        run: |
+          event_name='${{ github.event_name }}'
+          if [ "$event_name" = "pull_request" ]; then
+            expected='${{ github.event.pull_request.head.sha }}'
+          else
+            expected='${{ github.sha }}'
+          fi
+          if [ -z "$expected" ]; then
+            echo "::error::expected source SHA is missing"
+            exit 1
+          fi
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::checked-out source SHA does not match the event source"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "::error::checked-out source tree is not clean"
+            exit 1
+          fi
+          evidence_dir="phase2-docker-evidence-$actual-${{ github.run_id }}-${{ github.run_attempt }}"
+          if [ -e "$evidence_dir" ]; then
+            echo "::error::fresh evidence directory already exists"
+            exit 1
+          fi
+          echo "sha=$actual" >> "$GITHUB_OUTPUT"
+          echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Set up pinned Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Docker Phase 2 acceptance
+        id: acceptance
+        shell: bash
+        run: >-
+          python scripts/run_phase2_docker_acceptance.py
+          --output "${{ steps.source.outputs.evidence_dir }}"
+          --source-sha "${{ steps.source.outputs.sha }}"
+
+      - name: Re-verify retained Phase 2 evidence
+        id: evidence
+        shell: bash
+        run: >-
+          python scripts/verify_phase2_docker_evidence.py
+          "${{ steps.source.outputs.evidence_dir }}"
+
+      - name: Upload Docker Phase 2 evidence
+        if: always() && steps.source.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase2-docker-${{ steps.source.outputs.sha }}
+          path: ${{ steps.source.outputs.evidence_dir }}
+          if-no-files-found: error
+          retention-days: 30
+
   dependency-audit:
     name: Dependency audit
     runs-on: ubuntu-latest
