@@ -1,11 +1,14 @@
 """Tests for OIDC admin authentication."""
 
 import json
+import logging
 import os
 import sys
 import tempfile
 import time
+import traceback
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import jwt
 import httpx
@@ -27,6 +30,72 @@ from core import db  # noqa: E402
 
 ISSUER = "https://idp.example.com/"
 AUDIENCE = "interlock-admin"
+
+
+def _exception_graph(error: BaseException) -> list[BaseException]:
+    pending = [error]
+    seen: set[int] = set()
+    graph: list[BaseException] = []
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        graph.append(current)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+    return graph
+
+
+def _assert_exception_graph_is_url_free(
+    error: BaseException, forbidden: tuple[str, ...]
+) -> list[BaseException]:
+    graph = _exception_graph(error)
+    rendered = "\n".join(
+        [
+            *(str(item) for item in graph),
+            *(repr(item) for item in graph),
+            "".join(traceback.format_exception(error)),
+        ]
+    )
+    for value in forbidden:
+        assert value not in rendered
+    assert not any(isinstance(item, httpx.HTTPError) for item in graph)
+    return graph
+
+
+def _configure_oidc_jwks_failure(monkeypatch, jwks_url, handler):
+    monkeypatch.setenv("INTERLOCK_EGRESS_PROFILE", "phase1")
+    monkeypatch.delenv("INTERLOCK_OUTBOUND_HTTP_PROXY", raising=False)
+    monkeypatch.setattr(admin, "OIDC_ADMIN_ENABLED", True)
+    monkeypatch.setattr(admin, "OIDC_ISSUER", ISSUER)
+    monkeypatch.setattr(admin, "OIDC_AUDIENCE", AUDIENCE)
+    monkeypatch.setattr(admin, "OIDC_JWKS_URL", jwks_url)
+    monkeypatch.setattr(admin, "OIDC_ALLOWED_ALGS", ["HS256"])
+    monkeypatch.setattr(admin, "_OIDC_JWKS_CLIENT", None)
+    monkeypatch.setattr(admin, "_OIDC_JWKS_CLIENT_URL", "")
+    monkeypatch.setattr(
+        admin,
+        "ensure_safe_outbound_url",
+        lambda value, *, context: value,
+    )
+
+    real_client = httpx.Client
+
+    def client_factory(**kwargs):
+        assert kwargs["follow_redirects"] is False
+        assert kwargs["trust_env"] is False
+        return real_client(transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(admin.httpx, "Client", client_factory)
+    return jwt.encode(
+        {"iss": ISSUER, "aud": AUDIENCE, "sub": "failure-path"},
+        "test-signing-secret-with-32-bytes-minimum",
+        algorithm="HS256",
+        headers={"kid": "failure-key"},
+    )
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -117,10 +186,100 @@ def test_oidc_jwks_redirect_is_rejected_without_second_request(monkeypatch):
     monkeypatch.setattr(admin.httpx, "Client", client_factory)
     client = admin._GuardedPyJWKClient("https://idp.audit.invalid/jwks")
 
-    with pytest.raises(jwt.exceptions.PyJWKClientConnectionError):
+    with pytest.raises(jwt.exceptions.PyJWKClientConnectionError) as captured:
         client.fetch_data()
 
     assert requests == ["https://idp.audit.invalid/jwks"]
+    assert str(captured.value) == "OIDC JWKS redirect was rejected"
+    assert captured.value.category == "redirect"
+    assert captured.value.status_code == 302
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+
+
+@pytest.mark.parametrize("failure_kind", ["status", "transport"])
+def test_oidc_jwks_failure_is_url_free_across_caller_and_logs(
+    monkeypatch, caplog, failure_kind
+):
+    query_sentinel = "oidc_query_" + "sentinel_7f3a91"
+    credential_sentinel = "oidc_credential_" + "sentinel_b84c26"
+    query = f"access_token={credential_sentinel}&trace={query_sentinel}"
+    jwks_url = f"https://oidc-failure.invalid/jwks?{query}"
+    status_probe = MagicMock(
+        side_effect=AssertionError("raise_for_status must not be used")
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if failure_kind == "transport":
+            raise httpx.ConnectError(
+                f"synthetic transport {credential_sentinel}", request=request
+            )
+        response = httpx.Response(
+            503,
+            headers={"x-upstream-secret": credential_sentinel},
+            content=f"body-{query_sentinel}".encode(),
+            request=request,
+        )
+        response.raise_for_status = status_probe
+        return response
+
+    token = _configure_oidc_jwks_failure(monkeypatch, jwks_url, handler)
+    direct_client = admin._GuardedPyJWKClient(jwks_url)
+    with pytest.raises(admin._OIDCJWKSFetchFailure) as direct_failure:
+        direct_client.fetch_data()
+    expected_category = (
+        "http_status" if failure_kind == "status" else "connection_failed"
+    )
+    assert direct_failure.value.category == expected_category
+    assert direct_failure.value.status_code == (
+        503 if failure_kind == "status" else None
+    )
+    assert direct_failure.value.__cause__ is None
+    assert direct_failure.value.__context__ is None
+    _assert_exception_graph_is_url_free(
+        direct_failure.value,
+        (
+            query_sentinel,
+            credential_sentinel,
+            query,
+            jwks_url,
+            "access_token=",
+        ),
+    )
+    monkeypatch.setattr(admin, "_OIDC_JWKS_CLIENT", None)
+    monkeypatch.setattr(admin, "_OIDC_JWKS_CLIENT_URL", "")
+    list_keys = MagicMock(side_effect=AssertionError("database access is forbidden"))
+    audit = MagicMock(side_effect=AssertionError("audit output is forbidden"))
+    monkeypatch.setattr(admin.db, "list_keys", list_keys)
+    monkeypatch.setattr(admin.db, "log_admin_audit_event", audit)
+    caplog.set_level(logging.DEBUG)
+
+    with pytest.raises(HTTPException) as captured:
+        admin.list_all_keys(authorization=f"Bearer {token}")
+
+    assert captured.value.status_code == 401
+    assert captured.value.detail == "OIDC token verification failed."
+    forbidden = (query_sentinel, credential_sentinel, query, jwks_url, "access_token=")
+    graph = _assert_exception_graph_is_url_free(captured.value, forbidden)
+    assert graph == [captured.value]
+    if failure_kind == "status":
+        status_probe.assert_not_called()
+
+    retained_logs = "\n".join(record.getMessage() for record in caplog.records)
+    for value in forbidden:
+        assert value not in retained_logs
+    relevant = [
+        record
+        for record in caplog.records
+        if record.name == "interlock.admin"
+        and "OIDC JWKS fetch failed" in record.message
+    ]
+    assert len(relevant) == 1
+    assert relevant[0].exc_info is None
+    assert relevant[0].oidc_jwks_category == expected_category
+    assert relevant[0].oidc_jwks_status == (503 if failure_kind == "status" else None)
+    list_keys.assert_not_called()
+    audit.assert_not_called()
 
 
 def make_token(private_key, **claims):

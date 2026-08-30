@@ -263,10 +263,13 @@ def test_admin_oidc_jwks_rejects_before_dependency_client(monkeypatch):
         def get_signing_key_from_jwt(self, _token):
             return SimpleNamespace(key="unexpected")
 
-    monkeypatch.setattr(admin.jwt, "PyJWKClient", FakeJWKClient)
+    monkeypatch.setattr(admin, "_GuardedPyJWKClient", FakeJWKClient)
 
-    with pytest.raises(OutboundUrlRejected):
+    with pytest.raises(admin._OIDCJWKSFetchFailure) as captured:
         admin._get_oidc_signing_key("synthetic-token")
+    assert captured.value.category == "destination_rejected"
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
     assert clients == []
 
 

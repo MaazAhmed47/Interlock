@@ -197,6 +197,7 @@ class TrustedJWKSCache:
             write=self.settings.jwks_connect_timeout_seconds,
             pool=self.settings.jwks_connect_timeout_seconds,
         )
+        refresh_failed = False
         try:
             jwks_uri = await ensure_safe_outbound_url_async(
                 self.settings.jwks_uri, context="EMA JWKS"
@@ -212,17 +213,18 @@ class TrustedJWKSCache:
                 )
             document = json.loads(body)
             keys = self._parse_document(document)
-        except EMAAuthError:
-            raise
         except (
+            EMAAuthError,
             asyncio.TimeoutError,
             httpx.HTTPError,
             json.JSONDecodeError,
             UnicodeDecodeError,
             TypeError,
             ValueError,
-        ) as exc:
-            raise EMAAuthError("jwks_unavailable") from exc
+        ):
+            refresh_failed = True
+        if refresh_failed:
+            raise EMAAuthError("jwks_unavailable")
         self._keys = keys
         for key_id in list(self._negative):
             if key_id in keys:
@@ -240,11 +242,14 @@ class TrustedJWKSCache:
                 raise EMAAuthError("jwks_unavailable")
             content_length = response.headers.get("content-length")
             if content_length:
+                invalid_content_length = False
                 try:
                     if int(content_length) > self.settings.jwks_document_max_bytes:
                         raise EMAAuthError("jwks_unavailable")
-                except ValueError as exc:
-                    raise EMAAuthError("jwks_unavailable") from exc
+                except ValueError:
+                    invalid_content_length = True
+                if invalid_content_length:
+                    raise EMAAuthError("jwks_unavailable")
             chunks = bytearray()
             async for chunk in response.aiter_bytes():
                 chunks.extend(chunk)
@@ -282,10 +287,13 @@ class TrustedJWKSCache:
                 or kid in parsed
             ):
                 raise EMAAuthError("jwks_unavailable")
+            invalid_jwk = False
             try:
                 parsed[kid] = RSAAlgorithm.from_jwk(entry)
-            except (ValueError, TypeError) as exc:
-                raise EMAAuthError("jwks_unavailable") from exc
+            except (ValueError, TypeError):
+                invalid_jwk = True
+            if invalid_jwk:
+                raise EMAAuthError("jwks_unavailable")
         return parsed
 
 

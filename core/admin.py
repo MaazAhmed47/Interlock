@@ -21,7 +21,11 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from core import db
-from core.outbound_http import create_sync_client
+from core.outbound_http import (
+    OutboundHTTPConfigurationError,
+    classify_outbound_http_failure,
+    create_sync_client,
+)
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
 
 logger = logging.getLogger("interlock.admin")
@@ -49,11 +53,44 @@ _OIDC_JWKS_CLIENT_URL = ""
 _OIDC_LAST_CONFIG_ERROR_AT = 0.0
 
 
+class _OIDCJWKSFetchFailure(jwt.exceptions.PyJWKClientConnectionError):
+    """Bounded JWKS failure that never retains the upstream exception graph."""
+
+    def __init__(self, *, category: str, status_code: Optional[int] = None):
+        safe_categories = {
+            "connection_failed",
+            "destination_rejected",
+            "http_status",
+            "invalid_response",
+            "outbound_configuration",
+            "proxy_failed",
+            "redirect",
+            "timeout",
+            "transport_failed",
+            "unexpected_error",
+            "upstream_http_error",
+        }
+        self.category = category if category in safe_categories else "unexpected_error"
+        self.status_code = (
+            status_code
+            if isinstance(status_code, int) and 100 <= status_code <= 599
+            else None
+        )
+        message = (
+            "OIDC JWKS redirect was rejected"
+            if self.category == "redirect"
+            else "OIDC JWKS fetch failed"
+        )
+        super().__init__(message)
+
+
 class _GuardedPyJWKClient(jwt.PyJWKClient):
     """PyJWT key selection with Interlock-controlled HTTP behavior."""
 
     def fetch_data(self):
         jwk_set = None
+        failure_category: Optional[str] = None
+        failure_status: Optional[int] = None
         try:
             canonical_url = ensure_safe_outbound_url(self.uri, context="OIDC JWKS")
             with create_sync_client(
@@ -62,22 +99,30 @@ class _GuardedPyJWKClient(jwt.PyJWKClient):
             ) as client:
                 response = client.get(canonical_url, headers=self.headers)
                 if response.is_redirect:
-                    raise jwt.exceptions.PyJWKClientConnectionError(
-                        "OIDC JWKS redirect was rejected"
-                    )
-                response.raise_for_status()
-                jwk_set = response.json()
-        except jwt.exceptions.PyJWKClientConnectionError:
-            raise
-        except (OutboundUrlRejected, httpx.HTTPError, ValueError) as exc:
-            raise jwt.exceptions.PyJWKClientConnectionError(
-                "OIDC JWKS fetch failed"
-            ) from exc
-        else:
-            return jwk_set
+                    failure_category = "redirect"
+                    failure_status = response.status_code
+                elif not response.is_success:
+                    failure_category = "http_status"
+                    failure_status = response.status_code
+                else:
+                    jwk_set = response.json()
+        except OutboundUrlRejected:
+            failure_category = "destination_rejected"
+        except OutboundHTTPConfigurationError:
+            failure_category = "outbound_configuration"
+        except httpx.HTTPError as error:
+            failure_category = classify_outbound_http_failure(error)
+        except ValueError:
+            failure_category = "invalid_response"
         finally:
             if self.jwk_set_cache is not None:
                 self.jwk_set_cache.put(jwk_set)
+        if failure_category is not None:
+            raise _OIDCJWKSFetchFailure(
+                category=failure_category,
+                status_code=failure_status,
+            )
+        return jwk_set
 
 
 @dataclass(frozen=True)
@@ -163,7 +208,13 @@ def _enforce_oidc_principal_allowlist(claims: Dict[str, Any]) -> None:
 
 def _get_oidc_signing_key(token: str):
     global _OIDC_JWKS_CLIENT, _OIDC_JWKS_CLIENT_URL
-    canonical_url = ensure_safe_outbound_url(OIDC_JWKS_URL, context="OIDC JWKS")
+    canonical_url: Optional[str] = None
+    try:
+        canonical_url = ensure_safe_outbound_url(OIDC_JWKS_URL, context="OIDC JWKS")
+    except OutboundUrlRejected:
+        pass
+    if canonical_url is None:
+        raise _OIDCJWKSFetchFailure(category="destination_rejected")
     if _OIDC_JWKS_CLIENT is None or _OIDC_JWKS_CLIENT_URL != canonical_url:
         _OIDC_JWKS_CLIENT = _GuardedPyJWKClient(canonical_url)
         _OIDC_JWKS_CLIENT_URL = canonical_url
@@ -216,6 +267,7 @@ def _require_oidc_admin(authorization: Optional[str]) -> AdminContext:
             status_code=401, detail="OIDC token algorithm is not allowed."
         )
 
+    oidc_jwks_failure: Optional[tuple[str, Optional[int]]] = None
     try:
         signing_key = _get_oidc_signing_key(token)
         claims = jwt.decode(
@@ -228,10 +280,23 @@ def _require_oidc_admin(authorization: Optional[str]) -> AdminContext:
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="OIDC token expired.")
+    except _OIDCJWKSFetchFailure as error:
+        oidc_jwks_failure = (error.category, error.status_code)
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid OIDC token.")
     except Exception:
         logger.exception("OIDC token verification failed")
+        raise HTTPException(status_code=401, detail="OIDC token verification failed.")
+
+    if oidc_jwks_failure is not None:
+        category, status_code = oidc_jwks_failure
+        logger.warning(
+            "OIDC JWKS fetch failed",
+            extra={
+                "oidc_jwks_category": category,
+                "oidc_jwks_status": status_code,
+            },
+        )
         raise HTTPException(status_code=401, detail="OIDC token verification failed.")
 
     _enforce_oidc_principal_allowlist(claims)
