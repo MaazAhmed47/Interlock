@@ -21,6 +21,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from core import db
+from core.outbound_http import create_sync_client
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url
 
 logger = logging.getLogger("interlock.admin")
@@ -55,10 +56,9 @@ class _GuardedPyJWKClient(jwt.PyJWKClient):
         jwk_set = None
         try:
             canonical_url = ensure_safe_outbound_url(self.uri, context="OIDC JWKS")
-            with httpx.Client(
+            with create_sync_client(
                 timeout=self.timeout,
-                follow_redirects=False,
-                trust_env=False,
+                purpose="OIDC JWKS",
             ) as client:
                 response = client.get(canonical_url, headers=self.headers)
                 if response.is_redirect:

@@ -1,7 +1,6 @@
 import re
 import json
 import hashlib
-import logging
 import os
 import time
 import contextvars
@@ -10,6 +9,7 @@ import uuid
 from typing import Optional, Dict, Any
 from models.schemas import ScanResult, ThreatLevel
 from core.metadata_policy import evaluate_metadata_policy
+from core.outbound_http import create_async_client
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
 from core.tool_inspector import inspect_tool_call
 from core.tool_metadata import normalize_tool_metadata
@@ -51,14 +51,6 @@ from core.mcp_2026_protocol import (
 )
 from core import drift_evidence
 from core.mcp_definition_inspector import inspect_tool_definition_text
-
-# HTTPX logs status reason phrases at INFO, while HTTPCore logs raw response
-# headers at DEBUG. Both fields are controlled by an upstream server, so keep
-# those dependency namespaces at WARNING or above whenever the gateway is
-# loaded. This is deliberately narrower than changing the root or Interlock
-# application loggers.
-for _transport_logger_name in ("httpx", "httpcore"):
-    logging.getLogger(_transport_logger_name).setLevel(logging.WARNING)
 
 # Per-operation start time for gateway-path latency. Set at the top of each
 # entry point that logs audit events (tool-call proxy, server registration);
@@ -785,8 +777,8 @@ async def _fetch_tool_list_payload(
         auth_headers = _resolve_upstream_auth_headers(registered)
         profile = _upstream_protocol_profile(registered)
 
-        async with httpx.AsyncClient(
-            timeout=timeout, follow_redirects=False, trust_env=False
+        async with create_async_client(
+            timeout=timeout, purpose="MCP discovery and rebaseline"
         ) as client:
 
             async def send(method: str) -> Dict[str, Any]:
@@ -1782,8 +1774,8 @@ async def proxy_mcp_tool_call(
             server["url"], context="MCP server"
         )
         auth_headers = _resolve_upstream_auth_headers(server)
-        async with httpx.AsyncClient(
-            timeout=30.0, follow_redirects=False, trust_env=False
+        async with create_async_client(
+            timeout=30.0, purpose="MCP tools/call"
         ) as client:
             request_id = uuid.uuid4().hex
             payload, protocol_headers = _upstream_request(

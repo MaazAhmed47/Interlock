@@ -1,7 +1,12 @@
 import os
-import httpx
 from fastapi import HTTPException
 from typing import Any, Dict, Optional
+
+from core.outbound_http import (
+    classify_outbound_http_failure,
+    create_async_client,
+    is_enforced_egress_profile,
+)
 
 # ── Provider configurations ──────────────────────────────────────────────────
 PROVIDERS: Dict[str, Dict[str, Any]] = {
@@ -194,6 +199,14 @@ async def forward_to_provider(
     config = PROVIDERS.get(provider)
     if not config:
         return {"error": f"Unknown provider: {provider}"}
+    if provider == "ollama" and is_enforced_egress_profile():
+        return {
+            "error": "outbound_profile_restriction",
+            "provider": "ollama",
+            "message": (
+                "Ollama loopback routing is disabled in the enforced egress profile."
+            ),
+        }
 
     # Get API key
     if not api_key and config["key_env"]:
@@ -231,12 +244,13 @@ async def forward_to_provider(
     url = config["url"]
     if provider == "google":
         model = openai_body.get("model", "gemini-pro")
-        url = f"{url}/{model}:generateContent?key={api_key}"
+        url = f"{url}/{model}:generateContent"
+        headers["x-goog-api-key"] = api_key or ""
 
     # Make request
     try:
-        async with httpx.AsyncClient(
-            timeout=120.0, follow_redirects=False, trust_env=False
+        async with create_async_client(
+            timeout=120.0, purpose=f"{provider} provider routing"
         ) as client:
             resp = await client.post(url, json=body, headers=headers)
             data = resp.json()
@@ -250,9 +264,9 @@ async def forward_to_provider(
                 return from_ollama_response(data)
             else:
                 return data
-    except Exception as e:
+    except Exception as exc:
         return {
             "error": "upstream_error",
             "provider": provider,
-            "message": str(e),
+            "message": classify_outbound_http_failure(exc),
         }

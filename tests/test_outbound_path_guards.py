@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import ast
 import json
 import socket
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -22,6 +21,7 @@ from core import (
 )
 from core import siem, webhook
 from core.ema_auth import EMAAuthError, TrustedJWKSCache
+from core.outbound_http import create_async_client
 from core.url_security import OutboundUrlRejected
 from models.schemas import ScanResult, ThreatLevel
 from tests.test_ema_config import valid_raw_config
@@ -274,40 +274,11 @@ def test_controlled_httpx_clients_disable_all_ambient_proxy_settings(monkeypatch
     for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
         monkeypatch.setenv(name, "http://proxy.audit.invalid:8080")
 
-    root = Path(__file__).resolve().parents[1]
-    controlled_paths = (
-        "core/effect_readback.py",
-        "core/effective_permission.py",
-        "core/ema_auth.py",
-        "core/mcp_gateway.py",
-        "core/router.py",
-        "core/shadow_scanner.py",
-        "core/siem.py",
-        "core/webhook.py",
-    )
-    checked = 0
-    for relative in controlled_paths:
-        tree = ast.parse((root / relative).read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            if not (
-                isinstance(node.func, ast.Attribute) and node.func.attr == "AsyncClient"
-            ):
-                continue
-            trust_env = next(
-                (
-                    keyword.value
-                    for keyword in node.keywords
-                    if keyword.arg == "trust_env"
-                ),
-                None,
-            )
-            assert isinstance(trust_env, ast.Constant), relative
-            assert trust_env.value is False, relative
-            checked += 1
+    with patch("core.outbound_http.httpx.AsyncClient") as constructor:
+        create_async_client(timeout=1.0, purpose="ambient proxy regression")
 
-    assert checked == 14
+    assert constructor.call_args.kwargs["trust_env"] is False
+    assert constructor.call_args.kwargs["proxy"] is None
 
 
 def test_pagerduty_guard_rejects_before_routing_key_enters_event(monkeypatch):

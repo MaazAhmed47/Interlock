@@ -5,6 +5,11 @@ from datetime import datetime, timezone
 from typing import Any, List
 from models.schemas import ScanResult
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
+from core.outbound_http import (
+    OutboundHTTPConfigurationError,
+    classify_outbound_http_failure,
+    create_async_client,
+)
 from core.outbound_events import alert_reason, prompt_evidence
 
 # ── SIEM Provider Configurations ──────────────────────────────────────────────
@@ -327,8 +332,8 @@ async def send_to_siem(
                 "DD-API-KEY": config["api_key"],
                 "Content-Type": "application/json",
             }
-            async with httpx.AsyncClient(
-                timeout=5.0, follow_redirects=False, trust_env=False
+            async with create_async_client(
+                timeout=5.0, purpose="Datadog SIEM"
             ) as client:
                 resp = await client.post(url, json=[event], headers=headers)
                 return {
@@ -349,11 +354,10 @@ async def send_to_siem(
                 "Authorization": f"Splunk {config['token']}",
                 "Content-Type": "application/json",
             }
-            async with httpx.AsyncClient(
+            async with create_async_client(
                 timeout=5.0,
                 verify=config.get("verify_ssl", True),
-                follow_redirects=False,
-                trust_env=False,
+                purpose="Splunk SIEM",
             ) as client:
                 resp = await client.post(url, json=event, headers=headers)
                 return {
@@ -373,11 +377,10 @@ async def send_to_siem(
                 "Authorization": f"ApiKey {config['api_key']}",
                 "Content-Type": "application/json",
             }
-            async with httpx.AsyncClient(
+            async with create_async_client(
                 timeout=5.0,
                 verify=config.get("verify_ssl", True),
-                follow_redirects=False,
-                trust_env=False,
+                purpose="Elastic SIEM",
             ) as client:
                 resp = await client.post(url, json=event, headers=headers)
                 return {
@@ -391,9 +394,7 @@ async def send_to_siem(
                 config["webhook_url"], context="Slack webhook"
             )
             event = build_slack_event(result, api_key_prefix)
-            async with httpx.AsyncClient(
-                timeout=5.0, follow_redirects=False, trust_env=False
-            ) as client:
+            async with create_async_client(timeout=5.0, purpose="Slack SIEM") as client:
                 resp = await client.post(url, json=event)
                 return {
                     "provider": "slack",
@@ -419,8 +420,8 @@ async def send_to_siem(
             event = build_pagerduty_event(
                 result, config["integration_key"], api_key_prefix
             )
-            async with httpx.AsyncClient(
-                timeout=5.0, follow_redirects=False, trust_env=False
+            async with create_async_client(
+                timeout=5.0, purpose="PagerDuty SIEM"
             ) as client:
                 resp = await client.post(
                     url,
@@ -438,8 +439,8 @@ async def send_to_siem(
             )
             payload = build_webhook_event(result, api_key_prefix)
             headers = config.get("headers", {})
-            async with httpx.AsyncClient(
-                timeout=5.0, follow_redirects=False, trust_env=False
+            async with create_async_client(
+                timeout=5.0, purpose="generic SIEM webhook"
             ) as client:
                 resp = await client.post(url, json=payload, headers=headers)
                 return {
@@ -451,19 +452,28 @@ async def send_to_siem(
         else:
             return {"provider": provider, "ok": False, "error": "unknown_provider"}
 
-    except OutboundUrlRejected as exc:
+    except OutboundUrlRejected:
         return {
             "provider": provider,
             "ok": False,
             "error": "unsafe_outbound_url",
-            "message": str(exc),
+        }
+    except OutboundHTTPConfigurationError:
+        return {
+            "provider": provider,
+            "ok": False,
+            "error": "outbound_configuration",
         }
     except httpx.TimeoutException:
         return {"provider": provider, "ok": False, "error": "timeout"}
     except httpx.ConnectError:
         return {"provider": provider, "ok": False, "error": "connection_failed"}
-    except Exception as e:
-        return {"provider": provider, "ok": False, "error": str(e)[:200]}
+    except Exception as exc:
+        return {
+            "provider": provider,
+            "ok": False,
+            "error": classify_outbound_http_failure(exc),
+        }
 
 
 def build_webhook_event(result: ScanResult, api_key_prefix: str) -> dict:

@@ -20,10 +20,9 @@ from typing import Optional
 from groq import Groq
 from models.schemas import ScanResult, ThreatLevel
 from config import GROQ_API_KEY, GROQ_MODEL
+from core.outbound_http import classify_outbound_http_failure, create_sync_client
 
 logger = logging.getLogger("interlock.llm_judge")
-
-client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 DEFAULT_FAIL_MODE = "fail_open_safe"
@@ -32,6 +31,27 @@ VALID_FAIL_MODES = {"fail_closed", "fail_open", "fail_open_safe"}
 CIRCUIT_BREAKER_THRESHOLD = 5  # consecutive failures before tripping
 CIRCUIT_BREAKER_COOLDOWN_S = 60  # seconds to stay open before retrying
 JUDGE_TIMEOUT_S = 8  # cap each Groq call
+
+
+def _build_groq_client() -> Optional[Groq]:
+    if not GROQ_API_KEY:
+        return None
+    controlled_http_client = create_sync_client(
+        timeout=JUDGE_TIMEOUT_S,
+        purpose="Groq LLM judge SDK",
+    )
+    try:
+        return Groq(
+            api_key=GROQ_API_KEY,
+            http_client=controlled_http_client,
+            max_retries=0,
+        )
+    except Exception:
+        controlled_http_client.close()
+        raise
+
+
+client = _build_groq_client()
 
 # Per-API-key fail mode now lives in the DB (api_keys.fail_mode column).
 # Use POST /admin/keys to set it. Defaults from PLAN_DEFAULTS in core/db.py.
@@ -276,12 +296,11 @@ def llm_judge_scan(
             safe_to_proceed=not is_threat,
         )
 
-    except Exception as e:
+    except Exception as exc:
         _breaker.record_failure()
-        logger.warning(
-            "LLM judge call failed: %s | cause=%r", e, getattr(e, "__cause__", None)
-        )
-        return _build_failure_result(prompt, str(e)[:120], fail_mode, prior_layers_safe)
+        error_class = classify_outbound_http_failure(exc)
+        logger.warning("LLM judge call failed", extra={"error_class": error_class})
+        return _build_failure_result(prompt, error_class, fail_mode, prior_layers_safe)
 
 
 # ── Tool response judge ───────────────────────────────────────────────────────
@@ -363,5 +382,8 @@ def llm_judge_tool_response(
 
     except Exception as exc:
         _breaker.record_failure()
-        logger.warning("LLM tool response judge failed: %s", exc)
-        return _build_failure_result(response, str(exc)[:120], fail_mode, True)
+        error_class = classify_outbound_http_failure(exc)
+        logger.warning(
+            "LLM tool response judge failed", extra={"error_class": error_class}
+        )
+        return _build_failure_result(response, error_class, fail_mode, True)

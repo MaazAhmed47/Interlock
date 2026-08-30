@@ -4,6 +4,11 @@ import logging
 from models.schemas import ScanResult
 from typing import Optional
 from core.outbound_events import alert_reason, prompt_evidence
+from core.outbound_http import (
+    OutboundHTTPConfigurationError,
+    classify_outbound_http_failure,
+    create_async_client,
+)
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
 
 logger = logging.getLogger("interlock.webhook")
@@ -86,11 +91,11 @@ async def fire_webhook(api_key: str, result: ScanResult) -> None:
     try:
         url = await ensure_safe_outbound_url_async(url, context="Per-key webhook")
         payload = _build_payload(result)
-        async with httpx.AsyncClient(
-            timeout=WEBHOOK_TIMEOUT, follow_redirects=False, trust_env=False
+        async with create_async_client(
+            timeout=WEBHOOK_TIMEOUT, purpose="per-key webhook"
         ) as client:
             resp = await client.post(url, json=payload)
-            if resp.status_code >= 400:
+            if not 200 <= resp.status_code < 300:
                 logger.warning(
                     "Webhook returned non-2xx",
                     extra={"status": resp.status_code, "api_key_prefix": api_key[:8]},
@@ -101,8 +106,23 @@ async def fire_webhook(api_key: str, result: ScanResult) -> None:
         )
     except httpx.TimeoutException:
         logger.warning("Webhook timeout", extra={"api_key_prefix": api_key[:8]})
-    except Exception as e:
-        logger.warning("Webhook failed: %s", e, extra={"api_key_prefix": api_key[:8]})
+    except httpx.ConnectError:
+        logger.warning(
+            "Webhook connection failed", extra={"api_key_prefix": api_key[:8]}
+        )
+    except OutboundHTTPConfigurationError:
+        logger.warning(
+            "Webhook outbound configuration rejected",
+            extra={"api_key_prefix": api_key[:8]},
+        )
+    except Exception as exc:
+        logger.warning(
+            "Webhook failed",
+            extra={
+                "api_key_prefix": api_key[:8],
+                "error_class": classify_outbound_http_failure(exc),
+            },
+        )
 
 
 def trigger_webhook(api_key: str, result: ScanResult) -> None:
@@ -121,5 +141,8 @@ def trigger_webhook(api_key: str, result: ScanResult) -> None:
         # No running loop. Run synchronously in a fresh loop. Used by sync callers/tests.
         try:
             asyncio.run(fire_webhook(api_key, result))
-        except Exception as e:
-            logger.warning("Sync webhook fallback failed: %s", e)
+        except Exception as exc:
+            logger.warning(
+                "Sync webhook fallback failed",
+                extra={"error_class": classify_outbound_http_failure(exc)},
+            )

@@ -18,6 +18,7 @@ from core.detector import rule_based_scan
 from core.ema_config import load_experimental_ema_settings
 from core.learning import check_learned_patterns, learn_from_result
 from core.llm_judge import llm_judge_scan
+from core.outbound_http import assert_outbound_http_config_valid
 from core.pattern_matcher import pattern_match_scan
 from core.policy import policy_scan, ROLE_POLICIES
 from core.shadow_mode import calculate_risk_score
@@ -65,6 +66,7 @@ _START_TIME = time.time()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     assert_offline_demo_startup_safe()
+    assert_outbound_http_config_valid()
     # Config validation runs before any database or network work: an
     # explicitly configured but unusable limit must stop startup, never be
     # silently replaced by a different one mid-review.

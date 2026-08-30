@@ -20,6 +20,7 @@ import jwt
 from jwt.algorithms import RSAAlgorithm
 
 from core.ema_config import EMASettings, HMACKeyRing
+from core.outbound_http import create_async_client
 from core.url_security import ensure_safe_outbound_url_async
 
 _BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]*$")
@@ -200,11 +201,10 @@ class TrustedJWKSCache:
             jwks_uri = await ensure_safe_outbound_url_async(
                 self.settings.jwks_uri, context="EMA JWKS"
             )
-            async with httpx.AsyncClient(
+            async with create_async_client(
                 transport=self._transport,
                 timeout=timeout,
-                follow_redirects=False,
-                trust_env=False,
+                purpose="EMA JWKS",
             ) as client:
                 body = await asyncio.wait_for(
                     self._read_jwks_response(client, jwks_uri),
