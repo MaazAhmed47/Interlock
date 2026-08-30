@@ -331,7 +331,11 @@ def test_discovery_http_status_text_is_never_exposed(profile, status, caplog):
         "server_url": "http://localhost:9799/mcp",
     }
     client_factory.assert_called_once_with(
-        timeout=1, follow_redirects=False, trust_env=False
+        timeout=1,
+        verify=True,
+        proxy=None,
+        follow_redirects=False,
+        trust_env=False,
     )
     exposed = json.dumps(outcome, sort_keys=True) + caplog.text
     assert all(sentinel not in exposed for sentinel in UPSTREAM_SENTINELS)
@@ -456,7 +460,11 @@ def test_tool_call_http_status_metadata_is_absent_from_all_evidence(
         )
 
     client_factory.assert_called_once_with(
-        timeout=30.0, follow_redirects=False, trust_env=False
+        timeout=30.0,
+        verify=True,
+        proxy=None,
+        follow_redirects=False,
+        trust_env=False,
     )
     assert outcome["ok"] is False
     assert outcome["error"] == "upstream_http_error"

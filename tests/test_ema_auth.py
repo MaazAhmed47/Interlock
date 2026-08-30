@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import traceback
 from dataclasses import replace
 
 import httpx
@@ -62,6 +63,23 @@ def _validator(issuer, source, *, settings=None, monotonic=None):
 
 def _validate(validator, token):
     return asyncio.run(validator.validate_token(token))
+
+
+def _exception_graph(error: BaseException) -> list[BaseException]:
+    pending = [error]
+    seen: set[int] = set()
+    graph: list[BaseException] = []
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        graph.append(current)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+    return graph
 
 
 def test_valid_mock_rs256_token_is_verified_and_normalized():
@@ -355,6 +373,79 @@ def test_jwks_redirect_is_not_followed():
         _validate(validator, issuer.token())
     assert captured.value.code == "jwks_unavailable"
     assert source.calls == 1
+
+
+@pytest.mark.parametrize("failure_kind", ["transport", "header"])
+def test_ema_jwks_failure_discards_sensitive_exception_graph(
+    monkeypatch, caplog, failure_kind
+):
+    from core import ema_auth
+    from core.ema_auth import EMAAuthError
+
+    query_sentinel = "ema_query_" + "sentinel_17d29c"
+    credential_sentinel = "ema_credential_" + "sentinel_93a4e1"
+    query = f"access_token={credential_sentinel}&trace={query_sentinel}"
+    jwks_uri = f"https://ema-failure.invalid/jwks?{query}"
+    issuer = MockRS256Issuer.create()
+
+    async def allow_test_destination(value, *, context):
+        assert context == "EMA JWKS"
+        return value
+
+    monkeypatch.setattr(
+        ema_auth, "ensure_safe_outbound_url_async", allow_test_destination
+    )
+    monkeypatch.setenv("INTERLOCK_EGRESS_PROFILE", "phase1")
+    monkeypatch.delenv("INTERLOCK_OUTBOUND_HTTP_PROXY", raising=False)
+
+    if failure_kind == "transport":
+
+        async def handler(request):
+            raise httpx.ConnectError(
+                f"synthetic transport {credential_sentinel}", request=request
+            )
+
+        transport = httpx.MockTransport(handler)
+    else:
+
+        async def handler(request):
+            return httpx.Response(
+                200,
+                headers={"content-length": credential_sentinel},
+                content=b"{}",
+                request=request,
+            )
+
+        transport = httpx.MockTransport(handler)
+
+    settings = replace(_settings(), jwks_uri=jwks_uri)
+    cache = ema_auth.TrustedJWKSCache(settings, transport=transport)
+    validator = ema_auth.EMAAccessTokenValidator(settings, cache=cache)
+
+    with pytest.raises(EMAAuthError) as captured:
+        _validate(validator, issuer.token())
+
+    assert captured.value.code == "jwks_unavailable"
+    graph = _exception_graph(captured.value)
+    rendered = "\n".join(
+        [
+            *(str(item) for item in graph),
+            *(repr(item) for item in graph),
+            "".join(traceback.format_exception(captured.value)),
+            *(record.getMessage() for record in caplog.records),
+        ]
+    )
+    for value in (
+        query_sentinel,
+        credential_sentinel,
+        query,
+        jwks_uri,
+        "access_token=",
+    ):
+        assert value not in rendered
+    assert not any(isinstance(item, httpx.HTTPError) for item in graph)
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
 
 
 def test_oversized_jwks_is_rejected_from_content_length_and_stream():

@@ -22,6 +22,7 @@ import httpx
 from core import db
 from core import drift_evidence
 from core.effect_drift import build_effect_profile
+from core.outbound_http import create_async_client
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
 
 SCHEMA_ID = "interlock.readback-effect-drift-record"
@@ -410,8 +411,8 @@ async def _call_upstream_tool(
             "method": "tools/call",
             "params": {"name": tool_name, "arguments": arguments or {}},
         }
-        async with httpx.AsyncClient(
-            timeout=30.0, follow_redirects=False, trust_env=False
+        async with create_async_client(
+            timeout=30.0, purpose="MCP effect readback"
         ) as client:
             resp = await client.post(server_url, **_mcp_post_kwargs(payload, headers))
             status = getattr(resp, "status_code", None)

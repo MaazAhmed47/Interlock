@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import httpx
 
 from core import db
+from core.outbound_http import create_async_client, require_trusted_async_client
 from core.url_security import OutboundUrlRejected, ensure_safe_outbound_url_async
 
 logger = logging.getLogger("interlock.shadow_scanner")
@@ -48,6 +49,8 @@ def _calculate_risk_score(probe: ProbeResult) -> int:
 async def probe_target(
     url: str, probe_path: str = "/tools/list", client: httpx.AsyncClient | None = None
 ) -> ProbeResult:
+    if client is not None:
+        require_trusted_async_client(client, purpose="shadow scan injection")
     target = f"{url.rstrip('/')}{probe_path}"
     try:
         target = await ensure_safe_outbound_url_async(target, context="Shadow scan")
@@ -62,9 +65,7 @@ async def probe_target(
             error="unsafe_outbound_url",
         )
 
-    _client = client or httpx.AsyncClient(
-        timeout=_TIMEOUT, follow_redirects=False, trust_env=False
-    )
+    _client = client or create_async_client(timeout=_TIMEOUT, purpose="shadow scan")
     try:
         resp = await _client.get(target)
         if resp.status_code in (401, 403):
@@ -119,7 +120,7 @@ async def probe_target(
             tool_listing_available=False,
             status_code=resp.status_code,
         )
-    except httpx.TimeoutException as e:
+    except httpx.TimeoutException:
         return ProbeResult(
             url=url,
             responded=False,
@@ -127,9 +128,9 @@ async def probe_target(
             auth_required=False,
             tool_listing_available=False,
             status_code=0,
-            error=str(e),
+            error="timeout",
         )
-    except httpx.ConnectError as e:
+    except httpx.ConnectError:
         return ProbeResult(
             url=url,
             responded=False,
@@ -137,7 +138,27 @@ async def probe_target(
             auth_required=False,
             tool_listing_available=False,
             status_code=0,
-            error=str(e),
+            error="connection_failed",
+        )
+    except httpx.TransportError:
+        return ProbeResult(
+            url=url,
+            responded=False,
+            looks_like_mcp=False,
+            auth_required=False,
+            tool_listing_available=False,
+            status_code=0,
+            error="transport_failed",
+        )
+    except Exception:
+        return ProbeResult(
+            url=url,
+            responded=False,
+            looks_like_mcp=False,
+            auth_required=False,
+            tool_listing_available=False,
+            status_code=0,
+            error="unexpected_error",
         )
     finally:
         if client is None:

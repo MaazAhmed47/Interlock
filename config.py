@@ -271,6 +271,22 @@ def allow_private_outbound_urls() -> bool:
     )
 
 
+def outbound_egress_profile_value() -> str:
+    """Return the explicit application HTTP egress profile at call time."""
+
+    raw = os.getenv("INTERLOCK_EGRESS_PROFILE")
+    return "phase1" if raw is None else raw.lower()
+
+
+def outbound_http_proxy_value() -> str | None:
+    """Return the explicit proxy value without logging or interpolating it."""
+
+    raw = os.getenv("INTERLOCK_OUTBOUND_HTTP_PROXY")
+    if raw is None or not raw.strip():
+        return None
+    return raw
+
+
 def offline_demo_enabled() -> bool:
     """
     Opt-in for the bundled docker-compose demo (demo/offline/). Seeds a fixed,

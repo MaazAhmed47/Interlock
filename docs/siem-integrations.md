@@ -93,6 +93,10 @@ content handled by Interlock.
 }
 ```
 
+The explicit enforced egress profile requires TLS verification for Splunk and
+Elastic. Configurations with `verify_ssl: false` fail closed before HTTP client
+construction; that legacy option does not provide an enforced-profile bypass.
+
 ---
 
 ## Generic Webhook Example

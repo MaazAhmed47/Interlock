@@ -1251,7 +1251,7 @@ Production/hosted deployments should set:
 - outbound URL protection is mandatory in production; private destinations are rejected
 - the bundled offline Compose proof uses a narrow `mcp-mock` allowance and does not enable a general private-destination override
 - enforce a production egress proxy or firewall because application-level hostname checks are not a complete DNS-rebinding defense
-- guarded HTTP clients ignore ambient proxy variables; a production proxy must be an explicit future design or a transparent enforced network boundary
+- guarded HTTP clients ignore ambient proxy variables; use the explicit enforced egress profile only with the separately validated proxy and deployment-level direct-egress denial
 
 Secrets hygiene:
 
@@ -1293,6 +1293,8 @@ Common variables:
 | `ENABLE_API_DOCS` | Defaults to off in production and on in local/dev. |
 | `INTERLOCK_PROTECT_OUTBOUND_URLS` | Enables outbound URL checks in local/dev; protection is mandatory in production and hosted-platform environments. |
 | `INTERLOCK_ALLOW_PRIVATE_OUTBOUND` | Legacy local-only compatibility setting; it cannot disable the shared guard or permit private production egress. |
+| `INTERLOCK_EGRESS_PROFILE` | `phase1` (default) retains resolver-before-connect behavior; `enforced` requires explicit application proxy plumbing and fails startup on missing or invalid proxy configuration. |
+| `INTERLOCK_OUTBOUND_HTTP_PROXY` | Credential-free `http://host:port` forward proxy required by the explicit enforced egress profile. It is not read from ambient proxy variables. |
 | `INTERLOCK_OFFLINE_DEMO` | Enables the non-production Compose proof profile, including only the exact `mcp-mock` outbound allowance. |
 | `MCP_UPSTREAM_AUTH_ALLOWED_ENV_VARS` | Comma-separated allowlist of environment-variable names that registered MCP servers may use for upstream auth; default deny. |
 | `SHADOW_SCAN_ENABLED` | Opt-in background shadow MCP probing. |
@@ -1309,11 +1311,22 @@ readback, webhook, SIEM, shadow-scan, and JWKS destinations.
 
 hostname resolution rejection is a partial mitigation; DNS rebinding requires connection pinning or an enforced egress proxy/firewall.
 
-The current HTTP transports resolve hostnames again when connecting. Production
-deployments must therefore enforce destination policy at the network boundary;
-see [Outbound destination security](docs/outbound-destination-security.md).
-Guarded clients use `trust_env=False`, so ambient `HTTP_PROXY`, `HTTPS_PROXY`,
-`ALL_PROXY`, and `NO_PROXY` settings are unsupported for these paths.
+The default `phase1` egress profile retains that resolver-before-connect gap and
+must not be described as secure against DNS rebinding. The explicit `enforced`
+profile requires `INTERLOCK_OUTBOUND_HTTP_PROXY`, rejects malformed or
+credential-bearing proxy URLs, rejects disabled TLS verification and untrusted
+injected transports, and disables Ollama's loopback route. Missing configuration
+stops startup; proxy, DNS, CONNECT, TLS, and redirect failures never trigger a
+direct HTTP fallback.
+
+In Interlock’s explicit enforced egress profile, enumerated server-side HTTP(S) clients are configured to use a required forward proxy, ignore ambient proxy environment variables, and disable automatic redirects. Connection-time destination enforcement still requires the separately validated proxy and deployment-level direct-egress denial.
+
+This is application plumbing only. It is not complete SSRF prevention,
+universal DNS-rebinding prevention, direct-egress denial from application code,
+a Render Phase 2 claim, protection for unenumerated protocols, future clients,
+or unmanaged SDK transports, or production/managed-provider certification. See
+[Outbound destination security](docs/outbound-destination-security.md) for the
+enumerated inventory and remaining deployment requirements.
 
 ---
 
