@@ -367,7 +367,9 @@ def main() -> int:
             ):
                 raise RuntimeError("raw service log disclosed an authorization field")
             logs[service] = clean_text(raw)
-            (output / f"{service}.log").write_text(logs[service], encoding="utf-8")
+            (output / f"{service}.log").write_text(
+                logs[service], encoding="utf-8", newline="\n"
+            )
         case(
             results,
             "denied_sink_zero_requests",
@@ -423,6 +425,7 @@ def main() -> int:
         result_path.write_text(
             "".join(json.dumps(item, sort_keys=True) + "\n" for item in results),
             encoding="utf-8",
+            newline="\n",
         )
         junit_path = output / "junit.xml"
         write_junit(junit_path, results)
@@ -449,7 +452,13 @@ def main() -> int:
             ROOT / "scripts" / "verify_phase2_docker_evidence.py",
         ]
         test_source_hash = sha256_bytes(
-            b"".join(path.read_bytes() for path in sorted(test_sources))
+            b"".join(
+                path.read_bytes()
+                for path in sorted(
+                    test_sources,
+                    key=lambda item: item.relative_to(ROOT).as_posix(),
+                )
+            )
         )
         manifest = {
             "schema": "interlock.phase2-docker-evidence.v1",
@@ -488,7 +497,9 @@ def main() -> int:
             "duration_seconds": round(time.time() - started, 3),
         }
         (output / "manifest.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
         )
         retained = b"\n".join(
             path.read_bytes() for path in output.iterdir() if path.is_file()

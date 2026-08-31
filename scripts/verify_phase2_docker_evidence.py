@@ -47,7 +47,15 @@ def test_source_digest() -> str:
         ROOT / "scripts" / "run_phase2_docker_acceptance.py",
         Path(__file__).resolve(),
     ]
-    return digest_bytes(b"".join(path.read_bytes() for path in sorted(paths)))
+    return digest_bytes(
+        b"".join(
+            path.read_bytes()
+            for path in sorted(
+                paths,
+                key=lambda item: item.relative_to(ROOT).as_posix(),
+            )
+        )
+    )
 
 
 def rendered_compose_digest(source_sha: str, project: str) -> str:
