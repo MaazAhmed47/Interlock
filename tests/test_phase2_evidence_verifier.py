@@ -420,8 +420,15 @@ def test_verifier_rejects_stale_artifact_digest(tmp_path, monkeypatch):
     "disclosure",
     [
         "postgresql://user:password@database:5432/name",
+        "mysql://user:password@database:3306/name",
         "http://squid:3128",
         "Authorization: Bearer retained-value",
+        "Authorization: ApiKey retained-value",
+        '{"authorization":"retained-value"}',
+        "ADMIN_TOKEN=retained-value",
+        "api_key=retained-value",
+        "password=retained-value",
+        "https://user:password@allowed.phase2.test/path",
         "https://allowed.phase2.test/path?query=retained-value",
     ],
 )

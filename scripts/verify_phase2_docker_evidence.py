@@ -32,6 +32,19 @@ from phase2_cases import REQUIRED_CASES  # noqa: E402
 SQUID_IMAGE = "ghcr.io/cybozu/squid:7.6.0.1@sha256:b5fff668ddbf5738a779ada37893569e6640d2a2ac384a834095ac443d12d60a"
 SQUID_DIGEST = "sha256:b5fff668ddbf5738a779ada37893569e6640d2a2ac384a834095ac443d12d60a"
 SAFE_PROJECT = re.compile(r"^interlock-p2-[a-f0-9]{12}$")
+AUTHORIZATION_VALUE = re.compile(
+    rb"(?:^|[\r\n,{])\s*[\"']?(?:proxy[-_])?authorization[\"']?\s*[:=]\s*[\"']?[^\s,\"'}]+",
+    re.IGNORECASE,
+)
+CREDENTIAL_VALUE = re.compile(
+    rb"(?:^|[\r\n,{;])\s*[\"']?(?:admin[-_]?token|api[-_]?key|access[-_]?token|client[-_]?secret|credential|password|passwd|refresh[-_]?token|secret)[\"']?\s*[:=]\s*[\"']?[^\s,;\"'}]+",
+    re.IGNORECASE,
+)
+CREDENTIAL_BEARING_URL = re.compile(rb"https?://[^\s/\"']+:[^@\s/\"']+@", re.IGNORECASE)
+DSN = re.compile(
+    rb"\b(?:amqps?|cockroachdb|mariadb|mongodb(?:\+srv)?|mssql|mysql|oracle|postgres(?:ql)?|rediss?|snowflake|sqlserver)://",
+    re.IGNORECASE,
+)
 
 
 def digest(path: Path) -> str:
@@ -280,27 +293,36 @@ def main() -> int:
         "Compose version evidence mismatch",
     )
 
-    retained = b"\n".join(
-        path.read_bytes() for path in evidence.iterdir() if path.is_file()
+    retained_paths = [path for path in evidence.iterdir() if path.is_file()]
+    retained = b"\n".join(path.read_bytes() for path in retained_paths).lower()
+    disclosure_manifest = dict(manifest)
+    disclosure_manifest.pop("sentinel_sha256", None)
+    disclosure_retained = b"\n".join(
+        (
+            json.dumps(disclosure_manifest, sort_keys=True).encode("utf-8")
+            if path == manifest_path
+            else path.read_bytes()
+        )
+        for path in retained_paths
     ).lower()
     reject(
         any(prefix in retained for prefix in (b"p2q_", b"p2a_", b"p2c_")),
         "retained sentinel disclosure",
     )
     reject(
-        b"proxy-authorization:" in retained or b"authorization: bearer" in retained,
+        AUTHORIZATION_VALUE.search(disclosure_retained) is not None,
         "retained authorization disclosure",
     )
     reject(
-        any(
-            marker in retained
+        CREDENTIAL_VALUE.search(disclosure_retained) is not None
+        or CREDENTIAL_BEARING_URL.search(disclosure_retained) is not None
+        or DSN.search(disclosure_retained) is not None
+        or any(
+            marker in disclosure_retained
             for marker in (
-                b"postgresql://",
-                b"redis://",
                 b"http://squid:3128",
                 b"phase2-postgres-only",
                 b"phase2-admin-only",
-                b"fixture:fixture@",
                 b"bearer ",
                 b"basic ",
             )
@@ -308,7 +330,7 @@ def main() -> int:
         "retained credential or connection disclosure",
     )
     reject(
-        re.search(rb"https?://[^\s\"']*\?", retained) is not None,
+        re.search(rb"https?://[^\s\"']*\?", disclosure_retained) is not None,
         "retained URL query disclosure",
     )
     print(
