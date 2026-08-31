@@ -312,8 +312,20 @@ def validate_topology_evidence(evidence: Path) -> None:
             or entry["enable_ipv6"] is not True,
             "network isolation or IPv6 disabled",
         )
+        required_options = GATEWAY_OPTIONS if logical == "app_net" else {}
+        allowed_options = {
+            **required_options,
+            "com.docker.network.enable_ipv4": "true",
+        }
         _reject(
-            entry["options"] != EXPECTED_NETWORK_OPTIONS[logical],
+            any(
+                entry["options"].get(key) != value
+                for key, value in required_options.items()
+            )
+            or any(
+                key not in allowed_options or allowed_options[key] != value
+                for key, value in entry["options"].items()
+            ),
             "unexpected effective network options",
         )
         configs = entry["ipam_config"]

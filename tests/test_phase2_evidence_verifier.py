@@ -317,6 +317,47 @@ def test_verifier_accepts_exact_complete_evidence(tmp_path, monkeypatch):
     assert _verify(monkeypatch, evidence) == 0
 
 
+def test_verifier_accepts_docker_28_without_implicit_enable_ipv4_option(
+    tmp_path, monkeypatch
+):
+    evidence = tmp_path / "evidence"
+    _write_evidence(evidence)
+    networks_path = evidence / "topology-networks.json"
+    document = json.loads(networks_path.read_text("utf-8"))
+    for network in document["networks"]:
+        network["options"].pop("com.docker.network.enable_ipv4", None)
+    networks_path.write_text(json.dumps(document), encoding="utf-8")
+    _rehash(evidence)
+    assert _verify(monkeypatch, evidence) == 0
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("com.docker.network.enable_ipv4", "false"),
+        ("com.docker.network.bridge.gateway_mode_ipv4", "nat"),
+        ("unexpected.network.option", "true"),
+    ],
+)
+def test_verifier_rejects_unsafe_or_unknown_effective_network_option(
+    tmp_path, monkeypatch, name, value
+):
+    evidence = tmp_path / "evidence"
+    _write_evidence(evidence)
+    networks_path = evidence / "topology-networks.json"
+    document = json.loads(networks_path.read_text("utf-8"))
+    app = next(
+        network
+        for network in document["networks"]
+        if network["name"].endswith("app_net")
+    )
+    app["options"][name] = value
+    networks_path.write_text(json.dumps(document), encoding="utf-8")
+    _rehash(evidence)
+    with pytest.raises(ValueError):
+        _verify(monkeypatch, evidence)
+
+
 @pytest.mark.parametrize("mutation", ["missing", "duplicate", "failed", "malformed"])
 def test_verifier_rejects_result_mutations(tmp_path, monkeypatch, mutation):
     evidence = tmp_path / "evidence"
