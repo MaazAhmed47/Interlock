@@ -268,9 +268,9 @@ def _write_evidence(path: Path) -> None:
         "project_name_hash": hashlib.sha256(b"interlock-p2-123456789abc").hexdigest(),
         "test_source_sha256": verifier.test_source_digest(),
         "sentinel_sha256": {
-            "authorization": "c" * 64,
-            "proxy_credential": "d" * 64,
-            "query": "e" * 64,
+            "authorization_header": "c" * 64,
+            "proxy_header": "d" * 64,
+            "url_query": "e" * 64,
         },
         "required_cases": list(REQUIRED_CASES),
         "expected_case_count": len(results),

@@ -1194,8 +1194,13 @@ def main() -> int:
                 name: artifact_hashes[name] for name in TOPOLOGY_FILES
             },
             "sentinel_sha256": {
-                name: sha256_bytes(value.encode("ascii"))
-                for name, value in sorted(sentinels.items())
+                "authorization_header": sha256_bytes(
+                    sentinels["authorization"].encode("ascii")
+                ),
+                "proxy_header": sha256_bytes(
+                    sentinels["proxy_credential"].encode("ascii")
+                ),
+                "url_query": sha256_bytes(sentinels["query"].encode("ascii")),
             },
             "duration_seconds": round(time.time() - started, 3),
         }

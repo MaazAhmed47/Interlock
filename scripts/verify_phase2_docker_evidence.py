@@ -180,7 +180,7 @@ def main() -> int:
     sentinel_hashes = manifest.get("sentinel_sha256")
     reject(
         not isinstance(sentinel_hashes, dict)
-        or set(sentinel_hashes) != {"authorization", "proxy_credential", "query"}
+        or set(sentinel_hashes) != {"authorization_header", "proxy_header", "url_query"}
         or any(
             not re.fullmatch(r"[0-9a-f]{64}", str(value))
             for value in sentinel_hashes.values()
