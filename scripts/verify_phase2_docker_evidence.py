@@ -11,6 +11,19 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+try:
+    from scripts.phase2_topology_evidence import (
+        TOPOLOGY_FILES,
+        source_bundle_sha256,
+        validate_topology_evidence,
+    )
+except ModuleNotFoundError:  # direct script execution
+    from phase2_topology_evidence import (  # type: ignore[no-redef]
+        TOPOLOGY_FILES,
+        source_bundle_sha256,
+        validate_topology_evidence,
+    )
+
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "deploy" / "phase2-docker"
 sys.path.insert(0, str(PROFILE))
@@ -39,23 +52,18 @@ def test_source_digest() -> str:
             "denied_sink.py",
             "dns_server.py",
             "healthcheck.py",
+            "host_gateway_listener.py",
             "invalid-squid.conf",
             "origin.py",
             "phase2_cases.py",
+            "topology_probe.py",
         )
     ] + [
         ROOT / "scripts" / "run_phase2_docker_acceptance.py",
+        ROOT / "scripts" / "phase2_topology_evidence.py",
         Path(__file__).resolve(),
     ]
-    return digest_bytes(
-        b"".join(
-            path.read_bytes()
-            for path in sorted(
-                paths,
-                key=lambda item: item.relative_to(ROOT).as_posix(),
-            )
-        )
-    )
+    return source_bundle_sha256(ROOT, paths)
 
 
 def rendered_compose_digest(source_sha: str, project: str) -> str:
@@ -96,7 +104,7 @@ def main() -> int:
     junit_path = evidence / "junit.xml"
     manifest = json.loads(manifest_path.read_text("utf-8"))
     reject(
-        manifest.get("schema") != "interlock.phase2-docker-evidence.v1",
+        manifest.get("schema") != "interlock.phase2-docker-evidence.v2",
         "wrong evidence schema",
     )
     reject(
@@ -239,6 +247,38 @@ def main() -> int:
             "malformed artifact digest",
         )
         reject(digest(evidence / name) != expected, "artifact digest mismatch")
+
+    topology_hashes = manifest.get("topology_artifact_sha256")
+    reject(not isinstance(topology_hashes, dict), "topology artifact hash map missing")
+    reject(
+        set(topology_hashes) != set(TOPOLOGY_FILES),
+        "topology artifact inventory mismatch",
+    )
+    for name in TOPOLOGY_FILES:
+        reject(
+            topology_hashes.get(name) != artifacts.get(name),
+            "topology artifact digest mismatch",
+        )
+    validate_topology_evidence(evidence)
+    runtime = json.loads(
+        (evidence / "topology-runtime-versions.json").read_text("utf-8")
+    )
+    reject(
+        manifest.get("docker_client_version") != runtime["docker_client"]["version"],
+        "Docker client version evidence mismatch",
+    )
+    reject(
+        manifest.get("docker_server_version") != runtime["docker_server"]["version"],
+        "Docker server version evidence mismatch",
+    )
+    reject(
+        manifest.get("docker_server_os") != runtime["docker_server"]["os"],
+        "Docker server OS evidence mismatch",
+    )
+    reject(
+        manifest.get("compose_version") != runtime["compose"],
+        "Compose version evidence mismatch",
+    )
 
     retained = b"\n".join(
         path.read_bytes() for path in evidence.iterdir() if path.is_file()

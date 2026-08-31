@@ -51,7 +51,12 @@ offline demo. The profile pins
 `ghcr.io/cybozu/squid:7.6.0.1@sha256:b5fff668ddbf5738a779ada37893569e6640d2a2ac384a834095ac443d12d60a`,
 mounts the Squid policy read-only, enables controlled DNS, PostgreSQL, and
 Redis on one internal dual-stack application network, and gives Interlock no
-IPv4 or IPv6 default route. Squid is the only application-side service that
+IPv4 or IPv6 gateway or default route. The application network requires Docker
+Engine 28 or newer and Compose 2.33.1 or newer, and sets both bridge gateway
+modes to `isolated`. The acceptance runner rejects older runtimes, missing
+rendered options, retained IPAM/container/route gateways, or an addressed host
+bridge rather than falling back to ordinary `internal: true` behavior. Squid is
+the only application-side service that
 also joins the synthetic origin and denied-sink networks. No service publishes
 a host port.
 
@@ -61,6 +66,20 @@ three Docker network attachments: the client-facing application network and
 two test-only upstream segments. They represent a two-sided proxy trust
 boundary, but this instrumented profile is not a literal two-interface Squid
 deployment. Interlock still has only the application-network attachment.
+The Compose `x-phase2-boundaries` metadata separates the deployable two-sided
+pattern (`app_net` -> Squid -> an operator-provided upstream network) from the
+`origin_net`, `denied_net`, origin, sink, certificate generator, and acceptance
+services used only by the hermetic suite.
+
+Before cleanup, the runner also uses a uniquely named, short-lived test-only
+host-network inspector to read the Docker bridge address table. It is not a
+Compose service and is never available to Interlock. The retained proof includes
+whitelisted fields from every owned container and network, the attachment map,
+complete application IPv4/IPv6 route and address tables, neighbor tables, the
+host bridge address table, runtime versions, effective gateway modes, Docker
+alias resolution, and every direct HTTPX, urllib, requests, socket, and curl
+gateway attempt. No environment, command, mount, arbitrary label, header, URL,
+DSN, or credential field is retained.
 
 Squid is an explicit non-intercepting forward proxy. The policy contains no
 `ssl_bump`, `https_port`, certificate authority, or TLS key configuration.
@@ -73,7 +92,10 @@ The acceptance runner hashes the source, policy, Compose source and rendered
 configuration, test sources, results, and every retained artifact. Its verifier
 requires every named case exactly once and rejects skipped, xfailed, xpassed,
 failed, errored, malformed, partial, duplicate, stale, or counter-inconsistent
-evidence. Run it only from a clean checkout:
+evidence. It also rejects any missing or malformed topology artifact, absent
+IPv6 proof, non-isolated effective gateway mode, host bridge address, gateway
+route, successful bypass attempt, or inconsistent topology hash. Run it only
+from a clean checkout:
 
 ```bash
 sha="$(git rev-parse HEAD)"

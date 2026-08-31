@@ -15,6 +15,17 @@ x-read-only: &read-only
   tmpfs:
     - /tmp:mode=1777
 
+# The deployable trust boundary is application-side app_net -> Squid -> an
+# operator-provided upstream network. origin_net, denied_net, and their services
+# are hermetic acceptance instrumentation, not a literal production interface.
+x-phase2-boundaries:
+  deployable:
+    application_network: app_net
+    upstream_network: operator-provided
+  acceptance_only:
+    networks: [origin_net, denied_net]
+    services: [acceptance, certgen, denied_sink, origin]
+
 services:
   certgen:
     <<: *interlock-image
@@ -203,6 +214,9 @@ networks:
   app_net:
     internal: true
     enable_ipv6: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+      com.docker.network.bridge.gateway_mode_ipv6: isolated
     ipam:
       config:
         - subnet: 172.31.250.0/24

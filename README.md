@@ -1324,12 +1324,21 @@ In Interlock’s explicit enforced egress profile, enumerated server-side HTTP(S
 The repository also includes a dedicated, hermetic
 `deploy/phase2-docker/compose.yaml` reference profile. It pins Squid 7.6.0.1 by
 digest, enables the Phase 1 URL guard and enforced application profile, and puts
-Interlock on an internal dual-stack network with no IPv4 or IPv6 default route.
+Interlock on an internal dual-stack network whose IPv4 and IPv6 bridge gateway
+modes are both `isolated`, leaving no application gateway or default route. The
+runner requires Docker Engine 28+ and Compose 2.33.1+, verifies the effective
+runtime network and host bridge state, and fails closed when that behavior is
+unavailable.
 Squid is the only application-side service that also joins the separate
 synthetic-origin and denied-sink networks. The
 exact-head CI job retains a hash-bound manifest and rejects missing, duplicate,
 skipped, xfailed, xpassed, failed, errored, malformed, stale, or
-counter-inconsistent case evidence.
+counter-inconsistent case evidence. Its sanitized topology bundle retains
+selected owned container/network inspections, attachment maps, complete
+Interlock IPv4/IPv6 route and address tables, host-bridge addresses, effective
+gateway modes, and every dynamic gateway-bypass result. The synthetic upstream
+segments and short-lived host-namespace inspector are test instrumentation, not
+the literal deployable two-interface boundary.
 
 In the tested Docker Phase 2 profile at the documented source SHA, Squid image digest, policy hash, and Compose configuration, Interlock’s enumerated server-side HTTP(S) paths are forced through a non-intercepting forward proxy. The profile rejects the tested private, metadata, raw-IP, mixed-answer, and rebinding destinations at proxy connection time while preserving end-to-end client TLS verification.
 

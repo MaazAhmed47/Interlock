@@ -13,6 +13,10 @@ WORKFLOW = yaml.safe_load(
     (ROOT / ".github" / "workflows" / "tests.yml").read_text("utf-8")
 )
 SQUID_IMAGE = "ghcr.io/cybozu/squid:7.6.0.1@sha256:b5fff668ddbf5738a779ada37893569e6640d2a2ac384a834095ac443d12d60a"
+ISOLATED_GATEWAY_OPTIONS = {
+    "com.docker.network.bridge.gateway_mode_ipv4": "isolated",
+    "com.docker.network.bridge.gateway_mode_ipv6": "isolated",
+}
 
 
 def test_phase2_topology_is_internal_dual_stack_and_has_no_published_ports():
@@ -20,8 +24,18 @@ def test_phase2_topology_is_internal_dual_stack_and_has_no_published_ports():
     assert set(networks) == {"app_net", "origin_net", "denied_net"}
     assert all(network["internal"] is True for network in networks.values())
     assert all(network["enable_ipv6"] is True for network in networks.values())
+    assert networks["app_net"]["driver_opts"] == ISOLATED_GATEWAY_OPTIONS
     for service in COMPOSE["services"].values():
         assert "ports" not in service
+        assert "extra_hosts" not in service
+        assert service.get("network_mode") != "host"
+
+
+def test_only_application_network_requires_isolated_ipv4_and_ipv6_gateway_mode():
+    networks = COMPOSE["networks"]
+    assert networks["app_net"]["driver_opts"] == ISOLATED_GATEWAY_OPTIONS
+    assert "driver_opts" not in networks["origin_net"]
+    assert "driver_opts" not in networks["denied_net"]
 
 
 def test_only_squid_bridges_application_to_origin_and_denied_networks():
@@ -39,6 +53,18 @@ def test_only_squid_bridges_application_to_origin_and_denied_networks():
     assert set(services["origin"]["networks"]) == {"origin_net"}
     assert set(services["denied_sink"]["networks"]) == {"denied_net"}
     assert services["certgen"]["network_mode"] == "none"
+
+
+def test_compose_separates_deployable_boundary_from_acceptance_instrumentation():
+    boundaries = COMPOSE["x-phase2-boundaries"]
+    assert boundaries["deployable"] == {
+        "application_network": "app_net",
+        "upstream_network": "operator-provided",
+    }
+    assert boundaries["acceptance_only"] == {
+        "networks": ["origin_net", "denied_net"],
+        "services": ["acceptance", "certgen", "denied_sink", "origin"],
+    }
 
 
 def test_enforced_application_profile_is_explicit_and_ambient_values_are_hostile():
