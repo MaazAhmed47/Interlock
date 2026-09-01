@@ -143,6 +143,27 @@ def test_root_moving_mcp_integration_is_absent():
     assert not (ROOT / ".mcp.json").exists()
 
 
+def test_cto_control_contract_and_evaluation_preserve_core_boundaries():
+    contract = (ROOT / "docs" / "control-contract.md").read_text(encoding="utf-8")
+    evaluation = (ROOT / "docs" / "design-partner-evaluation.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "For supported, gateway-mediated calls" in contract
+    assert "per-`(server_id, tool_name)`" in contract
+    assert "not externally signed or independently anchored" in contract
+    assert "does not undo the first side effect" in contract
+    assert "does not claim to:" in contract
+    assert "`held`, `detected only`, `not detected`, `inconclusive`, and" in evaluation
+    assert "production certification" in evaluation
+
+    enterprise = (ROOT / "docs" / "enterprise-evaluation.md").read_text(
+        encoding="utf-8"
+    )
+    assert "[Control Contract](control-contract.md)" in enterprise
+    assert "[Design-Partner Evaluation](design-partner-evaluation.md)" in enterprise
+
+
 def test_root_compose_gateway_publishes_on_loopback_only():
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     assert compose["services"]["interlock"]["ports"] == ["127.0.0.1:8001:8001"]

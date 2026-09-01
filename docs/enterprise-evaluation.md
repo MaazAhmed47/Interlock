@@ -2,6 +2,13 @@
 
 This is the buyer-facing checklist for evaluating Interlock as an MCP runtime trust layer for AI agents.
 
+For the canonical statement of what Interlock detects, holds, observes, and
+does not claim, read the [Control Contract](control-contract.md) first. For the
+default fixed-scope pilot process, use the [Design-Partner Evaluation](design-partner-evaluation.md).
+This guide describes supporting controls to evaluate within that boundary; it
+does not expand the Control Contract or turn a limited evaluation into a
+production, audit, or compliance claim.
+
 ---
 
 ## Why A CTO Takes A Meeting
