@@ -2,22 +2,17 @@
 Tests for MCP tool drift severity classification.
 Run: python tests/test_mcp_drift.py
 """
-
 import sys
 from pathlib import Path
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.mcp_drift import classify_tool_drift
 
+
 BASE_TOOL = {
     "name": "read_file",
     "description": "Read a file from the workspace.",
-    "annotations": {
-        "readOnlyHint": True,
-        "destructiveHint": False,
-        "openWorldHint": False,
-    },
+    "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     "inputSchema": {
         "type": "object",
         "properties": {"path": {"type": "string"}},
@@ -158,9 +153,7 @@ for effect in ("execute", "delete", "share", "export"):
     new_metadata = {
         **BASE_METADATA,
         "effects": ["read", effect],
-        "side_effect": (
-            "mutating" if effect not in ("delete", "execute") else "destructive"
-        ),
+        "side_effect": "mutating" if effect not in ("delete", "execute") else "destructive",
     }
     drift = classify(BASE_TOOL, new_metadata)
     assert drift["severity"] == "critical", effect
