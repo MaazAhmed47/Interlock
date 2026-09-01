@@ -174,3 +174,29 @@ sensitive-resource detection remains a separate path without destination
 novelty. The corpus keeps uncorroborated FN-5U description-level exfiltration as
 a distinct known miss; these results do not establish detection of arbitrary
 semantic exfiltration wording.
+
+The detector also gives narrow structural treatment to four stable legacy
+cases whose IDs retain the `DQV1-GAP-` prefix for corpus history:
+
+- `DQV1-GAP-FN7` denies only when a newly added **input** field has one of the
+  exact authority-expanding names `on_behalf_of`, `impersonate_user`,
+  `impersonated_user_id`, or `delegated_user_id`. Related substrings, prose,
+  and output fields do not satisfy this rule. Hyphens are normalized to
+  underscores before the exact comparison.
+- `DQV1-GAP-FP2` keeps a metadata-verification downgrade visible at moderate
+  severity without letting that downgrade independently deny. Any separate
+  high or critical capability finding still determines the final action.
+- `DQV1-GAP-HM1` treats a newly added required boolean named exactly
+  `confirmation` as a minor safety-positive gate. A non-boolean field, a
+  near-match, a sensitive field, or another new required field does not receive
+  this treatment.
+- `DQV1-GAP-HM3` monitors an ordinary existing optional field becoming
+  required. Security-sensitive fields and authority-expanding fields retain
+  high severity, and removal of a required field remains high.
+
+The unresolved surface-detector cases are still `DQV1-GAP-FN1`,
+`DQV1-GAP-FN5-UNCORROBORATED`, and `DQV1-GAP-FN10`. An unchanged manifest
+cannot expose undeclared server-side behavior, and attacker-controlled
+description wording is not converted into high-confidence exfiltration by a
+broad synonym list. Synthetic corpus results remain corpus-bound evidence, not
+production detection, precision, recall, or false-positive rates.

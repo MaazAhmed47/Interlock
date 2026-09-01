@@ -305,12 +305,6 @@ def test_fn5_uncorroborated_description_exfiltration_remains_known_miss():
     assert result["action"] == "deny", result
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="FINDING FN-7: indirect auth-scope "
-    "widening via a new on_behalf_of param reads as a plain "
-    "optional field addition.",
-)
 def test_fn7_indirect_auth_param_should_be_high():
     """Adds an optional 'on_behalf_of' param — a delegation/impersonation
     surface. CORRECT: high/deny (auth-scope change), not moderate."""
@@ -328,6 +322,78 @@ def test_fn7_indirect_auth_param_should_be_high():
     d = drift(BASE_TOOL, curr, BASE_META, BASE_META)
     assert d["severity"] == "high", d
     assert d["action"] == "deny", d
+    assert "authority_parameter_added" in d["types"], d
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "impersonate_user",
+        "impersonated_user_id",
+        "delegated_user_id",
+        "on-behalf-of",
+    ],
+)
+def test_exact_authority_expanding_parameter_names_are_high(field_name):
+    """The authority rule is a closed set of exact input-parameter names."""
+    curr = {
+        **BASE_TOOL,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                field_name: {"type": "string"},
+            },
+            "required": ["path"],
+        },
+    }
+    d = drift(BASE_TOOL, curr, BASE_META, BASE_META)
+    assert d["severity"] == "high", d
+    assert d["action"] == "deny", d
+    assert "authority_parameter_added" in d["types"], d
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "confirmation_format",
+        "format_for_display",
+        "before_cursor",
+        "delegation_note",
+        "impersonation_reason",
+    ],
+)
+def test_authority_parameter_near_misses_remain_minor(field_name):
+    """Substrings and related prose are not authority-expansion semantics."""
+    curr = {
+        **BASE_TOOL,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                field_name: {"type": "string"},
+            },
+            "required": ["path"],
+        },
+    }
+    d = drift(BASE_TOOL, curr, BASE_META, BASE_META)
+    assert d["severity"] == "minor", d
+    assert d["action"] == "monitor", d
+    assert "authority_parameter_added" not in d["types"], d
+
+
+def test_authority_like_output_field_does_not_expand_calling_authority():
+    curr = {
+        **BASE_TOOL,
+        "outputSchema": {
+            "type": "object",
+            "properties": {"on_behalf_of": {"type": "string"}},
+        },
+    }
+    d = drift(BASE_TOOL, curr, BASE_META, BASE_META)
+    assert d["severity"] == "minor", d
+    assert d["action"] == "monitor", d
+    assert "authority_parameter_added" not in d["types"], d
 
 
 @pytest.mark.xfail(
@@ -370,11 +436,6 @@ def test_fn10_heuristic_verb_gap_should_be_high():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="FINDING FP-2: losing an optional "
-    "annotation hint downgrades verification_level and denies.",
-)
 def test_fp2_verification_hint_loss_should_not_deny():
     """A re-discovery omits the optional MCP annotation (version bump / network
     blip), so verification_level falls mcp_annotations -> heuristic. No
@@ -382,7 +443,23 @@ def test_fp2_verification_hint_loss_should_not_deny():
     prev_meta = with_meta(verification_level="mcp_annotations")
     curr_meta = with_meta(verification_level="heuristic")
     d = drift(BASE_TOOL, BASE_TOOL, prev_meta, curr_meta)
-    assert d["action"] != "deny", d
+    assert d["severity"] == "moderate", d
+    assert d["action"] == "monitor", d
+    assert "metadata_downgraded" in d["types"], d
+
+
+def test_metadata_downgrade_cannot_suppress_declared_dangerous_drift():
+    prev_meta = with_meta(verification_level="mcp_annotations")
+    curr_meta = with_meta(
+        effects=["read", "delete"],
+        side_effect="destructive",
+        verification_level="heuristic",
+    )
+    d = drift(BASE_TOOL, BASE_TOOL, prev_meta, curr_meta)
+    assert d["severity"] == "critical", d
+    assert d["action"] == "quarantine", d
+    assert "effect_escalated" in d["types"], d
+    assert "metadata_downgraded" in d["types"], d
 
 
 def test_fp3_description_keyword_bleed_does_not_drive_deny():
@@ -521,13 +598,6 @@ def test_fp5_required_field_rename_is_monitor_not_deny():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="FINDING HM-1: adding a REQUIRED safety "
-    "field (confirmation) is treated as high/deny like any "
-    "required-field addition. POSITION: a safety-positive change "
-    "must not be blocked; minor/monitor is the right call.",
-)
 def test_hm1_added_required_safety_field_should_not_deny():
     """Adds a required 'confirmation' boolean — the tool getting SAFER. It is a
     breaking input-contract change (so not 'none'), but blocking it is wrong.
@@ -544,7 +614,63 @@ def test_hm1_added_required_safety_field_should_not_deny():
         },
     }
     d = drift(BASE_TOOL, curr, BASE_META, BASE_META)
-    assert d["action"] != "deny", d
+    assert d["severity"] == "minor", d
+    assert d["action"] == "monitor", d
+    assert "required_field_added" in d["types"], d
+
+
+def test_new_required_non_safety_field_still_denies():
+    curr = {
+        **BASE_TOOL,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "execution_mode": {"type": "string"},
+            },
+            "required": ["path", "execution_mode"],
+        },
+    }
+    d = drift(BASE_TOOL, curr, BASE_META, BASE_META)
+    assert d["severity"] == "high", d
+    assert d["action"] == "deny", d
+    assert "required_field_added" in d["types"], d
+
+
+def test_confirmation_named_sensitive_required_field_still_denies():
+    curr = {
+        **BASE_TOOL,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "confirmation_token": {"type": "boolean"},
+            },
+            "required": ["path", "confirmation_token"],
+        },
+    }
+    d = drift(BASE_TOOL, curr, BASE_META, BASE_META)
+    assert d["severity"] == "high", d
+    assert d["action"] == "deny", d
+    assert "sensitive_field_added" in d["types"], d
+
+
+def test_non_boolean_confirmation_field_still_denies():
+    curr = {
+        **BASE_TOOL,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "confirmation": {"type": "string"},
+            },
+            "required": ["path", "confirmation"],
+        },
+    }
+    d = drift(BASE_TOOL, curr, BASE_META, BASE_META)
+    assert d["severity"] == "high", d
+    assert d["action"] == "deny", d
+    assert "required_field_added" in d["types"], d
 
 
 def test_hm2_cosmetic_reword_should_stay_minor():
@@ -562,12 +688,6 @@ def test_hm2_cosmetic_reword_should_stay_minor():
     assert desc["severity"] == "minor", d
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="FINDING HM-3: tightening an existing "
-    "optional field to required is scored high/deny. POSITION: "
-    "a contract tightening is monitor-worthy, not block-worthy.",
-)
 def test_hm3_optional_to_required_should_not_deny():
     """An existing optional 'reason' field becomes required. POSITION: contract
     tightening — monitor, not deny."""
@@ -588,7 +708,38 @@ def test_hm3_optional_to_required_should_not_deny():
         },
     }
     d = drift(prev, curr, BASE_META, BASE_META)
-    assert d["action"] != "deny", d
+    assert d["severity"] == "moderate", d
+    assert d["action"] == "monitor", d
+    assert "required_field_added" in d["types"], d
+
+
+def test_security_sensitive_optional_to_required_still_denies():
+    prev = {
+        **BASE_TOOL,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "approval_token": {"type": "string"},
+            },
+            "required": ["path"],
+        },
+    }
+    curr = {
+        **BASE_TOOL,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "approval_token": {"type": "string"},
+            },
+            "required": ["path", "approval_token"],
+        },
+    }
+    d = drift(prev, curr, BASE_META, BASE_META)
+    assert d["severity"] == "high", d
+    assert d["action"] == "deny", d
+    assert "required_field_added" in d["types"], d
 
 
 def test_hm4_type_tightening_is_monitor_acceptable():

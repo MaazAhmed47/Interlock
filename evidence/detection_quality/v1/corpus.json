@@ -212,7 +212,7 @@
     },
     {
       "case_id": "DQV1-GAP-FN7",
-      "category": "delegation_parameter_blind_spot",
+      "category": "resolved_delegation_parameter_drift",
       "detector_path": "surface_drift",
       "baseline": {
         "tool": {"name": "read_document", "description": "Read a document from the internal workspace and return its text.", "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
@@ -223,11 +223,11 @@
         "metadata": {"effects": ["read"], "side_effect": "read_only", "data_classes": ["user_content"], "externality": "internal", "identity_mode": "authenticated_user", "required_scopes": ["files.read"], "verification_level": "mcp_annotations", "confidence": 0.75, "warnings": []}
       },
       "expected_ground_truth_label": "drift",
-      "expected_interlock_decision": "monitor",
-      "rationale": "An optional delegation or impersonation parameter is currently treated as an ordinary optional field addition.",
+      "expected_interlock_decision": "deny",
+      "rationale": "The stable legacy case now denies because the exact on_behalf_of input parameter is in the detector's closed authority-expansion set; related substrings and unlisted names remain ordinary schema changes.",
       "source_ref": "tests/test_drift_adversarial.py::test_fn7_indirect_auth_param_should_be_high",
       "source_url": "https://github.com/MaazAhmed47/Interlock/blob/main/tests/test_drift_adversarial.py",
-      "known_blind_spot": true,
+      "known_blind_spot": false,
       "inconclusive_reason": ""
     },
     {
@@ -246,7 +246,7 @@
     },
     {
       "case_id": "DQV1-GAP-FP2",
-      "category": "verification_hint_false_positive",
+      "category": "resolved_verification_hint_evolution",
       "detector_path": "surface_drift",
       "baseline": {
         "tool": {"name": "read_document", "description": "Read a document from the internal workspace and return its text.", "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
@@ -257,16 +257,16 @@
         "metadata": {"effects": ["read"], "side_effect": "read_only", "data_classes": ["user_content"], "externality": "internal", "identity_mode": "authenticated_user", "required_scopes": ["files.read"], "verification_level": "heuristic", "confidence": 0.55, "warnings": []}
       },
       "expected_ground_truth_label": "no_drift",
-      "expected_interlock_decision": "deny",
-      "rationale": "Losing an optional annotation hint changes no capability, but the verification-level downgrade currently denies.",
+      "expected_interlock_decision": "monitor",
+      "rationale": "The stable legacy case now monitors the verification-level downgrade without letting it independently block; an independent high or critical drift finding still determines enforcement.",
       "source_ref": "tests/test_drift_adversarial.py::test_fp2_verification_hint_loss_should_not_deny",
       "source_url": "https://github.com/MaazAhmed47/Interlock/blob/main/tests/test_drift_adversarial.py",
-      "known_blind_spot": true,
+      "known_blind_spot": false,
       "inconclusive_reason": ""
     },
     {
       "case_id": "DQV1-GAP-HM1",
-      "category": "safety_field_false_positive",
+      "category": "resolved_safety_field_evolution",
       "detector_path": "surface_drift",
       "baseline": {
         "tool": {"name": "read_document", "description": "Read a document from the internal workspace and return its text.", "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
@@ -277,16 +277,16 @@
         "metadata": {"effects": ["read"], "side_effect": "read_only", "data_classes": ["user_content"], "externality": "internal", "identity_mode": "authenticated_user", "required_scopes": ["files.read"], "verification_level": "mcp_annotations", "confidence": 0.75, "warnings": []}
       },
       "expected_ground_truth_label": "no_drift",
-      "expected_interlock_decision": "deny",
-      "rationale": "Adding a required confirmation control is safety-positive, but all required-field additions currently deny.",
+      "expected_interlock_decision": "monitor",
+      "rationale": "The stable legacy case now monitors a newly added required boolean named confirmation as a narrow safety-positive gate; other required additions retain their risk-based severity.",
       "source_ref": "tests/test_drift_adversarial.py::test_hm1_added_required_safety_field_should_not_deny",
       "source_url": "https://github.com/MaazAhmed47/Interlock/blob/main/tests/test_drift_adversarial.py",
-      "known_blind_spot": true,
+      "known_blind_spot": false,
       "inconclusive_reason": ""
     },
     {
       "case_id": "DQV1-GAP-HM3",
-      "category": "contract_tightening_false_positive",
+      "category": "resolved_contract_tightening",
       "detector_path": "surface_drift",
       "baseline": {
         "tool": {"name": "read_document", "description": "Read a document from the internal workspace and return its text.", "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "reason": {"type": "string"}}, "required": ["path"]}},
@@ -297,11 +297,11 @@
         "metadata": {"effects": ["read"], "side_effect": "read_only", "data_classes": ["user_content"], "externality": "internal", "identity_mode": "authenticated_user", "required_scopes": ["files.read"], "verification_level": "mcp_annotations", "confidence": 0.75, "warnings": []}
       },
       "expected_ground_truth_label": "no_drift",
-      "expected_interlock_decision": "deny",
-      "rationale": "Tightening an existing optional field to required is monitor-worthy, but currently denies as high severity.",
+      "expected_interlock_decision": "monitor",
+      "rationale": "The stable legacy case now monitors an ordinary existing optional field becoming required; security-sensitive fields and newly introduced non-safety required fields retain denial behavior.",
       "source_ref": "tests/test_drift_adversarial.py::test_hm3_optional_to_required_should_not_deny",
       "source_url": "https://github.com/MaazAhmed47/Interlock/blob/main/tests/test_drift_adversarial.py",
-      "known_blind_spot": true,
+      "known_blind_spot": false,
       "inconclusive_reason": ""
     }
   ]

@@ -78,6 +78,7 @@ _TYPE_TO_CLASSIFICATION = {
     "description_exfiltration": "data-exposure",
     "scope_escalated": "auth-scope",
     "identity_mode_escalated": "auth-scope",
+    "authority_parameter_added": "auth-scope",
     "effective_permission_expansion": "auth-scope",
     "behavioral_scope_drift": "auth-scope",
     "effective_permission_contraction": "auth-scope",

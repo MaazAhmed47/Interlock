@@ -2,17 +2,22 @@
 Tests for MCP tool drift severity classification.
 Run: python tests/test_mcp_drift.py
 """
+
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.mcp_drift import classify_tool_drift
 
-
 BASE_TOOL = {
     "name": "read_file",
     "description": "Read a file from the workspace.",
-    "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
+    "annotations": {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "openWorldHint": False,
+    },
     "inputSchema": {
         "type": "object",
         "properties": {"path": {"type": "string"}},
@@ -153,7 +158,9 @@ for effect in ("execute", "delete", "share", "export"):
     new_metadata = {
         **BASE_METADATA,
         "effects": ["read", effect],
-        "side_effect": "mutating" if effect not in ("delete", "execute") else "destructive",
+        "side_effect": (
+            "mutating" if effect not in ("delete", "execute") else "destructive"
+        ),
     }
     drift = classify(BASE_TOOL, new_metadata)
     assert drift["severity"] == "critical", effect
@@ -161,14 +168,14 @@ for effect in ("execute", "delete", "share", "export"):
     assert "effect_escalated" in drift["types"]
 print("  OK")
 
-print("Test 10: metadata source downgrade is high risk ...")
+print("Test 10: metadata source downgrade is visible but monitored ...")
 new_metadata = {
     **BASE_METADATA,
     "verification_level": "heuristic",
 }
 drift = classify(BASE_TOOL, new_metadata)
-assert drift["severity"] == "high"
-assert drift["action"] == "deny"
+assert drift["severity"] == "moderate"
+assert drift["action"] == "monitor"
 assert "metadata_downgraded" in drift["types"]
 print("  OK")
 
@@ -244,7 +251,7 @@ assert drift["action"] == "deny"
 assert "constraint_relaxed" in drift["types"]
 print("  OK")
 
-print("Test 15: nested required and type changes are detected ...")
+print("Test 15: nested contract tightening and type changes are monitored ...")
 prev_tool = {
     **BASE_TOOL,
     "inputSchema": {
@@ -272,8 +279,8 @@ new_tool = {
     },
 }
 drift = classify_tool_drift(prev_tool, new_tool, BASE_METADATA, BASE_METADATA)
-assert drift["severity"] == "high"
-assert drift["action"] == "deny"
+assert drift["severity"] == "moderate"
+assert drift["action"] == "monitor"
 assert "param_type_changed" in drift["types"]
 assert "required_field_added" in drift["types"]
 print("  OK")

@@ -47,14 +47,23 @@ The v1 corpus deliberately retains these unresolved cases:
 | --- | --- | --- |
 | `DQV1-GAP-FN1` | Undeclared server-side behavior is allowed. | An unchanged manifest and stored metadata do not prove behavior is safe. |
 | `DQV1-GAP-FN5-UNCORROBORATED` | Description-level forwarding language is monitored. | Attacker-controlled wording without trusted data-class corroboration is not treated as proven exfiltration. |
-| `DQV1-GAP-FN7` | Delegation parameter addition is monitored. | An optional impersonation-like parameter is not yet elevated as high-risk drift. |
 | `DQV1-GAP-FN10` | Remote-sync wording is monitored. | The current heuristic does not cover every semantic synonym for export. |
-| `DQV1-GAP-FP2` | Verification-hint loss is denied. | The current policy can over-block an optional annotation downgrade. |
-| `DQV1-GAP-HM1` | A required confirmation field is denied. | A safety-positive schema change can currently be treated as high risk. |
-| `DQV1-GAP-HM3` | Optional-to-required tightening is denied. | A contract-tightening change can currently be more disruptive than its security effect warrants. |
 
 Those cases are not footnotes. They are the conditions a serious evaluation
 should test against the customer's own accepted operational risk.
+
+Four stable corpus cases retain their original `DQV1-GAP-` IDs for historical
+continuity but are no longer unresolved blind spots:
+
+| Case | Current outcome | Narrow boundary |
+| --- | --- | --- |
+| `DQV1-GAP-FN7` | Exact authority-expanding input parameter additions deny. | The rule is a closed set of four normalized delegation/impersonation names, not a substring or description heuristic; hyphens normalize to underscores. |
+| `DQV1-GAP-FP2` | Verification-hint loss is monitored. | The downgrade remains visible; independent dangerous drift still denies or quarantines. |
+| `DQV1-GAP-HM1` | A newly added, required, exactly named boolean confirmation gate is monitored. | Near-matches, non-booleans, sensitive fields, and other new required fields are not treated as safety-positive. |
+| `DQV1-GAP-HM3` | An ordinary existing optional field becoming required is monitored. | Security-sensitive or authority-expanding fields retain high severity, and removed required gates still deny. |
+
+These outcomes do not solve the remaining behavior or language limitations and
+do not turn the corpus into a production effectiveness measure.
 
 ## How To Use This In A Pilot
 
