@@ -164,6 +164,45 @@ def test_cto_control_contract_and_evaluation_preserve_core_boundaries():
     assert "[Design-Partner Evaluation](design-partner-evaluation.md)" in enterprise
 
 
+def test_control_effectiveness_map_keeps_evidence_classes_and_known_gaps_distinct():
+    evidence = (ROOT / "docs" / "control-effectiveness-evidence.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "not as a combined product benchmark" in evidence
+    assert "not a production\nfalse-positive rate" in evidence
+    assert "Only later mediated calls to that same tool can be held" in evidence
+    assert "cannot undo the first external side effect" in evidence
+    assert "DQV1-GAP-FN1" in evidence
+    assert "DQV1-GAP-FP2" in evidence
+    assert (
+        "not Kubernetes, cloud, customer-network, universal SSRF, or universal DNS-rebinding proof"
+        in evidence
+    )
+    assert (
+        "`held`, `detected only`, `not detected`,\n  `inconclusive`, or `out of scope`"
+        in evidence
+    )
+
+    contract = (ROOT / "docs" / "control-contract.md").read_text(encoding="utf-8")
+    enterprise = (ROOT / "docs" / "enterprise-evaluation.md").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "[Control Effectiveness Evidence](control-effectiveness-evidence.md)"
+        in contract
+    )
+    assert (
+        "[Control Effectiveness Evidence](control-effectiveness-evidence.md)"
+        in enterprise
+    )
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert (
+        "[Control Effectiveness Evidence](docs/control-effectiveness-evidence.md)"
+        in readme
+    )
+
+
 def test_root_compose_gateway_publishes_on_loopback_only():
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     assert compose["services"]["interlock"]["ports"] == ["127.0.0.1:8001:8001"]

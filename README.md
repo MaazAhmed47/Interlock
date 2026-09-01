@@ -22,7 +22,7 @@ Current source metadata is `0.2.0-alpha.1`. This identifies the source tree; it 
 - **CTO / design partner:** [Control Contract](docs/control-contract.md) · [30-day evaluation](docs/design-partner-evaluation.md)
 - **Engineer:** [How a request flows](#how-a-request-flows) · [Architecture](#architecture)
 - **Operator:** [Install](INSTALL.md) · [Deployment state](#deployment-state)
-- **Proof and evidence:** [Behavioral drift proof](#local-behavioral-drift-proof) · [Detection Quality Evidence](docs/detection-quality-evidence.md)
+- **Proof and evidence:** [Control Effectiveness Evidence](docs/control-effectiveness-evidence.md) · [Behavioral drift proof](#local-behavioral-drift-proof) · [Detection Quality Evidence](docs/detection-quality-evidence.md)
 
 ## Run the offline proof
 

@@ -111,5 +111,7 @@ An operator using Interlock remains responsible for:
 Start with the [offline evaluator quickstart](evaluator-quickstart.md). For a
 real team, use the scoped [design-partner evaluation](design-partner-evaluation.md)
 and test only the server, transport, tool set, deployment route, and attack
-cases agreed in writing. Detection-quality results are corpus-bound synthetic
-evidence, not production rates; see [Detection Quality Evidence](detection-quality-evidence.md).
+cases agreed in writing. The [Control Effectiveness Evidence](control-effectiveness-evidence.md)
+map distinguishes in-path holds, post-call observations, and corpus-bound
+synthetic results. Detection-quality results are not production rates; see
+[Detection Quality Evidence](detection-quality-evidence.md).
