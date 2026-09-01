@@ -1,0 +1,242 @@
+name: interlock-phase2-reference
+
+x-interlock-image: &interlock-image
+  image: interlock-phase2-reference:${INTERLOCK_SOURCE_SHA:?set INTERLOCK_SOURCE_SHA}
+  build:
+    context: ../..
+    dockerfile: deploy/phase2-docker/Dockerfile
+
+x-read-only: &read-only
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:mode=1777
+
+# The deployable trust boundary is application-side app_net -> Squid -> an
+# operator-provided upstream network. origin_net, denied_net, and their services
+# are hermetic acceptance instrumentation, not a literal production interface.
+x-phase2-boundaries:
+  deployable:
+    application_network: app_net
+    upstream_network: operator-provided
+  acceptance_only:
+    networks: [origin_net, denied_net]
+    services: [acceptance, certgen, denied_sink, origin]
+
+services:
+  certgen:
+    <<: *interlock-image
+    user: "0:0"
+    command: ["python", "/app/deploy/phase2-docker/certgen.py", "/certs"]
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - phase2_certs:/certs
+    network_mode: none
+    restart: "no"
+
+  dns:
+    <<: [*interlock-image, *read-only]
+    command: ["python", "/app/deploy/phase2-docker/dns_server.py"]
+    networks:
+      app_net:
+        ipv4_address: 172.31.250.53
+        ipv6_address: fd00:1:2:3::53
+    healthcheck:
+      test: ["CMD", "python", "/app/deploy/phase2-docker/healthcheck.py", "dns"]
+      interval: 2s
+      timeout: 1s
+      retries: 15
+
+  postgres:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    environment:
+      POSTGRES_DB: interlock
+      POSTGRES_USER: interlock
+      POSTGRES_PASSWORD: phase2-postgres-only
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run/postgresql:uid=999,gid=999,mode=0775
+    volumes:
+      - phase2_postgres:/var/lib/postgresql/data
+    networks:
+      app_net:
+        ipv4_address: 172.31.250.20
+        ipv6_address: fd00:1:2:3::20
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U interlock -d interlock"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  redis:
+    image: redis:7.4.2-alpine@sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - phase2_redis:/data
+    networks:
+      app_net:
+        ipv4_address: 172.31.250.21
+        ipv6_address: fd00:1:2:3::21
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  squid:
+    image: ghcr.io/cybozu/squid:7.6.0.1@sha256:b5fff668ddbf5738a779ada37893569e6640d2a2ac384a834095ac443d12d60a
+    command: ["-f", "/etc/squid/squid.conf", "-NYCd1"]
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /run:mode=1777
+      - /tmp:mode=1777
+      - /var/spool/squid:mode=1777
+      - /var/log/squid:mode=1777
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+      - ./allowed-domains.txt:/etc/squid/allowed-domains.txt:ro
+      - ./invalid-squid.conf:/etc/squid/invalid-squid.conf:ro
+    depends_on:
+      dns:
+        condition: service_healthy
+    networks:
+      app_net:
+        ipv4_address: 172.31.250.2
+        ipv6_address: fd00:1:2:3::2
+      origin_net:
+        ipv4_address: 93.184.216.2
+        ipv6_address: 2606:4700:4700::2
+      denied_net:
+        ipv4_address: 10.89.0.2
+        ipv6_address: fd00:dead::2
+
+  origin:
+    <<: [*interlock-image, *read-only]
+    command: ["python", "/app/deploy/phase2-docker/origin.py"]
+    depends_on:
+      certgen:
+        condition: service_completed_successfully
+    volumes:
+      - phase2_certs:/certs:ro
+    networks:
+      origin_net:
+        ipv4_address: 93.184.216.10
+        ipv6_address: 2606:4700:4700::10
+    healthcheck:
+      test: ["CMD", "python", "/app/deploy/phase2-docker/healthcheck.py", "origin"]
+      interval: 2s
+      timeout: 1s
+      retries: 15
+
+  denied_sink:
+    <<: [*interlock-image, *read-only]
+    command: ["python", "/app/deploy/phase2-docker/denied_sink.py"]
+    networks:
+      denied_net:
+        ipv4_address: 10.89.0.10
+        ipv6_address: fd00:dead::10
+
+  interlock:
+    <<: [*interlock-image, *read-only]
+    environment: &enforced-environment
+      INTERLOCK_EGRESS_PROFILE: enforced
+      INTERLOCK_OUTBOUND_HTTP_PROXY: http://squid:3128
+      INTERLOCK_PROTECT_OUTBOUND_URLS: "true"
+      DATABASE_URL: postgresql://interlock:phase2-postgres-only@postgres:5432/interlock
+      REDIS_URL: redis://redis:6379/0
+      ADMIN_TOKEN: phase2-admin-only
+      FIREWALL_DB_PATH: /tmp/unused-phase2.db
+      MCP_REGISTRY_ALLOWED_HOST_SUFFIXES: .phase2.test
+      HTTP_PROXY: http://denied-sink.phase2.test:8443
+      HTTPS_PROXY: http://denied-sink.phase2.test:8443
+      ALL_PROXY: http://denied-sink.phase2.test:8443
+      NO_PROXY: "*"
+      http_proxy: http://denied-sink.phase2.test:8443
+      https_proxy: http://denied-sink.phase2.test:8443
+      all_proxy: http://denied-sink.phase2.test:8443
+      no_proxy: "*"
+    dns:
+      - 172.31.250.53
+    depends_on:
+      squid:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      app_net:
+        ipv4_address: 172.31.250.10
+        ipv6_address: fd00:1:2:3::10
+    healthcheck:
+      test: ["CMD", "python", "/app/deploy/phase2-docker/healthcheck.py", "interlock"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+
+  acceptance:
+    <<: [*interlock-image, *read-only]
+    command: ["sleep", "infinity"]
+    environment:
+      <<: *enforced-environment
+      PHASE2_CA_FILE: /certs/ca.pem
+    dns:
+      - 172.31.250.53
+    depends_on:
+      interlock:
+        condition: service_healthy
+      origin:
+        condition: service_healthy
+      denied_sink:
+        condition: service_started
+    volumes:
+      - phase2_certs:/certs:ro
+    networks:
+      app_net:
+        ipv4_address: 172.31.250.11
+        ipv6_address: fd00:1:2:3::11
+
+networks:
+  app_net:
+    internal: true
+    enable_ipv6: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+      com.docker.network.bridge.gateway_mode_ipv6: isolated
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
+        - subnet: fd00:1:2:3::/64
+  origin_net:
+    internal: true
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 93.184.216.0/24
+        - subnet: 2606:4700:4700::/64
+  denied_net:
+    internal: true
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 10.89.0.0/24
+        - subnet: fd00:dead::/64
+
+volumes:
+  phase2_certs:
+  phase2_postgres:
+  phase2_redis:

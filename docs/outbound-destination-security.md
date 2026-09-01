@@ -44,6 +44,86 @@ failure has no direct fallback.
 
 In Interlock’s explicit enforced egress profile, enumerated server-side HTTP(S) clients are configured to use a required forward proxy, ignore ambient proxy environment variables, and disable automatic redirects. Connection-time destination enforcement still requires the separately validated proxy and deployment-level direct-egress denial.
 
+## Tested Docker Phase 2 reference profile
+
+`deploy/phase2-docker/compose.yaml` is separate from normal development and the
+offline demo. The profile pins
+`ghcr.io/cybozu/squid:7.6.0.1@sha256:b5fff668ddbf5738a779ada37893569e6640d2a2ac384a834095ac443d12d60a`,
+mounts the Squid policy read-only, enables controlled DNS, PostgreSQL, and
+Redis on one internal dual-stack application network, and gives Interlock no
+IPv4 or IPv6 gateway or default route. The application network requires Docker
+Engine 28 or newer and Compose 2.33.1 or newer, and sets both bridge gateway
+modes to `isolated`. The acceptance runner rejects older runtimes, missing
+rendered options, retained IPAM/container/route gateways, or an addressed host
+bridge rather than falling back to ordinary `internal: true` behavior. Squid is
+the only application-side service that
+also joins the synthetic origin and denied-sink networks. No service publishes
+a host port.
+
+The lab keeps synthetic public-origin and private denied-sink segments separate
+so an unsafe connection would be positively observable. Squid therefore has
+three Docker network attachments: the client-facing application network and
+two test-only upstream segments. They represent a two-sided proxy trust
+boundary, but this instrumented profile is not a literal two-interface Squid
+deployment. Interlock still has only the application-network attachment.
+The Compose `x-phase2-boundaries` metadata separates the deployable two-sided
+pattern (`app_net` -> Squid -> an operator-provided upstream network) from the
+`origin_net`, `denied_net`, origin, sink, certificate generator, and acceptance
+services used only by the hermetic suite.
+
+Before cleanup, the runner also uses a uniquely named, short-lived test-only
+host-network inspector to read the Docker bridge address table. It is not a
+Compose service and is never available to Interlock. The retained proof includes
+whitelisted fields from every owned container and network, the attachment map,
+complete application IPv4/IPv6 route and address tables, neighbor tables, the
+host bridge address table, runtime versions, effective gateway modes, Docker
+alias resolution, and every direct HTTPX, urllib, requests, socket, and curl
+gateway attempt. No environment, command, mount, arbitrary label, header, URL,
+DSN, or credential field is retained.
+
+Squid is an explicit non-intercepting forward proxy. The policy contains no
+`ssl_bump`, `https_port`, certificate authority, or TLS key configuration.
+CONNECT therefore preserves end-to-end client certificate and hostname
+verification and SNI. Standards-compliant Via behavior remains enabled; Via is
+observable on plain proxied HTTP and is not injected into the tunneled TLS
+stream.
+
+The acceptance runner hashes the source, policy, Compose source and rendered
+configuration, test sources, results, and every retained artifact. Its verifier
+requires every named case exactly once and rejects skipped, xfailed, xpassed,
+failed, errored, malformed, partial, duplicate, stale, or counter-inconsistent
+evidence. It also rejects any missing or malformed topology artifact, absent
+IPv6 proof, non-isolated effective gateway mode, host bridge address, gateway
+route, successful bypass attempt, or inconsistent topology hash. Run it only
+from a clean checkout:
+
+```bash
+sha="$(git rev-parse HEAD)"
+python scripts/run_phase2_docker_acceptance.py \
+  --output "phase2-docker-evidence-$sha" \
+  --source-sha "$sha"
+python scripts/verify_phase2_docker_evidence.py \
+  "phase2-docker-evidence-$sha"
+```
+
+Cleanup is scoped to the runner's validated, randomly generated Compose project
+name. It does not prune or enumerate unrelated containers, networks, images, or
+volumes.
+
+In the tested Docker Phase 2 profile at the documented source SHA, Squid image digest, policy hash, and Compose configuration, Interlock’s enumerated server-side HTTP(S) paths are forced through a non-intercepting forward proxy. The profile rejects the tested private, metadata, raw-IP, mixed-answer, and rebinding destinations at proxy connection time while preserving end-to-end client TLS verification.
+
+This is deployment-specific Docker evidence. It is not complete SSRF prevention, universal DNS-rebinding prevention, Render enforcement, Kubernetes enforcement, managed-database certification, protection for unenumerated protocols, or protection against an allowed destination.
+
+Squid's address decision uses its shared DNS cache rather than a request-local
+immutable approval token. The reference profile bounds positive and negative
+TTL at 60 seconds (longer than the 15-second forward timeout), keeps the cache
+larger than the complete permitted-host set, allows one forward attempt,
+disables reconnects, and disables client/server persistent connections. The
+adversarial suite covers expiry, pressure, retry, reconnect,
+mixed answers, address-family ordering, and concurrent refresh. A theoretical
+cache refresh or eviction race outside those tested conditions remains a
+limitation; this profile is not universal DNS-rebinding prevention.
+
 ## Server-side egress inventory
 
 | Path | Destination source | Sensitive material | Central plumbing in `enforced` |
@@ -81,12 +161,12 @@ deployment is not production. It does not allow arbitrary private destinations.
 
 ## Production requirement and Phase 2
 
-PR 1 does not deploy or validate Squid and does not deny direct socket, DNS,
-subprocess, PostgreSQL, Redis, or other protocol egress. PR 2 must deploy the
-separately pinned and validated non-intercepting forward proxy, resolve and
-classify every destination at connection time, preserve end-to-end Host/SNI/TLS
-validation, enforce redirect destinations, and deny direct workload IPv4 and
-IPv6 egress while allowing only proxy, DNS, PostgreSQL, and Redis dependencies.
+The Docker reference profile provides exact, deployment-specific evidence for
+the enumerated server-side HTTP(S) paths and the tested bypass programs. It does
+not change the default development, offline-demo, Render, Helm, or Kubernetes
+topologies. An operator adopting the pattern elsewhere must independently prove
+the pinned proxy policy, DNS behavior, direct IPv4/IPv6 denial, dependency
+allowances, logs, and exact workload inventory for that deployment.
 
 No Render Phase 2 enforcement claim is permitted without independent evidence
 that the workload cannot egress directly. A configured explicit proxy alone is
@@ -104,5 +184,7 @@ fallback. Interlock does not implement that connector in Phase 1.
 - No universal DNS-rebinding prevention.
 - No direct-egress denial from application code alone.
 - No Render Phase 2 claim.
+- No Kubernetes Phase 2 claim.
 - No protection for unenumerated protocols, future clients, or unmanaged SDK transports.
+- No protection against an allowed destination.
 - No production or managed-provider certification.
