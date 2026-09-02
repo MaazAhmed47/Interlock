@@ -1,0 +1,212 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-test-server
+  namespace: interlock-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: interlock-mcp-test-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: interlock-mcp-test-server
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: mcp-test-server
+          image: interlock-kubernetes-enforcement:source-sha
+          imagePullPolicy: Never
+          command: ["python", "/app/deploy/kubernetes-enforcement/scripts/lab_entrypoint.py", "mcp-server"]
+          ports:
+            - name: mcp-http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: mcp-http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp
+  namespace: interlock-mcp
+spec:
+  selector:
+    app.kubernetes.io/name: interlock-mcp-test-server
+  ports:
+    - name: mcp-http
+      port: 8080
+      targetPort: mcp-http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: interlock-gateway
+  namespace: interlock-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: interlock-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: interlock-gateway
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      initContainers:
+        - name: bootstrap
+          image: interlock-kubernetes-enforcement:source-sha
+          imagePullPolicy: Never
+          command: ["python", "/app/deploy/kubernetes-enforcement/scripts/lab_entrypoint.py", "bootstrap"]
+          envFrom:
+            - secretRef:
+                name: runtime-key
+          env: &gateway-environment
+            - name: FIREWALL_DB_PATH
+              value: /data/firewall.db
+            - name: MCP_REGISTRY_ALLOWED_HOSTS
+              value: mcp.interlock-mcp.svc.cluster.local
+            - name: INTERLOCK_PROTECT_OUTBOUND_URLS
+              value: "false"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: gateway
+          image: interlock-kubernetes-enforcement:source-sha
+          imagePullPolicy: Never
+          command: ["uvicorn", "proxy:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1", "--no-access-log"]
+          env: *gateway-environment
+          ports:
+            - name: gateway-http
+              containerPort: 8001
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: gateway-http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: interlock
+  namespace: interlock-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: interlock-gateway
+  ports:
+    - name: gateway-http
+      port: 8001
+      targetPort: gateway-http
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agent
+  namespace: interlock-agent
+  labels:
+    app.kubernetes.io/name: interlock-agent
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+  containers:
+    - name: agent
+      image: interlock-kubernetes-enforcement:source-sha
+      imagePullPolicy: Never
+      command: ["sleep", "infinity"]
+      envFrom:
+        - secretRef:
+            name: runtime-key
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: tmp
+      emptyDir: {}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unrelated
+  namespace: interlock-control
+  labels:
+    app.kubernetes.io/name: unrelated-probe
+spec:
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+  containers:
+    - name: unrelated
+      image: interlock-kubernetes-enforcement:source-sha
+      imagePullPolicy: Never
+      command: ["sleep", "infinity"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: tmp
+      emptyDir: {}

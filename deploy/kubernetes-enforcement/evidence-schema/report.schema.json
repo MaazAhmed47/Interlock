@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://interlock.example/schemas/kubernetes-enforcement-report-v1.json",
+  "title": "Interlock disposable Kubernetes enforcement evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_sha",
+    "run_id",
+    "run_started_at",
+    "run_completed_at",
+    "environment",
+    "digests",
+    "evidence_boundaries",
+    "negative_controls",
+    "observations",
+    "log_digests",
+    "cases",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": {"const": "interlock.kubernetes-enforcement-evidence.v1"},
+    "source_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "run_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "run_started_at": {"type": "string", "format": "date-time"},
+    "run_completed_at": {"type": "string", "format": "date-time"},
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "kubernetes", "cni", "node_image", "lab_image"],
+      "properties": {
+        "kind": {"const": "v0.33.0"},
+        "kubernetes": {"const": "v1.36.4"},
+        "cni": {"const": "calico-v3.32.2"},
+        "node_image": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "lab_image": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "digests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest_bundle_sha256", "config_sha256", "calico_manifest_sha256", "network_policy_evidence_sha256"],
+      "properties": {
+        "manifest_bundle_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the checked-in manifest canonical text bundle: valid UTF-8, CRLF normalized to LF, and bare CR rejected."
+        },
+        "config_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the checked-in configuration canonical text bundle: valid UTF-8, CRLF normalized to LF, and bare CR rejected."
+        },
+        "calico_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the exact downloaded upstream Calico manifest bytes."
+        },
+        "network_policy_evidence_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 binding the canonical policy map to the source SHA and canonical manifest-bundle digest."
+        }
+      }
+    },
+    "evidence_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["network_denial", "interlock_audit", "deployment_configuration"],
+      "properties": {
+        "network_denial": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "interlock_audit": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "deployment_configuration": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "negative_controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "direct_target_reachable_after_policy_removal",
+        "policy_restored_and_direct_target_reblocked",
+        "mutated_restored_denial_evidence_rejected"
+      ],
+      "properties": {
+        "direct_target_reachable_after_policy_removal": {"type": "boolean"},
+        "policy_restored_and_direct_target_reblocked": {"type": "boolean"},
+        "mutated_restored_denial_evidence_rejected": {"type": "boolean"}
+      }
+    },
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["loaded_image", "cni", "workloads", "network_policies", "service_account_tokens_disabled", "log_scan_passed", "cluster_deleted"],
+      "properties": {
+        "loaded_image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reference", "build_image_id", "containerd_image_id", "runtime_image_id", "rootfs_diff_ids_sha256"],
+          "properties": {
+            "reference": {"type": "string", "pattern": "^interlock-kubernetes-enforcement:[0-9a-f]{40}$"},
+            "build_image_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "containerd_image_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "runtime_image_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "rootfs_diff_ids_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        },
+        "cni": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ready_nodes", "expected_nodes", "runtime_image_ids"],
+          "properties": {
+            "ready_nodes": {"const": 1},
+            "expected_nodes": {"const": 1},
+            "runtime_image_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}, "uniqueItems": true}
+          }
+        },
+        "workloads": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["identity", "ready", "image_id"],
+            "properties": {
+              "identity": {"enum": ["agent", "gateway", "mcp_test_server", "unrelated"]},
+              "ready": {"const": true},
+              "image_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+            }
+          }
+        },
+        "network_policies": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["expected", "observed", "source_sha", "manifest_bundle_sha256", "evidence_sha256", "policies"],
+          "properties": {
+            "expected": {"type": "integer", "minimum": 1},
+            "observed": {"type": "integer", "minimum": 1},
+            "source_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+            "manifest_bundle_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "Canonical source-text manifest-bundle SHA-256 bound into this NetworkPolicy snapshot."
+            },
+            "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "policies": {
+              "type": "object",
+              "minProperties": 1,
+              "propertyNames": {"pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?/[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"},
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["canonical", "sha256"],
+                "properties": {
+                  "canonical": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["apiVersion", "kind", "namespace", "name", "podSelector", "policyTypes", "ingress", "egress"],
+                    "properties": {
+                      "apiVersion": {"const": "networking.k8s.io/v1"},
+                      "kind": {"const": "NetworkPolicy"},
+                      "namespace": {"type": "string", "minLength": 1},
+                      "name": {"type": "string", "minLength": 1},
+                      "podSelector": {"type": "object"},
+                      "policyTypes": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {"enum": ["Egress", "Ingress"]}
+                      },
+                      "ingress": {"type": "array", "items": {"type": "object"}},
+                      "egress": {"type": "array", "items": {"type": "object"}}
+                    }
+                  },
+                  "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+                }
+              }
+            }
+          }
+        },
+        "service_account_tokens_disabled": {"const": true},
+        "log_scan_passed": {"const": true},
+        "cluster_deleted": {"const": true}
+      }
+    },
+    "log_digests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gateway", "mcp", "agent", "unrelated"],
+      "properties": {
+        "gateway": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "mcp": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "agent": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "unrelated": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["case_id", "expected_result", "actual_result", "status", "source_workload", "destination_class", "enforcement_layer", "failure_category", "source_sha", "manifest_bundle_sha256", "config_sha256", "started_at", "completed_at", "verifier_outcome"],
+        "properties": {
+          "case_id": {"type": "string", "pattern": "^KE-[0-9]{3}$"},
+          "expected_result": {"type": "string"},
+          "actual_result": {"type": "string"},
+          "status": {"enum": ["passed", "failed", "errored", "skipped", "xfailed", "xpassed", "partial"]},
+          "source_workload": {"type": "string"},
+          "destination_class": {"type": "string"},
+          "enforcement_layer": {"type": "string"},
+          "failure_category": {"type": "string"},
+          "source_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+          "manifest_bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "started_at": {"type": "string", "format": "date-time"},
+          "completed_at": {"type": "string", "format": "date-time"},
+          "verifier_outcome": {"enum": ["accepted", "rejected"]}
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "passed", "failed", "skipped", "errored", "xfailed", "xpassed", "partial"],
+      "properties": {
+        "required": {"type": "integer", "minimum": 0},
+        "passed": {"type": "integer", "minimum": 0},
+        "failed": {"type": "integer", "minimum": 0},
+        "skipped": {"type": "integer", "minimum": 0},
+        "errored": {"type": "integer", "minimum": 0},
+        "xfailed": {"type": "integer", "minimum": 0},
+        "xpassed": {"type": "integer", "minimum": 0},
+        "partial": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}
