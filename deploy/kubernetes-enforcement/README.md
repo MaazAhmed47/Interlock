@@ -57,6 +57,23 @@ enforcement.
 - Deployment/configuration evidence records selected workload identities,
   policies, versions, source SHA, manifest/config digests, and runtime image IDs.
 
+The retained report includes a sorted `namespace/name` map for every live
+NetworkPolicy observed from the Kubernetes API in the four profile namespaces
+after policy restoration. Each entry contains only `apiVersion`, `kind`,
+`namespace`, `name`, `podSelector`, `policyTypes`, `ingress`, and `egress`, plus
+a SHA-256 hash of that canonical payload. UID, resource version, managed fields,
+timestamps, annotations, status, and other API metadata are excluded. A
+set-level SHA-256 digest binds the complete map to the exact source SHA and
+manifest-bundle digest.
+
+The retained-evidence verifier independently reconstructs the expected
+canonical map from the checked-out `manifests/network-policies.yaml`. It
+requires exact namespace/name-set equality, exact canonical content, exact
+per-policy hashes, and exact set-level digest equality. Missing, unexpected,
+duplicate, malformed, partial, rehashed-but-changed, or source/manifest-mismatched
+policy evidence fails closed. A policy count alone is not accepted as policy
+identity or enforcement-intent evidence.
+
 Calico can block direct packets before reaching the gateway. This profile does not make Interlock observe
 traffic blocked before reaching the gateway, and it
 does not create an Interlock audit event for those packets.
@@ -94,6 +111,11 @@ digests. It does not prove production, managed Kubernetes, all CNIs, cloud
 firewall correctness, universal bypass prevention, tenant isolation, mTLS,
 identity assurance, universal agent security, complete SSRF prevention,
 complete DNS-rebinding prevention, compliance, or certification.
+
+The canonical NetworkPolicy snapshot proves what the named Kubernetes API
+reported for the disposable run and binds it to the checked-out source. It is
+not, by itself, proof that a CNI enforced those objects; the separate live
+reachability and restoration controls supply the bounded enforcement evidence.
 
 It does not replace workload identity, authorization, secrets management,
 sandboxing, egress controls, SIEM, or incident response. Those controls remain

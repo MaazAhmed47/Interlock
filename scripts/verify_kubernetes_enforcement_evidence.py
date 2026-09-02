@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
+import yaml
 
 try:
     from scripts.kubernetes_enforcement_cases import REQUIRED_CASES
@@ -26,6 +27,7 @@ SCHEMA_PATH = (
     / "report.schema.json"
 )
 PROFILE = ROOT / "deploy" / "kubernetes-enforcement"
+NETWORK_POLICY_MANIFEST = PROFILE / "manifests" / "network-policies.yaml"
 PROBE_PREFIX = "INTERLOCK_K8S_RESULT "
 MAX_EVIDENCE_AGE = timedelta(hours=24)
 SENSITIVE_PATTERNS = (
@@ -58,6 +60,204 @@ def _bundle_digest(paths: list[Path]) -> str:
     return digest.hexdigest()
 
 
+def _canonical_json_bytes(value: Any) -> bytes:
+    try:
+        rendered = json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    except (TypeError, ValueError) as exc:
+        raise EvidenceVerificationError(
+            "malformed canonical NetworkPolicy data"
+        ) from exc
+    return rendered.encode("utf-8")
+
+
+def canonical_network_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    """Keep only deterministic NetworkPolicy identity and enforcement fields."""
+
+    if not isinstance(policy, dict):
+        raise EvidenceVerificationError("malformed canonical NetworkPolicy data")
+    metadata = policy.get("metadata")
+    spec = policy.get("spec")
+    if not isinstance(metadata, dict) or not isinstance(spec, dict):
+        raise EvidenceVerificationError("malformed canonical NetworkPolicy data")
+    namespace = metadata.get("namespace")
+    name = metadata.get("name")
+    pod_selector = spec.get("podSelector")
+    policy_types = spec.get("policyTypes")
+    ingress = spec.get("ingress", [])
+    egress = spec.get("egress", [])
+    if (
+        policy.get("apiVersion") != "networking.k8s.io/v1"
+        or policy.get("kind") != "NetworkPolicy"
+        or not isinstance(namespace, str)
+        or not namespace
+        or not isinstance(name, str)
+        or not name
+        or not isinstance(pod_selector, dict)
+        or not isinstance(policy_types, list)
+        or not policy_types
+        or any(
+            not isinstance(item, str) or item not in {"Ingress", "Egress"}
+            for item in policy_types
+        )
+        or len(policy_types) != len(set(policy_types))
+        or not isinstance(ingress, list)
+        or not isinstance(egress, list)
+        or any(not isinstance(item, dict) for item in ingress)
+        or any(not isinstance(item, dict) for item in egress)
+    ):
+        raise EvidenceVerificationError("malformed canonical NetworkPolicy data")
+    canonical = {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "namespace": namespace,
+        "name": name,
+        "podSelector": pod_selector,
+        "policyTypes": sorted(policy_types),
+        "ingress": ingress,
+        "egress": egress,
+    }
+    return json.loads(_canonical_json_bytes(canonical))
+
+
+def canonical_policy_sha256(canonical: dict[str, Any]) -> str:
+    return hashlib.sha256(_canonical_json_bytes(canonical)).hexdigest()
+
+
+def build_network_policy_evidence_map(
+    policies: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Canonicalize raw source/API objects and reject duplicate identities."""
+
+    evidence: dict[str, dict[str, Any]] = {}
+    for policy in policies:
+        canonical = canonical_network_policy(policy)
+        identity = f"{canonical['namespace']}/{canonical['name']}"
+        if identity in evidence:
+            raise EvidenceVerificationError("duplicate NetworkPolicy identity")
+        evidence[identity] = {
+            "canonical": canonical,
+            "sha256": canonical_policy_sha256(canonical),
+        }
+    if not evidence:
+        raise EvidenceVerificationError("missing NetworkPolicy evidence")
+    return dict(sorted(evidence.items()))
+
+
+def expected_network_policy_evidence_map() -> dict[str, dict[str, Any]]:
+    """Independently reconstruct the exact expected set from checked-out source."""
+
+    try:
+        documents = list(
+            yaml.safe_load_all(NETWORK_POLICY_MANIFEST.read_text(encoding="utf-8"))
+        )
+    except (OSError, yaml.YAMLError) as exc:
+        raise EvidenceVerificationError(
+            "source NetworkPolicy manifest is malformed"
+        ) from exc
+    policies: list[dict[str, Any]] = []
+    for item in documents:
+        if item is None:
+            continue
+        if not isinstance(item, dict):
+            raise EvidenceVerificationError(
+                "source NetworkPolicy manifest is malformed"
+            )
+        policies.append(item)
+    return build_network_policy_evidence_map(policies)
+
+
+def network_policy_evidence_sha256(
+    policies: dict[str, dict[str, Any]],
+    *,
+    source_sha: str,
+    manifest_bundle_sha256: str,
+) -> str:
+    """Bind the retained policy map to exact source and manifest identities."""
+
+    payload = {
+        "source_sha": source_sha,
+        "manifest_bundle_sha256": manifest_bundle_sha256,
+        "policies": policies,
+    }
+    return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+
+
+def _canonical_from_retained(value: dict[str, Any]) -> dict[str, Any]:
+    required = {
+        "apiVersion",
+        "kind",
+        "namespace",
+        "name",
+        "podSelector",
+        "policyTypes",
+        "ingress",
+        "egress",
+    }
+    if not isinstance(value, dict) or set(value) != required:
+        raise EvidenceVerificationError("malformed canonical NetworkPolicy data")
+    rebuilt = canonical_network_policy(
+        {
+            "apiVersion": value["apiVersion"],
+            "kind": value["kind"],
+            "metadata": {
+                "namespace": value["namespace"],
+                "name": value["name"],
+            },
+            "spec": {
+                "podSelector": value["podSelector"],
+                "policyTypes": value["policyTypes"],
+                "ingress": value["ingress"],
+                "egress": value["egress"],
+            },
+        }
+    )
+    if rebuilt != value:
+        raise EvidenceVerificationError("malformed canonical NetworkPolicy data")
+    return rebuilt
+
+
+def verify_network_policy_evidence_map(
+    actual: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Verify hashes plus exact identity/content equality against source."""
+
+    if not isinstance(actual, dict) or not actual:
+        raise EvidenceVerificationError("missing NetworkPolicy evidence")
+    identities: list[str] = []
+    map_identity_mismatch = False
+    for map_identity, entry in actual.items():
+        if not isinstance(entry, dict) or set(entry) != {"canonical", "sha256"}:
+            raise EvidenceVerificationError("malformed canonical NetworkPolicy data")
+        canonical = _canonical_from_retained(entry["canonical"])
+        identity = f"{canonical['namespace']}/{canonical['name']}"
+        identities.append(identity)
+        if entry["sha256"] != canonical_policy_sha256(canonical):
+            raise EvidenceVerificationError("NetworkPolicy hash mismatch")
+        if map_identity != identity:
+            map_identity_mismatch = True
+    if len(identities) != len(set(identities)):
+        raise EvidenceVerificationError("duplicate NetworkPolicy identity")
+    if map_identity_mismatch:
+        raise EvidenceVerificationError("malformed canonical NetworkPolicy identity")
+
+    expected = expected_network_policy_evidence_map()
+    missing = sorted(set(expected) - set(actual))
+    unexpected = sorted(set(actual) - set(expected))
+    if missing:
+        raise EvidenceVerificationError("missing NetworkPolicy evidence")
+    if unexpected:
+        raise EvidenceVerificationError("unexpected NetworkPolicy evidence")
+    if actual != expected:
+        raise EvidenceVerificationError("NetworkPolicy content mismatch")
+    return expected
+
+
 def expected_profile_digests() -> dict[str, str]:
     """Recompute the checked-in configuration identities the report must bind."""
 
@@ -75,6 +275,26 @@ def expected_profile_digests() -> dict[str, str]:
 def _reject_sensitive_text(text: str) -> None:
     if any(pattern.search(text) for pattern in SENSITIVE_PATTERNS):
         raise EvidenceVerificationError("sensitive value in evidence")
+
+
+def load_evidence_json(text: str) -> dict[str, Any]:
+    """Parse retained evidence without allowing duplicate JSON object keys."""
+
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise EvidenceVerificationError("duplicate JSON key in evidence")
+            value[key] = item
+        return value
+
+    try:
+        parsed = json.loads(text, object_pairs_hook=reject_duplicate_keys)
+    except json.JSONDecodeError as exc:
+        raise EvidenceVerificationError("malformed retained evidence JSON") from exc
+    if not isinstance(parsed, dict):
+        raise EvidenceVerificationError("malformed retained evidence JSON")
+    return parsed
 
 
 def parse_probe_output(stdout: str) -> dict[str, Any]:
@@ -138,8 +358,39 @@ def verify_report(
     _validate_schema(report)
     if report["source_sha"] != expected_source_sha:
         raise EvidenceVerificationError("source SHA mismatch")
-    if report["digests"] != expected_profile_digests():
+    expected_digests = expected_profile_digests()
+    base_digest_keys = set(expected_digests)
+    if set(report["digests"]) != base_digest_keys | {
+        "network_policy_evidence_sha256"
+    } or any(
+        report["digests"][key] != value for key, value in expected_digests.items()
+    ):
         raise EvidenceVerificationError("repository digest mismatch")
+
+    policy_evidence = report["observations"]["network_policies"]
+    if policy_evidence["source_sha"] != expected_source_sha:
+        raise EvidenceVerificationError("NetworkPolicy source SHA mismatch")
+    manifest_digest = expected_digests["manifest_bundle_sha256"]
+    if policy_evidence["manifest_bundle_sha256"] != manifest_digest:
+        raise EvidenceVerificationError("NetworkPolicy manifest digest mismatch")
+    verified_policy_map = verify_network_policy_evidence_map(
+        policy_evidence["policies"]
+    )
+    if policy_evidence["expected"] != len(verified_policy_map):
+        raise EvidenceVerificationError("NetworkPolicy expected count mismatch")
+    if policy_evidence["observed"] != len(policy_evidence["policies"]):
+        raise EvidenceVerificationError("NetworkPolicy observed count mismatch")
+    expected_policy_evidence_sha256 = network_policy_evidence_sha256(
+        verified_policy_map,
+        source_sha=expected_source_sha,
+        manifest_bundle_sha256=manifest_digest,
+    )
+    if (
+        policy_evidence["evidence_sha256"] != expected_policy_evidence_sha256
+        or report["digests"]["network_policy_evidence_sha256"]
+        != expected_policy_evidence_sha256
+    ):
+        raise EvidenceVerificationError("NetworkPolicy evidence digest mismatch")
 
     started = _parse_utc(report["run_started_at"], "run_started_at")
     completed = _parse_utc(report["run_completed_at"], "run_completed_at")
@@ -249,6 +500,8 @@ def verify_report(
     return {
         "verified": True,
         "case_count": len(cases),
+        "network_policy_count": len(verified_policy_map),
+        "network_policy_evidence_sha256": expected_policy_evidence_sha256,
         "source_sha": expected_source_sha,
     }
 
@@ -259,7 +512,7 @@ def main() -> int:
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--allow-stale", action="store_true")
     args = parser.parse_args()
-    report = json.loads(args.report.read_text(encoding="utf-8"))
+    report = load_evidence_json(args.report.read_text(encoding="utf-8"))
     result = verify_report(
         report,
         expected_source_sha=args.source_sha,

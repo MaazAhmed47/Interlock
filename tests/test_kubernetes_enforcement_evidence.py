@@ -13,14 +13,21 @@ from scripts.kubernetes_enforcement_cases import REQUIRED_CASES
 from scripts.run_kubernetes_enforcement_acceptance import AcceptanceError, run
 from scripts.verify_kubernetes_enforcement_evidence import (
     EvidenceVerificationError,
+    build_network_policy_evidence_map,
+    canonical_policy_sha256,
+    expected_network_policy_evidence_map,
     expected_profile_digests,
+    load_evidence_json,
+    network_policy_evidence_sha256,
     parse_probe_output,
+    verify_network_policy_evidence_map,
     verify_report,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
 DIGESTS = expected_profile_digests()
+SOURCE_POLICY_MAP = expected_network_policy_evidence_map()
 NEGATIVE_CONTROL_FIELDS = (
     "direct_target_reachable_after_policy_removal",
     "policy_restored_and_direct_target_reblocked",
@@ -30,6 +37,11 @@ NEGATIVE_CONTROL_FIELDS = (
 
 def _report() -> dict:
     now = datetime.now(timezone.utc).isoformat()
+    policy_evidence_sha256 = network_policy_evidence_sha256(
+        SOURCE_POLICY_MAP,
+        source_sha=SHA,
+        manifest_bundle_sha256=DIGESTS["manifest_bundle_sha256"],
+    )
     cases = []
     for case_id, expected in REQUIRED_CASES.items():
         cases.append(
@@ -65,6 +77,7 @@ def _report() -> dict:
         },
         "digests": {
             **DIGESTS,
+            "network_policy_evidence_sha256": policy_evidence_sha256,
         },
         "evidence_boundaries": {
             "network_denial": ["KE-002", "KE-003", "KE-004", "KE-005"],
@@ -93,7 +106,14 @@ def _report() -> dict:
                 {"identity": identity, "ready": True, "image_id": "sha256:" + "f" * 64}
                 for identity in ("agent", "gateway", "mcp_test_server", "unrelated")
             ],
-            "network_policies": {"expected": 12, "observed": 12},
+            "network_policies": {
+                "expected": len(SOURCE_POLICY_MAP),
+                "observed": len(SOURCE_POLICY_MAP),
+                "source_sha": SHA,
+                "manifest_bundle_sha256": DIGESTS["manifest_bundle_sha256"],
+                "evidence_sha256": policy_evidence_sha256,
+                "policies": copy.deepcopy(SOURCE_POLICY_MAP),
+            },
             "service_account_tokens_disabled": True,
             "log_scan_passed": True,
             "cluster_deleted": True,
@@ -118,10 +138,241 @@ def _report() -> dict:
     }
 
 
+def _rebind_policy_evidence(report: dict) -> None:
+    evidence = report["observations"]["network_policies"]
+    evidence["observed"] = len(evidence["policies"])
+    digest = network_policy_evidence_sha256(
+        evidence["policies"],
+        source_sha=evidence["source_sha"],
+        manifest_bundle_sha256=evidence["manifest_bundle_sha256"],
+    )
+    evidence["evidence_sha256"] = digest
+    report["digests"]["network_policy_evidence_sha256"] = digest
+
+
 def test_complete_fresh_report_verifies():
     verified = verify_report(_report(), expected_source_sha=SHA, now=None)
     assert verified["verified"] is True
     assert verified["case_count"] == len(REQUIRED_CASES)
+    assert verified["network_policy_count"] == len(SOURCE_POLICY_MAP)
+
+
+def test_happy_path_live_policy_evidence_verifies_against_source():
+    verified = verify_report(_report(), expected_source_sha=SHA, now=None)
+
+    assert len(SOURCE_POLICY_MAP) == 12
+    assert list(SOURCE_POLICY_MAP) == sorted(SOURCE_POLICY_MAP)
+    assert verified["network_policy_evidence_sha256"] == (
+        _report()["digests"]["network_policy_evidence_sha256"]
+    )
+
+
+def test_changed_live_policy_content_is_rejected_even_when_rehashed():
+    report = _report()
+    entry = report["observations"]["network_policies"]["policies"][
+        "interlock-agent/agent-to-gateway"
+    ]
+    entry["canonical"]["egress"][0]["ports"][0]["port"] = 9000
+    entry["sha256"] = canonical_policy_sha256(entry["canonical"])
+    _rebind_policy_evidence(report)
+
+    with pytest.raises(
+        EvidenceVerificationError, match="NetworkPolicy content mismatch"
+    ):
+        verify_report(report, expected_source_sha=SHA, now=None)
+
+
+def test_missing_expected_live_policy_is_rejected():
+    report = _report()
+    report["observations"]["network_policies"]["policies"].pop(
+        "interlock-agent/default-deny"
+    )
+    _rebind_policy_evidence(report)
+
+    with pytest.raises(EvidenceVerificationError, match="missing NetworkPolicy"):
+        verify_report(report, expected_source_sha=SHA, now=None)
+
+
+def test_unexpected_live_policy_is_rejected():
+    report = _report()
+    policies = report["observations"]["network_policies"]["policies"]
+    unexpected = copy.deepcopy(policies["interlock-agent/default-deny"])
+    unexpected["canonical"]["name"] = "unexpected-policy"
+    unexpected["sha256"] = canonical_policy_sha256(unexpected["canonical"])
+    policies["interlock-agent/unexpected-policy"] = unexpected
+    _rebind_policy_evidence(report)
+
+    with pytest.raises(EvidenceVerificationError, match="unexpected NetworkPolicy"):
+        verify_report(report, expected_source_sha=SHA, now=None)
+
+
+def test_duplicate_live_policy_identity_is_rejected():
+    report = _report()
+    policies = report["observations"]["network_policies"]["policies"]
+    policies["interlock-agent/duplicate-alias"] = copy.deepcopy(
+        policies["interlock-agent/default-deny"]
+    )
+    _rebind_policy_evidence(report)
+
+    with pytest.raises(
+        EvidenceVerificationError, match="duplicate NetworkPolicy identity"
+    ):
+        verify_report(report, expected_source_sha=SHA, now=None)
+
+
+def test_duplicate_raw_live_policy_identity_is_rejected_before_retention():
+    canonical = SOURCE_POLICY_MAP["interlock-agent/default-deny"]["canonical"]
+    raw = {
+        "apiVersion": canonical["apiVersion"],
+        "kind": canonical["kind"],
+        "metadata": {
+            "namespace": canonical["namespace"],
+            "name": canonical["name"],
+        },
+        "spec": {
+            "podSelector": canonical["podSelector"],
+            "policyTypes": canonical["policyTypes"],
+            "ingress": canonical["ingress"],
+            "egress": canonical["egress"],
+        },
+    }
+
+    with pytest.raises(
+        EvidenceVerificationError, match="duplicate NetworkPolicy identity"
+    ):
+        build_network_policy_evidence_map([raw, copy.deepcopy(raw)])
+
+
+def test_duplicate_policy_json_key_is_rejected_before_semantic_verification():
+    entry = json.dumps(SOURCE_POLICY_MAP["interlock-agent/default-deny"])
+    duplicated = (
+        '{"policies":{"interlock-agent/default-deny":'
+        + entry
+        + ',"interlock-agent/default-deny":'
+        + entry
+        + "}}"
+    )
+
+    with pytest.raises(EvidenceVerificationError, match="duplicate JSON key"):
+        load_evidence_json(duplicated)
+
+
+def test_malformed_retained_canonical_policy_data_is_rejected():
+    policies = copy.deepcopy(SOURCE_POLICY_MAP)
+    policies["interlock-agent/default-deny"]["canonical"]["uid"] = "not-allowed"
+
+    with pytest.raises(EvidenceVerificationError, match="malformed canonical"):
+        verify_network_policy_evidence_map(policies)
+
+
+@pytest.mark.parametrize("mutation", ["hash", "canonical"])
+def test_altered_retained_policy_hash_or_canonical_payload_is_rejected(mutation):
+    report = _report()
+    entry = report["observations"]["network_policies"]["policies"][
+        "interlock-agent/default-deny"
+    ]
+    if mutation == "hash":
+        entry["sha256"] = "0" * 64
+    else:
+        entry["canonical"]["policyTypes"] = ["Ingress"]
+
+    with pytest.raises(EvidenceVerificationError, match="NetworkPolicy hash mismatch"):
+        verify_report(report, expected_source_sha=SHA, now=None)
+
+
+@pytest.mark.parametrize("location", ["report_digest", "policy_evidence_digest"])
+def test_altered_policy_set_digest_is_rejected(location):
+    report = _report()
+    if location == "report_digest":
+        report["digests"]["network_policy_evidence_sha256"] = "0" * 64
+    else:
+        report["observations"]["network_policies"]["evidence_sha256"] = "0" * 64
+
+    with pytest.raises(EvidenceVerificationError, match="evidence digest mismatch"):
+        verify_report(report, expected_source_sha=SHA, now=None)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("source_sha", "b" * 40, "NetworkPolicy source SHA mismatch"),
+        (
+            "manifest_bundle_sha256",
+            "b" * 64,
+            "NetworkPolicy manifest digest mismatch",
+        ),
+    ],
+)
+def test_policy_evidence_source_or_manifest_binding_mismatch_is_rejected(
+    field, value, message
+):
+    report = _report()
+    report["observations"]["network_policies"][field] = value
+
+    with pytest.raises(EvidenceVerificationError, match=message):
+        verify_report(report, expected_source_sha=SHA, now=None)
+
+
+def test_report_manifest_digest_mismatch_is_rejected():
+    report = _report()
+    report["digests"]["manifest_bundle_sha256"] = "b" * 64
+
+    with pytest.raises(EvidenceVerificationError, match="repository digest mismatch"):
+        verify_report(report, expected_source_sha=SHA, now=None)
+
+
+def test_network_policy_sanitization_excludes_metadata_and_sensitive_sentinels():
+    source = SOURCE_POLICY_MAP["interlock-agent/default-deny"]["canonical"]
+    raw = {
+        "apiVersion": source["apiVersion"],
+        "kind": source["kind"],
+        "metadata": {
+            "namespace": source["namespace"],
+            "name": source["name"],
+            "uid": "uid-synthetic-sentinel",
+            "resourceVersion": "resource-version-synthetic-sentinel",
+            "creationTimestamp": "timestamp-synthetic-sentinel",
+            "managedFields": [{"manager": "managed-fields-synthetic-sentinel"}],
+            "annotations": {
+                "secret": "secret-value-synthetic-sentinel",
+                "authorization": "Authorization: Bearer auth-synthetic-sentinel",
+                "query": "https://example.test/path?token=query-synthetic-sentinel",
+                "dsn": "postgresql://user:dsn-synthetic-sentinel@example.test/db",
+            },
+        },
+        "spec": {
+            "podSelector": source["podSelector"],
+            "policyTypes": source["policyTypes"],
+            "ingress": source["ingress"],
+            "egress": source["egress"],
+        },
+        "status": {"state": "status-synthetic-sentinel"},
+    }
+
+    rendered = json.dumps(
+        build_network_policy_evidence_map([raw]), sort_keys=True
+    ).lower()
+    forbidden = (
+        "uid",
+        "resourceversion",
+        "managedfields",
+        "creationtimestamp",
+        "annotations",
+        "status",
+        "secret",
+        "authorization",
+        "https://",
+        "postgresql://",
+        "synthetic-sentinel",
+        "secret-value-synthetic-sentinel",
+        "auth-synthetic-sentinel",
+        "query-synthetic-sentinel",
+        "dsn-synthetic-sentinel",
+        "managed-fields-synthetic-sentinel",
+        "timestamp-synthetic-sentinel",
+    )
+    for value in forbidden:
+        assert value not in rendered
 
 
 def test_runner_emits_the_three_distinct_negative_controls():
@@ -144,6 +395,13 @@ def test_runner_emits_the_three_distinct_negative_controls():
     assert generated["negative_controls"] == {
         field: True for field in NEGATIVE_CONTROL_FIELDS
     }
+    assert generated["observations"]["network_policies"]["policies"] == (
+        SOURCE_POLICY_MAP
+    )
+    assert (
+        generated["digests"]["network_policy_evidence_sha256"]
+        == generated["observations"]["network_policies"]["evidence_sha256"]
+    )
 
 
 @pytest.mark.parametrize(

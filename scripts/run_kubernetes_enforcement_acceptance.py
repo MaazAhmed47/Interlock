@@ -22,14 +22,22 @@ try:
     from scripts.kubernetes_enforcement_cases import REQUIRED_CASES
     from scripts.verify_kubernetes_enforcement_evidence import (
         EvidenceVerificationError,
+        build_network_policy_evidence_map,
+        load_evidence_json,
+        network_policy_evidence_sha256,
         parse_probe_output,
+        verify_network_policy_evidence_map,
         verify_report,
     )
 except ModuleNotFoundError:  # direct script execution
     from kubernetes_enforcement_cases import REQUIRED_CASES  # type: ignore[no-redef]
     from verify_kubernetes_enforcement_evidence import (  # type: ignore[no-redef]
         EvidenceVerificationError,
+        build_network_policy_evidence_map,
+        load_evidence_json,
+        network_policy_evidence_sha256,
         parse_probe_output,
+        verify_network_policy_evidence_map,
         verify_report,
     )
 
@@ -476,13 +484,27 @@ def collect_runtime_observations(
     policies = json.loads(
         kubectl(context, "get", "networkpolicy", "-A", "-o", "json").stdout
     )
-    profile_policies = [
-        item
-        for item in policies.get("items", [])
-        if item.get("metadata", {}).get("namespace") in NAMESPACES
-    ]
-    if len(profile_policies) != 12:
-        raise AcceptanceError("deployed NetworkPolicy count mismatch")
+    policy_items = policies.get("items")
+    if not isinstance(policy_items, list) or any(
+        not isinstance(item, dict) for item in policy_items
+    ):
+        raise AcceptanceError("Kubernetes API returned malformed NetworkPolicy data")
+    profile_policies = []
+    for item in policy_items:
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            raise AcceptanceError(
+                "Kubernetes API returned malformed NetworkPolicy metadata"
+            )
+        if metadata.get("namespace") in NAMESPACES:
+            profile_policies.append(item)
+    try:
+        live_policy_evidence = build_network_policy_evidence_map(profile_policies)
+        expected_policy_evidence = verify_network_policy_evidence_map(
+            live_policy_evidence
+        )
+    except EvidenceVerificationError as exc:
+        raise AcceptanceError("deployed NetworkPolicy evidence mismatch") from exc
 
     return {
         "loaded_image": loaded_image,
@@ -492,7 +514,11 @@ def collect_runtime_observations(
             "runtime_image_ids": calico_images,
         },
         "workloads": workloads,
-        "network_policies": {"expected": 12, "observed": len(profile_policies)},
+        "network_policies": {
+            "expected": len(expected_policy_evidence),
+            "observed": len(live_policy_evidence),
+            "policies": live_policy_evidence,
+        },
         "service_account_tokens_disabled": True,
         "log_scan_passed": False,
         "cluster_deleted": False,
@@ -545,6 +571,20 @@ def build_report(
     observations: dict[str, Any],
     log_digests: dict[str, str],
 ) -> dict[str, Any]:
+    report_observations = copy.deepcopy(observations)
+    policy_evidence = report_observations["network_policies"]
+    policy_evidence_sha256 = network_policy_evidence_sha256(
+        policy_evidence["policies"],
+        source_sha=source_sha,
+        manifest_bundle_sha256=manifest_digest,
+    )
+    policy_evidence.update(
+        {
+            "source_sha": source_sha,
+            "manifest_bundle_sha256": manifest_digest,
+            "evidence_sha256": policy_evidence_sha256,
+        }
+    )
     return {
         "schema_version": "interlock.kubernetes-enforcement-evidence.v1",
         "source_sha": source_sha,
@@ -562,6 +602,7 @@ def build_report(
             "manifest_bundle_sha256": manifest_digest,
             "config_sha256": config_digest,
             "calico_manifest_sha256": calico_digest,
+            "network_policy_evidence_sha256": policy_evidence_sha256,
         },
         "evidence_boundaries": {
             "network_denial": [
@@ -584,7 +625,7 @@ def build_report(
             "policy_restored_and_direct_target_reblocked": True,
             "mutated_restored_denial_evidence_rejected": True,
         },
-        "observations": observations,
+        "observations": report_observations,
         "log_digests": log_digests,
         "cases": sorted(cases, key=lambda item: item["case_id"]),
         "summary": {
@@ -990,7 +1031,7 @@ def acceptance(output: Path, source_sha: str) -> None:
                 mode="direct",
                 destination=MCP_SHORT_URL,
             )
-            collect_runtime_observations(
+            observations = collect_runtime_observations(
                 context, loaded_image, versions["calico"]["images"]
             )
 
@@ -1078,7 +1119,7 @@ def acceptance(output: Path, source_sha: str) -> None:
             if raw_key in retained or "authorization:" in retained.lower():
                 raise AcceptanceError("retained artifact disclosed credential material")
             verify_report(
-                json.loads(retained),
+                load_evidence_json(retained),
                 expected_source_sha=source_sha,
                 now=datetime.now(timezone.utc),
             )

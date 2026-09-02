@@ -199,6 +199,37 @@ def test_acceptance_waits_for_api_stability_before_loaded_image_inspection():
     assert load_position < stability_position < inspect_position
 
 
+def test_acceptance_keeps_p2b_controls_separate_and_retains_restored_policies():
+    source = (ROOT / "scripts" / "run_kubernetes_enforcement_acceptance.py").read_text(
+        encoding="utf-8"
+    )
+    acceptance_body = source.split("def acceptance(", maxsplit=1)[1]
+
+    removal_position = acceptance_body.index('"delete", "networkpolicy", "--all"')
+    service_reachable_position = acceptance_body.index(
+        '("NEG-001", MCP_SHORT_URL, "MCP Service")', removal_position
+    )
+    pod_reachable_position = acceptance_body.index(
+        '("NEG-002", pod_destination, "MCP Pod IP")', removal_position
+    )
+    restoration_position = acceptance_body.index(
+        'str(PROFILE / "manifests" / "network-policies.yaml")',
+        pod_reachable_position,
+    )
+    reblocked_position = acceptance_body.index('case_id="KE-016"', restoration_position)
+    restored_snapshot_position = acceptance_body.index(
+        "observations = collect_runtime_observations(", reblocked_position
+    )
+    mutation_position = acceptance_body.index(
+        "mutated = copy.deepcopy(provisional)", restored_snapshot_position
+    )
+
+    assert removal_position < service_reachable_position < restoration_position
+    assert removal_position < pod_reachable_position < restoration_position
+    assert restoration_position < reblocked_position < restored_snapshot_position
+    assert restored_snapshot_position < mutation_position
+
+
 def test_lab_fixture_tool_is_allowed_by_its_key_bound_readonly_role():
     lab_source = (PROFILE / "scripts" / "lab_entrypoint.py").read_text(encoding="utf-8")
     lab_tree = ast.parse(lab_source)
