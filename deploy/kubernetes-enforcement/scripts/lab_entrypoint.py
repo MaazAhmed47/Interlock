@@ -15,12 +15,17 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
 from urllib import request as urllib_request
 from urllib.error import URLError
-from typing import Any
 
 import httpx
 import requests
+
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 MCP_HOST = "mcp.interlock-mcp.svc.cluster.local"
 MCP_SERVICE_URL = f"http://{MCP_HOST}:8080"

@@ -1,7 +1,10 @@
 """Static security invariants for the disposable Kubernetes enforcement profile."""
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import yaml
 
@@ -170,3 +173,29 @@ def test_ci_runs_live_acceptance_and_reverifies_exact_head_evidence():
     assert "run_kubernetes_enforcement_acceptance.py" in steps
     assert "verify_kubernetes_enforcement_evidence.py" in steps
     assert "if-no-files-found" in steps and "error" in steps
+
+
+def test_lab_bootstrap_direct_execution_resolves_repository_modules(tmp_path):
+    script = PROFILE / "scripts" / "lab_entrypoint.py"
+    environment = os.environ.copy()
+    environment.pop("DATABASE_URL", None)
+    environment.update(
+        {
+            "FIREWALL_DB_PATH": str(tmp_path / "lab.db"),
+            "INTERLOCK_LAB_API_KEY": "lf_" + "developer_" + "local_test_only",
+            "MCP_REGISTRY_ALLOWED_HOSTS": "mcp.interlock-mcp.svc.cluster.local",
+        }
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(script), "bootstrap"],
+        cwd=tmp_path,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert '"bootstrap": "complete"' in completed.stdout
+    assert "ModuleNotFoundError" not in completed.stderr
