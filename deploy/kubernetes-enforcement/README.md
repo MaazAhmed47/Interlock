@@ -28,9 +28,24 @@ Interlock gateway -> MCP test server              allowed
 The runner must prove the same live MCP endpoints are reachable before the
 isolation policy is applied. DNS is tested separately. It then applies the
 policy, proves direct denial using real pods and multiple clients, proves the
-mediated path, deliberately removes the isolation policy, confirms the verifier
-rejects the changed result, restores the policy, and reproves denial. A failed
-positive control stops the run; it cannot be relabelled as network enforcement.
+mediated path, and runs three separate controls:
+
+1. **Live policy-removal reachability control.** It deletes the relevant
+   NetworkPolicies in `interlock-agent` and `interlock-mcp`, then proves the same
+   direct MCP Service and Pod-IP targets are reachable. This establishes that
+   the targets and harness are reachable when the network boundary is removed.
+2. **Live restoration control.** It reapplies the committed NetworkPolicies and
+   proves the direct MCP Service target is denied again. This establishes that
+   the observed denial depends on the restored policy boundary.
+3. **Evidence-integrity mutation control.** Independently of policy removal, it
+   copies the post-restoration report, changes `KE-016.actual_result` from
+   `network_denied` to `allowed`, and proves the verifier rejects the mutation
+   with the bounded `result mismatch` category. This establishes verifier
+   integrity; it is not a live policy-removal result.
+
+Policy removal proves live reachability; a separate synthetic mutation proves verifier integrity.
+A failed positive control stops the run; it cannot be relabelled as network
+enforcement.
 
 ## Evidence boundaries
 

@@ -60,11 +60,15 @@
     "negative_controls": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["same_target_reachable_without_policy", "mutated_evidence_rejected", "policy_restored_and_reverified"],
+      "required": [
+        "direct_target_reachable_after_policy_removal",
+        "policy_restored_and_direct_target_reblocked",
+        "mutated_restored_denial_evidence_rejected"
+      ],
       "properties": {
-        "same_target_reachable_without_policy": {"type": "boolean"},
-        "mutated_evidence_rejected": {"type": "boolean"},
-        "policy_restored_and_reverified": {"type": "boolean"}
+        "direct_target_reachable_after_policy_removal": {"type": "boolean"},
+        "policy_restored_and_direct_target_reblocked": {"type": "boolean"},
+        "mutated_restored_denial_evidence_rejected": {"type": "boolean"}
       }
     },
     "observations": {

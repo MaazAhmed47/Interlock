@@ -580,9 +580,9 @@ def build_report(
             "deployment_configuration": ["KE-006", "KE-008", "KE-009", "KE-018"],
         },
         "negative_controls": {
-            "same_target_reachable_without_policy": True,
-            "mutated_evidence_rejected": True,
-            "policy_restored_and_reverified": True,
+            "direct_target_reachable_after_policy_removal": True,
+            "policy_restored_and_direct_target_reblocked": True,
+            "mutated_restored_denial_evidence_rejected": True,
         },
         "observations": observations,
         "log_digests": log_digests,
@@ -956,16 +956,22 @@ def acceptance(output: Path, source_sha: str) -> None:
             for namespace in ("interlock-agent", "interlock-mcp"):
                 kubectl(context, "-n", namespace, "delete", "networkpolicy", "--all")
             time.sleep(2)
-            removal_control = probe(
-                context,
-                namespace="interlock-agent",
-                pod="agent",
-                case_id="NEG-001",
-                mode="direct",
-                destination=MCP_SHORT_URL,
-            )
-            if removal_control.get("actual_result") != "allowed":
-                raise AcceptanceError("policy-removal reachability control failed")
+            for control_id, destination, target_name in (
+                ("NEG-001", MCP_SHORT_URL, "MCP Service"),
+                ("NEG-002", pod_destination, "MCP Pod IP"),
+            ):
+                removal_control = probe(
+                    context,
+                    namespace="interlock-agent",
+                    pod="agent",
+                    case_id=control_id,
+                    mode="direct",
+                    destination=destination,
+                )
+                if removal_control.get("actual_result") != "allowed":
+                    raise AcceptanceError(
+                        f"policy-removal reachability control failed for {target_name}"
+                    )
 
             kubectl(
                 context,
@@ -1025,8 +1031,10 @@ def acceptance(output: Path, source_sha: str) -> None:
                 log_digests=log_digests,
             )
             mutated = copy.deepcopy(provisional)
-            # The mutation test isolates result matching from the later cleanup
-            # gate. The retained report remains false until deletion is proven.
+            # This synthetic mutation is independent of live policy removal. It
+            # changes retained post-restoration denial evidence and isolates
+            # result matching from the later cleanup gate. The retained report's
+            # cluster_deleted observation remains false until deletion is proven.
             mutated["observations"]["cluster_deleted"] = True
             next(item for item in mutated["cases"] if item["case_id"] == "KE-016")[
                 "actual_result"

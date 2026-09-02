@@ -21,6 +21,11 @@ from scripts.verify_kubernetes_enforcement_evidence import (
 ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
 DIGESTS = expected_profile_digests()
+NEGATIVE_CONTROL_FIELDS = (
+    "direct_target_reachable_after_policy_removal",
+    "policy_restored_and_direct_target_reblocked",
+    "mutated_restored_denial_evidence_rejected",
+)
 
 
 def _report() -> dict:
@@ -67,9 +72,9 @@ def _report() -> dict:
             "deployment_configuration": ["KE-008", "KE-018"],
         },
         "negative_controls": {
-            "same_target_reachable_without_policy": True,
-            "mutated_evidence_rejected": True,
-            "policy_restored_and_reverified": True,
+            "direct_target_reachable_after_policy_removal": True,
+            "policy_restored_and_direct_target_reblocked": True,
+            "mutated_restored_denial_evidence_rejected": True,
         },
         "observations": {
             "loaded_image": {
@@ -119,6 +124,28 @@ def test_complete_fresh_report_verifies():
     assert verified["case_count"] == len(REQUIRED_CASES)
 
 
+def test_runner_emits_the_three_distinct_negative_controls():
+    expected = _report()
+    generated = acceptance_module.build_report(
+        source_sha=SHA,
+        run_id=expected["run_id"],
+        started_at=expected["run_started_at"],
+        completed_at=expected["run_completed_at"],
+        node_image_id=expected["environment"]["node_image"],
+        lab_image_id=expected["environment"]["lab_image"],
+        manifest_digest=expected["digests"]["manifest_bundle_sha256"],
+        config_digest=expected["digests"]["config_sha256"],
+        calico_digest=expected["digests"]["calico_manifest_sha256"],
+        cases=expected["cases"],
+        observations=expected["observations"],
+        log_digests=expected["log_digests"],
+    )
+
+    assert generated["negative_controls"] == {
+        field: True for field in NEGATIVE_CONTROL_FIELDS
+    }
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -152,12 +179,6 @@ def test_complete_fresh_report_verifies():
             "summary mismatch",
         ),
         (
-            lambda report: report["negative_controls"].update(
-                same_target_reachable_without_policy=False
-            ),
-            "negative control failed",
-        ),
-        (
             lambda report: report["observations"]["loaded_image"].update(
                 reference="interlock-kubernetes-enforcement:" + "b" * 40
             ),
@@ -183,6 +204,42 @@ def test_report_schema_rejects_missing_required_field():
     del report["environment"]["cni"]
     with pytest.raises(EvidenceVerificationError, match="schema"):
         verify_report(report, expected_source_sha=SHA, now=None)
+
+
+@pytest.mark.parametrize("field", NEGATIVE_CONTROL_FIELDS)
+def test_report_schema_requires_each_distinct_negative_control(field):
+    report = _report()
+    del report["negative_controls"][field]
+
+    with pytest.raises(EvidenceVerificationError, match="schema"):
+        verify_report(report, expected_source_sha=SHA, now=None)
+
+
+@pytest.mark.parametrize("field", NEGATIVE_CONTROL_FIELDS)
+def test_report_verifier_fails_closed_when_any_negative_control_is_false(field):
+    report = _report()
+    report["negative_controls"][field] = False
+
+    with pytest.raises(EvidenceVerificationError, match="negative control failed"):
+        verify_report(report, expected_source_sha=SHA, now=None)
+
+
+def test_readme_separates_live_controls_from_evidence_integrity_mutation():
+    readme = (ROOT / "deploy" / "kubernetes-enforcement" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    lower = " ".join(readme.lower().split())
+
+    assert (
+        "Policy removal proves live reachability; a separate synthetic mutation "
+        "proves verifier integrity."
+    ) in readme
+    assert "live policy-removal reachability control" in lower
+    assert "live restoration control" in lower
+    assert "evidence-integrity mutation control" in lower
+    assert "policy-removal verifier rejection" not in lower
+    assert "policy removal causes verifier rejection" not in lower
+    assert "removes the isolation policy, confirms the verifier rejects" not in lower
 
 
 def test_stale_report_is_rejected():
