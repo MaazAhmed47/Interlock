@@ -301,6 +301,38 @@ def test_loaded_image_identity_rejects_unexpected_tag(monkeypatch):
         )
 
 
+def test_api_stability_gate_requires_consecutive_ready_results(monkeypatch):
+    results = iter([1, 0, 0, 0, 0, 0])
+    monkeypatch.setattr(
+        acceptance_module,
+        "kubectl",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=next(results), stdout="ok", stderr=""
+        ),
+    )
+    monkeypatch.setattr(acceptance_module.time, "sleep", lambda _seconds: None)
+
+    acceptance_module.wait_for_kubernetes_api_stability(
+        "test-context", max_attempts=6, required_consecutive=5
+    )
+
+
+def test_api_stability_gate_rejects_persistent_unavailability(monkeypatch):
+    monkeypatch.setattr(
+        acceptance_module,
+        "kubectl",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="unavailable"
+        ),
+    )
+    monkeypatch.setattr(acceptance_module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(AcceptanceError, match="did not remain ready"):
+        acceptance_module.wait_for_kubernetes_api_stability(
+            "test-context", max_attempts=5, required_consecutive=5
+        )
+
+
 @pytest.mark.parametrize(
     "secret_text",
     [

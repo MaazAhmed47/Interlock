@@ -95,6 +95,33 @@ def kubectl(
     return run(["kubectl", "--context", context, *args], **kwargs)
 
 
+def wait_for_kubernetes_api_stability(
+    context: str,
+    *,
+    max_attempts: int = 60,
+    required_consecutive: int = 10,
+    interval_seconds: int = 3,
+) -> None:
+    consecutive = 0
+    for attempt in range(max_attempts):
+        completed = kubectl(
+            context,
+            "get",
+            "--raw=/readyz",
+            check=False,
+            timeout=10,
+        )
+        if completed.returncode == 0 and completed.stdout.strip() == "ok":
+            consecutive += 1
+            if consecutive >= required_consecutive:
+                return
+        else:
+            consecutive = 0
+        if attempt + 1 < max_attempts:
+            time.sleep(interval_seconds)
+    raise AcceptanceError("Kubernetes API did not remain ready after image import")
+
+
 def download_verified(url: str, path: Path, expected_sha256: str) -> None:
     with urllib.request.urlopen(
         url, timeout=60
@@ -737,6 +764,7 @@ def acceptance(output: Path, source_sha: str) -> None:
                     ]
                 ).stdout.strip()
             )
+            wait_for_kubernetes_api_stability(context)
 
             kubectl(
                 context, "apply", "-f", str(PROFILE / "manifests" / "namespaces.yaml")
