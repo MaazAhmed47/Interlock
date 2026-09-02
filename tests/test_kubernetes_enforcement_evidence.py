@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import run_kubernetes_enforcement_acceptance as acceptance_module
 from scripts.kubernetes_enforcement_cases import REQUIRED_CASES
 from scripts.run_kubernetes_enforcement_acceptance import AcceptanceError, run
 from scripts.verify_kubernetes_enforcement_evidence import (
@@ -71,13 +72,19 @@ def _report() -> dict:
             "policy_restored_and_reverified": True,
         },
         "observations": {
+            "loaded_image": {
+                "reference": "interlock-kubernetes-enforcement:" + SHA,
+                "build_image_id": "sha256:" + "e" * 64,
+                "runtime_image_id": "sha256:" + "f" * 64,
+                "rootfs_diff_ids_sha256": "6" * 64,
+            },
             "cni": {
                 "ready_nodes": 1,
                 "expected_nodes": 1,
                 "runtime_image_ids": ["sha256:" + "1" * 64],
             },
             "workloads": [
-                {"identity": identity, "ready": True, "image_id": "sha256:" + "e" * 64}
+                {"identity": identity, "ready": True, "image_id": "sha256:" + "f" * 64}
                 for identity in ("agent", "gateway", "mcp_test_server", "unrelated")
             ],
             "network_policies": {"expected": 12, "observed": 12},
@@ -149,6 +156,18 @@ def test_complete_fresh_report_verifies():
             ),
             "negative control failed",
         ),
+        (
+            lambda report: report["observations"]["loaded_image"].update(
+                reference="interlock-kubernetes-enforcement:" + "b" * 40
+            ),
+            "loaded image reference mismatch",
+        ),
+        (
+            lambda report: report["observations"]["workloads"][0].update(
+                image_id="sha256:" + "7" * 64
+            ),
+            "workload image mismatch",
+        ),
     ],
 )
 def test_report_verifier_rejects_incomplete_or_mismatched_evidence(mutation, message):
@@ -203,6 +222,83 @@ def test_command_timeout_is_fail_closed_and_does_not_echo_arguments(monkeypatch)
     with pytest.raises(AcceptanceError, match="kind command timed out") as raised:
         run(["kind", "sensitive"], timeout=1)
     assert "sensitive" not in str(raised.value)
+
+
+def test_loaded_image_identity_binds_exact_tag_and_rootfs(monkeypatch):
+    layer = "sha256:" + "1" * 64
+    runtime_id = "sha256:" + "2" * 64
+    image = "interlock-kubernetes-enforcement:" + SHA
+    payload = {
+        "status": {
+            "id": runtime_id,
+            "repoTags": ["docker.io/library/" + image],
+        },
+        "info": {"imageSpec": {"rootfs": {"diff_ids": [layer]}}},
+    }
+    monkeypatch.setattr(
+        acceptance_module,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    identity = acceptance_module.inspect_loaded_image(
+        "test-cluster", image, "sha256:" + "3" * 64, [layer]
+    )
+
+    assert identity["reference"] == image
+    assert identity["runtime_image_id"] == runtime_id
+
+
+def test_loaded_image_identity_rejects_rootfs_mismatch(monkeypatch):
+    image = "interlock-kubernetes-enforcement:" + SHA
+    payload = {
+        "status": {
+            "id": "sha256:" + "2" * 64,
+            "repoTags": ["docker.io/library/" + image],
+        },
+        "info": {"imageSpec": {"rootfs": {"diff_ids": ["sha256:" + "4" * 64]}}},
+    }
+    monkeypatch.setattr(
+        acceptance_module,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    with pytest.raises(AcceptanceError, match="root filesystem identity mismatch"):
+        acceptance_module.inspect_loaded_image(
+            "test-cluster",
+            image,
+            "sha256:" + "3" * 64,
+            ["sha256:" + "1" * 64],
+        )
+
+
+def test_loaded_image_identity_rejects_unexpected_tag(monkeypatch):
+    layer = "sha256:" + "1" * 64
+    image = "interlock-kubernetes-enforcement:" + SHA
+    payload = {
+        "status": {
+            "id": "sha256:" + "2" * 64,
+            "repoTags": ["docker.io/library/interlock-kubernetes-enforcement:other"],
+        },
+        "info": {"imageSpec": {"rootfs": {"diff_ids": [layer]}}},
+    }
+    monkeypatch.setattr(
+        acceptance_module,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    with pytest.raises(AcceptanceError, match="exact source image"):
+        acceptance_module.inspect_loaded_image(
+            "test-cluster", image, "sha256:" + "3" * 64, [layer]
+        )
 
 
 @pytest.mark.parametrize(

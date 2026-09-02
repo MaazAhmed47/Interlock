@@ -308,6 +308,49 @@ def image_digest(value: str) -> str:
     raise AcceptanceError("runtime image identity is not digest-addressed")
 
 
+def inspect_loaded_image(
+    cluster_name: str,
+    image: str,
+    build_image_id: str,
+    build_rootfs_layers: list[str],
+) -> dict[str, str]:
+    expected_tag = f"docker.io/library/{image}"
+    payload = json.loads(
+        run(
+            [
+                "docker",
+                "exec",
+                f"{cluster_name}-control-plane",
+                "crictl",
+                "inspecti",
+                expected_tag,
+            ]
+        ).stdout
+    )
+    status = payload.get("status", {})
+    if expected_tag not in status.get("repoTags", []):
+        raise AcceptanceError("loaded image tag does not match the exact source image")
+    runtime_image_id = image_digest(status.get("id", ""))
+    runtime_layers = [
+        image_digest(item)
+        for item in payload.get("info", {})
+        .get("imageSpec", {})
+        .get("rootfs", {})
+        .get("diff_ids", [])
+    ]
+    if not runtime_layers or runtime_layers != build_rootfs_layers:
+        raise AcceptanceError("loaded image root filesystem identity mismatch")
+    rootfs_digest = sha256_bytes(
+        json.dumps(runtime_layers, separators=(",", ":")).encode()
+    )
+    return {
+        "reference": image,
+        "build_image_id": build_image_id,
+        "runtime_image_id": runtime_image_id,
+        "rootfs_diff_ids_sha256": rootfs_digest,
+    }
+
+
 def pod_statuses(context: str, namespace: str, selector: str) -> list[dict[str, Any]]:
     payload = json.loads(
         kubectl(
@@ -320,7 +363,7 @@ def pod_statuses(context: str, namespace: str, selector: str) -> list[dict[str, 
 
 
 def collect_runtime_observations(
-    context: str, lab_image_id: str, calico_image_refs: dict[str, str]
+    context: str, loaded_image: dict[str, str], calico_image_refs: dict[str, str]
 ) -> dict[str, Any]:
     calico_pods = pod_statuses(context, "kube-system", "k8s-app=calico-node")
     if len(calico_pods) != 1:
@@ -395,7 +438,7 @@ def collect_runtime_observations(
                 "image_id": image_digest(statuses[0]["imageID"]),
             }
         )
-    if any(item["image_id"] != lab_image_id for item in workloads):
+    if any(item["image_id"] != loaded_image["runtime_image_id"] for item in workloads):
         raise AcceptanceError("workload image ID does not match the built lab image")
 
     policies = json.loads(
@@ -410,6 +453,7 @@ def collect_runtime_observations(
         raise AcceptanceError("deployed NetworkPolicy count mismatch")
 
     return {
+        "loaded_image": loaded_image,
         "cni": {
             "ready_nodes": len(calico_pods),
             "expected_nodes": 1,
@@ -656,9 +700,31 @@ def acceptance(output: Path, source_sha: str) -> None:
                     ["docker", "image", "inspect", image, "--format", "{{.Id}}"]
                 ).stdout.strip()
             )
+            lab_rootfs_layers = [
+                image_digest(item)
+                for item in json.loads(
+                    run(
+                        [
+                            "docker",
+                            "image",
+                            "inspect",
+                            image,
+                            "--format",
+                            "{{json .RootFS.Layers}}",
+                        ]
+                    ).stdout
+                )
+            ]
+            if not lab_rootfs_layers:
+                raise AcceptanceError(
+                    "built lab image root filesystem identity is missing"
+                )
             run(
                 [str(kind_path), "load", "docker-image", image, "--name", cluster_name],
                 timeout=KIND_IMAGE_LOAD_TIMEOUT_SECONDS,
+            )
+            loaded_image = inspect_loaded_image(
+                cluster_name, image, lab_image_id, lab_rootfs_layers
             )
             node_image_id = image_digest(
                 run(
@@ -729,7 +795,7 @@ def acceptance(output: Path, source_sha: str) -> None:
             )
             time.sleep(3)
             observations = collect_runtime_observations(
-                context, lab_image_id, versions["calico"]["images"]
+                context, loaded_image, versions["calico"]["images"]
             )
 
             for case_id, mode, method, namespace, pod, destination in (
@@ -886,7 +952,7 @@ def acceptance(output: Path, source_sha: str) -> None:
                 destination=MCP_SHORT_URL,
             )
             collect_runtime_observations(
-                context, lab_image_id, versions["calico"]["images"]
+                context, loaded_image, versions["calico"]["images"]
             )
 
             case_started = utc_now()

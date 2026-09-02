@@ -201,13 +201,19 @@ def verify_report(
         raise EvidenceVerificationError("negative control failed")
 
     observations = report["observations"]
+    loaded_image = observations["loaded_image"]
+    expected_image_reference = f"interlock-kubernetes-enforcement:{expected_source_sha}"
+    if loaded_image["reference"] != expected_image_reference:
+        raise EvidenceVerificationError("loaded image reference mismatch")
+    if loaded_image["build_image_id"] != report["environment"]["lab_image"]:
+        raise EvidenceVerificationError("loaded image build identity mismatch")
     identities = [item["identity"] for item in observations["workloads"]]
     if set(identities) != {"agent", "gateway", "mcp_test_server", "unrelated"} or len(
         identities
     ) != len(set(identities)):
         raise EvidenceVerificationError("workload identity mismatch")
     if any(
-        item["image_id"] != report["environment"]["lab_image"]
+        item["image_id"] != loaded_image["runtime_image_id"]
         for item in observations["workloads"]
     ):
         raise EvidenceVerificationError("workload image mismatch")

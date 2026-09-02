@@ -70,8 +70,19 @@
     "observations": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["cni", "workloads", "network_policies", "service_account_tokens_disabled", "log_scan_passed", "cluster_deleted"],
+      "required": ["loaded_image", "cni", "workloads", "network_policies", "service_account_tokens_disabled", "log_scan_passed", "cluster_deleted"],
       "properties": {
+        "loaded_image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reference", "build_image_id", "runtime_image_id", "rootfs_diff_ids_sha256"],
+          "properties": {
+            "reference": {"type": "string", "pattern": "^interlock-kubernetes-enforcement:[0-9a-f]{40}$"},
+            "build_image_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "runtime_image_id": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+            "rootfs_diff_ids_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        },
         "cni": {
           "type": "object",
           "additionalProperties": false,
