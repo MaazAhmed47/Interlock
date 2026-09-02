@@ -1,0 +1,92 @@
+# Kubernetes Enforcement Reference Profile
+
+This is a local, disposable reference profile. It is an executable security
+lab for one named environment: kind v0.33.0, Kubernetes v1.36.4, and Calico v3.32.2.
+Calico is the NetworkPolicy-capable CNI in this profile; a Kubernetes
+NetworkPolicy object without an enforcing CNI has no effect.
+
+The kind node and lab base image are digest-addressed. The runner first verifies
+the complete upstream Calico v3.32.2 manifest by SHA-256, then replaces its
+three exact release-tag image references with the multi-architecture digests in
+`kind/versions.json` before applying it. Deployed image references and runtime
+image IDs are both checked. Version selection follows the official
+[kind configuration](https://kind.sigs.k8s.io/docs/user/configuration/),
+[Kubernetes NetworkPolicy](https://kubernetes.io/docs/concepts/services-networking/network-policies/),
+and [Calico Kubernetes requirements](https://docs.tigera.io/calico/latest/getting-started/kubernetes/requirements)
+documentation.
+
+The bounded question is whether these exact workloads and ports behave as
+follows under the retained manifest and runtime digests:
+
+```text
+agent -> Interlock gateway -> MCP test server     allowed
+agent -> MCP test server directly                 denied
+unrelated probe -> MCP test server directly       denied
+Interlock gateway -> MCP test server              allowed
+```
+
+The runner must prove the same live MCP endpoints are reachable before the
+isolation policy is applied. DNS is tested separately. It then applies the
+policy, proves direct denial using real pods and multiple clients, proves the
+mediated path, deliberately removes the isolation policy, confirms the verifier
+rejects the changed result, restores the policy, and reproves denial. A failed
+positive control stops the run; it cannot be relabelled as network enforcement.
+
+## Evidence boundaries
+
+- Network denial evidence is a bounded source-pod connection result, paired
+  with a same-target policy-off positive control, successful DNS resolution,
+  Calico readiness/version data, and exact deployed policy/config digests.
+- Interlock audit evidence is produced only by the mediated `/mcp/call` and its
+  verified hash-chain receipt.
+- Deployment/configuration evidence records selected workload identities,
+  policies, versions, source SHA, manifest/config digests, and runtime image IDs.
+
+Calico can block direct packets before reaching the gateway. This profile does not make Interlock observe
+traffic blocked before reaching the gateway, and it
+does not create an Interlock audit event for those packets.
+
+## Reproduction
+
+Prerequisites are Docker Engine, kubectl, Python 3.12, and network access to the
+exact pinned kind release, kind node image, Calico manifest, base image, and
+Python packages. The runner creates and later deletes only a uniquely named
+kind cluster with the `interlock-k8s-evidence-` prefix.
+
+```powershell
+python scripts/run_kubernetes_enforcement_acceptance.py `
+  --output .artifacts/kubernetes-enforcement-<git-sha> `
+  --source-sha <exact-40-character-git-sha>
+
+python scripts/verify_kubernetes_enforcement_evidence.py `
+  .artifacts/kubernetes-enforcement-<git-sha>/report.json `
+  --source-sha <same-exact-git-sha>
+```
+
+The output directory must not already exist. The runner verifies clean source
+identity, downloads the exact Calico manifest and kind binary into a private
+temporary directory, verifies their SHA-256 values, builds and loads a
+source-bound lab image, runs every required case, scans retained artifacts, and
+deletes the cluster even on failure. Skipped, missing, duplicate, stale,
+malformed, partial, failed, errored, xfailed, or xpassed cases are rejection
+conditions, not evidence.
+
+## Exact scope and limitations
+
+This profile proves only the documented workload paths in the named local lab
+at the recorded source, manifest, configuration, CNI, node-image, and lab-image
+digests. It does not prove production, managed Kubernetes, all CNIs, cloud
+firewall correctness, universal bypass prevention, tenant isolation, mTLS,
+identity assurance, universal agent security, complete SSRF prevention,
+complete DNS-rebinding prevention, compliance, or certification.
+
+It does not replace workload identity, authorization, secrets management,
+sandboxing, egress controls, SIEM, or incident response. Those controls remain
+necessary according to the deployment's threat model. The profile also does not
+change or broaden the separate Docker Phase 2 evidence.
+
+Application pods have no ServiceAccount token and no Kubernetes API allowance.
+The gateway's local/dev URL guard is intentionally not the control under test:
+the MCP fixture is a private cluster Service, while Calico supplies the tested
+network boundary. No customer, cloud, production, or existing cluster is an
+allowed target for this runner.

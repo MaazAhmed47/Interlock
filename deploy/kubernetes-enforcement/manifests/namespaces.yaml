@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: interlock-agent
+  labels:
+    interlock.test/boundary: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: interlock-gateway
+  labels:
+    interlock.test/boundary: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: interlock-mcp
+  labels:
+    interlock.test/boundary: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: interlock-control
+  labels:
+    interlock.test/boundary: "true"
