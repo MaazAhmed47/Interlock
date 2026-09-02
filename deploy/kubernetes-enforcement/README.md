@@ -57,6 +57,16 @@ enforcement.
 - Deployment/configuration evidence records selected workload identities,
   policies, versions, source SHA, manifest/config digests, and runtime image IDs.
 
+`manifest_bundle_sha256` and `config_sha256` are canonical source-text bundle
+digests, not raw working-tree-byte digests. For every digest-bound checked-in
+YAML or JSON file, the shared digest function reads bytes, requires valid
+UTF-8, normalizes CRLF to LF, and rejects bare CR. It then hashes the repository-
+relative path and canonical UTF-8 bytes without parsing or reserializing YAML
+or JSON, reordering fields, stripping comments, trimming whitespace, or making
+any other content change. The Calico manifest SHA-256 remains a digest of the
+exact downloaded upstream bytes; per-policy hashes remain hashes of the
+documented canonical JSON enforcement payloads.
+
 The retained report includes a sorted `namespace/name` map for every live
 NetworkPolicy observed from the Kubernetes API in the four profile namespaces
 after policy restoration. Each entry contains only `apiVersion`, `kind`,

@@ -20,6 +20,10 @@ from typing import Any
 
 try:
     from scripts.kubernetes_enforcement_cases import REQUIRED_CASES
+    from scripts.kubernetes_enforcement_source_digest import (
+        CanonicalSourceDigestError,
+        canonical_source_bundle_sha256,
+    )
     from scripts.verify_kubernetes_enforcement_evidence import (
         EvidenceVerificationError,
         build_network_policy_evidence_map,
@@ -31,6 +35,10 @@ try:
     )
 except ModuleNotFoundError:  # direct script execution
     from kubernetes_enforcement_cases import REQUIRED_CASES  # type: ignore[no-redef]
+    from kubernetes_enforcement_source_digest import (  # type: ignore[no-redef]
+        CanonicalSourceDigestError,
+        canonical_source_bundle_sha256,
+    )
     from verify_kubernetes_enforcement_evidence import (  # type: ignore[no-redef]
         EvidenceVerificationError,
         build_network_policy_evidence_map,
@@ -138,18 +146,6 @@ def download_verified(url: str, path: Path, expected_sha256: str) -> None:
     if sha256_bytes(body) != expected_sha256:
         raise AcceptanceError("downloaded dependency digest mismatch")
     path.write_bytes(body)
-
-
-def bundle_digest(paths: list[Path]) -> str:
-    digest = hashlib.sha256()
-    for path in sorted(paths, key=lambda item: item.as_posix()):
-        relative = path.relative_to(ROOT).as_posix().encode()
-        body = path.read_bytes()
-        digest.update(len(relative).to_bytes(4, "big"))
-        digest.update(relative)
-        digest.update(len(body).to_bytes(8, "big"))
-        digest.update(body)
-    return digest.hexdigest()
 
 
 def assert_source(source_sha: str) -> None:
@@ -645,9 +641,15 @@ def acceptance(output: Path, source_sha: str) -> None:
     assert_source(source_sha)
     if output.exists():
         raise AcceptanceError("output directory must not already exist")
-    versions = json.loads(
-        (PROFILE / "kind" / "versions.json").read_text(encoding="utf-8")
-    )
+    manifest_paths = list((PROFILE / "manifests").glob("*.yaml"))
+    manifest_paths.append(PROFILE / "kind" / "cluster.yaml")
+    versions_path = PROFILE / "kind" / "versions.json"
+    try:
+        manifest_digest = canonical_source_bundle_sha256(manifest_paths, root=ROOT)
+        config_digest = canonical_source_bundle_sha256([versions_path], root=ROOT)
+    except CanonicalSourceDigestError as exc:
+        raise AcceptanceError(str(exc)) from None
+    versions = json.loads(versions_path.read_text(encoding="utf-8"))
     system = platform.system().lower()
     if system not in {"windows", "linux"} or platform.machine().lower() not in {
         "amd64",
@@ -669,10 +671,6 @@ def acceptance(output: Path, source_sha: str) -> None:
     report: dict[str, Any] | None = None
     raw_key = "lf_developer_" + secrets.token_urlsafe(32)
 
-    manifest_paths = list((PROFILE / "manifests").glob("*.yaml"))
-    manifest_paths.append(PROFILE / "kind" / "cluster.yaml")
-    manifest_digest = bundle_digest(manifest_paths)
-    config_digest = bundle_digest([PROFILE / "kind" / "versions.json"])
     calico_digest = versions["calico"]["manifest_sha256"]
 
     with tempfile.TemporaryDirectory(prefix="interlock-k8s-enforcement-") as temp_name:

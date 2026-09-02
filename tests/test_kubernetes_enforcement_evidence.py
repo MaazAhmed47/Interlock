@@ -1,15 +1,23 @@
 """Fail-closed evidence tests for the Kubernetes enforcement profile."""
 
 import copy
+import hashlib
 import json
+import shutil
 import subprocess
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from scripts import run_kubernetes_enforcement_acceptance as acceptance_module
+from scripts import verify_kubernetes_enforcement_evidence as verifier_module
 from scripts.kubernetes_enforcement_cases import REQUIRED_CASES
+from scripts.kubernetes_enforcement_source_digest import (
+    CanonicalSourceDigestError,
+    canonical_source_bundle_sha256,
+)
 from scripts.run_kubernetes_enforcement_acceptance import AcceptanceError, run
 from scripts.verify_kubernetes_enforcement_evidence import (
     EvidenceVerificationError,
@@ -33,6 +41,156 @@ NEGATIVE_CONTROL_FIELDS = (
     "policy_restored_and_direct_target_reblocked",
     "mutated_restored_denial_evidence_rejected",
 )
+
+
+def _bundle_entry_sha256(relative_path: str, body: bytes) -> str:
+    digest = hashlib.sha256()
+    relative = relative_path.encode("utf-8")
+    digest.update(len(relative).to_bytes(4, "big"))
+    digest.update(relative)
+    digest.update(len(body).to_bytes(8, "big"))
+    digest.update(body)
+    return digest.hexdigest()
+
+
+def _copied_profile_with_line_endings(
+    tmp_path: Path, line_ending: bytes
+) -> tuple[Path, Path]:
+    copied_root = tmp_path / "checkout"
+    copied_profile = copied_root / "deploy" / "kubernetes-enforcement"
+    shutil.copytree(ROOT / "deploy" / "kubernetes-enforcement", copied_profile)
+    digest_paths = list((copied_profile / "manifests").glob("*.yaml"))
+    digest_paths.extend(
+        [
+            copied_profile / "kind" / "cluster.yaml",
+            copied_profile / "kind" / "versions.json",
+        ]
+    )
+    for path in digest_paths:
+        canonical = path.read_bytes().replace(b"\r\n", b"\n")
+        assert b"\r" not in canonical
+        path.write_bytes(canonical.replace(b"\n", line_ending))
+    return copied_root, copied_profile
+
+
+def _use_copied_profile(monkeypatch, copied_root: Path, copied_profile: Path) -> None:
+    monkeypatch.setattr(verifier_module, "ROOT", copied_root)
+    monkeypatch.setattr(verifier_module, "PROFILE", copied_profile)
+    monkeypatch.setattr(
+        verifier_module,
+        "NETWORK_POLICY_MANIFEST",
+        copied_profile / "manifests" / "network-policies.yaml",
+    )
+
+
+@pytest.mark.parametrize("line_ending", [b"\n", b"\r\n"])
+def test_canonical_source_digest_accepts_lf_and_equivalent_crlf(tmp_path, line_ending):
+    source = tmp_path / "manifests" / "source.yaml"
+    source.parent.mkdir()
+    canonical = b"apiVersion: v1\nkind: ConfigMap\n"
+    source.write_bytes(canonical.replace(b"\n", line_ending))
+
+    assert canonical_source_bundle_sha256([source], root=tmp_path) == (
+        _bundle_entry_sha256("manifests/source.yaml", canonical)
+    )
+
+
+def test_canonical_source_digest_rejects_bare_cr_without_disclosing_content(tmp_path):
+    source = tmp_path / "config.json"
+    sensitive_sentinel = "canonical-digest-sensitive-sentinel"
+    source.write_bytes(b'{"name":"safe"}\r' + sensitive_sentinel.encode("utf-8"))
+
+    with pytest.raises(CanonicalSourceDigestError, match="bare CR") as raised:
+        canonical_source_bundle_sha256([source], root=tmp_path)
+
+    rendered_exception = "".join(
+        traceback.format_exception(
+            type(raised.value), raised.value, raised.value.__traceback__
+        )
+    )
+    assert sensitive_sentinel not in rendered_exception
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+def test_canonical_source_digest_rejects_invalid_utf8_without_disclosing_content(
+    tmp_path,
+):
+    source = tmp_path / "config.json"
+    sensitive_sentinel = "canonical-digest-sensitive-sentinel"
+    source.write_bytes(sensitive_sentinel.encode("utf-8") + b"\xff")
+
+    with pytest.raises(CanonicalSourceDigestError, match="valid UTF-8") as raised:
+        canonical_source_bundle_sha256([source], root=tmp_path)
+
+    rendered_exception = "".join(
+        traceback.format_exception(
+            type(raised.value), raised.value, raised.value.__traceback__
+        )
+    )
+    assert sensitive_sentinel not in rendered_exception
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+@pytest.mark.parametrize("line_ending", [b"\n", b"\r\n"])
+def test_report_verifier_accepts_lf_and_windows_autocrlf_source(
+    tmp_path, monkeypatch, line_ending
+):
+    copied_root, copied_profile = _copied_profile_with_line_endings(
+        tmp_path, line_ending
+    )
+    _use_copied_profile(monkeypatch, copied_root, copied_profile)
+
+    verified = verify_report(_report(), expected_source_sha=SHA, now=None)
+
+    assert verified["verified"] is True
+    assert verified["case_count"] == len(REQUIRED_CASES)
+    assert verified["network_policy_count"] == len(SOURCE_POLICY_MAP)
+
+
+def test_non_line_ending_source_mutation_still_fails_report_verification(
+    tmp_path, monkeypatch
+):
+    copied_root, copied_profile = _copied_profile_with_line_endings(tmp_path, b"\r\n")
+    policy_manifest = copied_profile / "manifests" / "network-policies.yaml"
+    policy_manifest.write_bytes(
+        policy_manifest.read_bytes() + b"# non-line-ending-content-mutation\r\n"
+    )
+    _use_copied_profile(monkeypatch, copied_root, copied_profile)
+
+    with pytest.raises(EvidenceVerificationError, match="repository digest mismatch"):
+        verify_report(_report(), expected_source_sha=SHA, now=None)
+
+
+def test_report_verifier_rejects_bare_cr_source_without_disclosure(
+    tmp_path, monkeypatch
+):
+    copied_root, copied_profile = _copied_profile_with_line_endings(tmp_path, b"\r\n")
+    sensitive_sentinel = "canonical-digest-sensitive-sentinel"
+    versions = copied_profile / "kind" / "versions.json"
+    versions.write_bytes(
+        versions.read_bytes() + b"\r" + sensitive_sentinel.encode("utf-8")
+    )
+    _use_copied_profile(monkeypatch, copied_root, copied_profile)
+
+    with pytest.raises(EvidenceVerificationError, match="bare CR") as raised:
+        verify_report(_report(), expected_source_sha=SHA, now=None)
+
+    rendered_exception = "".join(
+        traceback.format_exception(
+            type(raised.value), raised.value, raised.value.__traceback__
+        )
+    )
+    assert sensitive_sentinel not in rendered_exception
+    assert sensitive_sentinel not in str(raised.value.__context__)
+
+
+def test_runner_and_verifier_use_one_shared_canonical_source_digest():
+    assert (
+        acceptance_module.canonical_source_bundle_sha256
+        is verifier_module.canonical_source_bundle_sha256
+    )
 
 
 def _report() -> dict:

@@ -15,8 +15,16 @@ import yaml
 
 try:
     from scripts.kubernetes_enforcement_cases import REQUIRED_CASES
+    from scripts.kubernetes_enforcement_source_digest import (
+        CanonicalSourceDigestError,
+        canonical_source_bundle_sha256,
+    )
 except ModuleNotFoundError:  # direct script execution
     from kubernetes_enforcement_cases import REQUIRED_CASES  # type: ignore[no-redef]
+    from kubernetes_enforcement_source_digest import (  # type: ignore[no-redef]
+        CanonicalSourceDigestError,
+        canonical_source_bundle_sha256,
+    )
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = (
@@ -46,18 +54,6 @@ SENSITIVE_PATTERNS = (
 
 class EvidenceVerificationError(RuntimeError):
     """Evidence is incomplete, inconsistent, stale, or unsafe to retain."""
-
-
-def _bundle_digest(paths: list[Path]) -> str:
-    digest = hashlib.sha256()
-    for path in sorted(paths, key=lambda item: item.as_posix()):
-        relative = path.relative_to(ROOT).as_posix().encode()
-        body = path.read_bytes()
-        digest.update(len(relative).to_bytes(4, "big"))
-        digest.update(relative)
-        digest.update(len(body).to_bytes(8, "big"))
-        digest.update(body)
-    return digest.hexdigest()
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -259,15 +255,20 @@ def verify_network_policy_evidence_map(
 
 
 def expected_profile_digests() -> dict[str, str]:
-    """Recompute the checked-in configuration identities the report must bind."""
+    """Recompute canonical text identities for digest-bound profile source."""
 
     manifest_paths = list((PROFILE / "manifests").glob("*.yaml"))
     manifest_paths.append(PROFILE / "kind" / "cluster.yaml")
     versions_path = PROFILE / "kind" / "versions.json"
+    try:
+        manifest_digest = canonical_source_bundle_sha256(manifest_paths, root=ROOT)
+        config_digest = canonical_source_bundle_sha256([versions_path], root=ROOT)
+    except CanonicalSourceDigestError as exc:
+        raise EvidenceVerificationError(str(exc)) from None
     versions = json.loads(versions_path.read_text(encoding="utf-8"))
     return {
-        "manifest_bundle_sha256": _bundle_digest(manifest_paths),
-        "config_sha256": _bundle_digest([versions_path]),
+        "manifest_bundle_sha256": manifest_digest,
+        "config_sha256": config_digest,
         "calico_manifest_sha256": versions["calico"]["manifest_sha256"],
     }
 

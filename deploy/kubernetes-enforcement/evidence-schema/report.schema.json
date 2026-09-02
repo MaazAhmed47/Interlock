@@ -42,10 +42,26 @@
       "additionalProperties": false,
       "required": ["manifest_bundle_sha256", "config_sha256", "calico_manifest_sha256", "network_policy_evidence_sha256"],
       "properties": {
-        "manifest_bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "calico_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "network_policy_evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        "manifest_bundle_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the checked-in manifest canonical text bundle: valid UTF-8, CRLF normalized to LF, and bare CR rejected."
+        },
+        "config_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the checked-in configuration canonical text bundle: valid UTF-8, CRLF normalized to LF, and bare CR rejected."
+        },
+        "calico_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the exact downloaded upstream Calico manifest bytes."
+        },
+        "network_policy_evidence_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 binding the canonical policy map to the source SHA and canonical manifest-bundle digest."
+        }
       }
     },
     "evidence_boundaries": {
@@ -122,7 +138,11 @@
             "expected": {"type": "integer", "minimum": 1},
             "observed": {"type": "integer", "minimum": 1},
             "source_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
-            "manifest_bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "manifest_bundle_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "Canonical source-text manifest-bundle SHA-256 bound into this NetworkPolicy snapshot."
+            },
             "evidence_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             "policies": {
               "type": "object",
