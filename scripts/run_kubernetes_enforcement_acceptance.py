@@ -750,6 +750,7 @@ def acceptance(output: Path, source_sha: str) -> None:
                 [str(kind_path), "load", "docker-image", image, "--name", cluster_name],
                 timeout=KIND_IMAGE_LOAD_TIMEOUT_SECONDS,
             )
+            wait_for_kubernetes_api_stability(context)
             loaded_image = inspect_loaded_image(
                 cluster_name, image, lab_image_id, lab_rootfs_layers
             )
@@ -764,7 +765,6 @@ def acceptance(output: Path, source_sha: str) -> None:
                     ]
                 ).stdout.strip()
             )
-            wait_for_kubernetes_api_stability(context)
 
             kubectl(
                 context, "apply", "-f", str(PROFILE / "manifests" / "namespaces.yaml")

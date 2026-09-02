@@ -183,6 +183,21 @@ def test_kind_image_import_allows_for_slow_local_docker_transfers():
     assert KIND_IMAGE_LOAD_TIMEOUT_SECONDS >= 1200
 
 
+def test_acceptance_waits_for_api_stability_before_loaded_image_inspection():
+    source = (ROOT / "scripts" / "run_kubernetes_enforcement_acceptance.py").read_text(
+        encoding="utf-8"
+    )
+    acceptance_body = source.split("def acceptance(", maxsplit=1)[1]
+
+    load_position = acceptance_body.index('"load", "docker-image"')
+    stability_position = acceptance_body.index(
+        "wait_for_kubernetes_api_stability(context)"
+    )
+    inspect_position = acceptance_body.index("loaded_image = inspect_loaded_image(")
+
+    assert load_position < stability_position < inspect_position
+
+
 def test_lab_bootstrap_direct_execution_resolves_repository_modules(tmp_path):
     script = PROFILE / "scripts" / "lab_entrypoint.py"
     environment = os.environ.copy()
