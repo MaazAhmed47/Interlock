@@ -75,6 +75,7 @@ def _report() -> dict:
             "loaded_image": {
                 "reference": "interlock-kubernetes-enforcement:" + SHA,
                 "build_image_id": "sha256:" + "e" * 64,
+                "containerd_image_id": "sha256:" + "8" * 64,
                 "runtime_image_id": "sha256:" + "f" * 64,
                 "rootfs_diff_ids_sha256": "6" * 64,
             },
@@ -226,12 +227,14 @@ def test_command_timeout_is_fail_closed_and_does_not_echo_arguments(monkeypatch)
 
 def test_loaded_image_identity_binds_exact_tag_and_rootfs(monkeypatch):
     layer = "sha256:" + "1" * 64
-    runtime_id = "sha256:" + "2" * 64
+    containerd_id = "sha256:" + "2" * 64
+    runtime_id = "sha256:" + "4" * 64
     image = "interlock-kubernetes-enforcement:" + SHA
     payload = {
         "status": {
-            "id": runtime_id,
+            "id": containerd_id,
             "repoTags": ["docker.io/library/" + image],
+            "repoDigests": ["docker.io/library/import@" + runtime_id],
         },
         "info": {"imageSpec": {"rootfs": {"diff_ids": [layer]}}},
     }
@@ -248,6 +251,7 @@ def test_loaded_image_identity_binds_exact_tag_and_rootfs(monkeypatch):
     )
 
     assert identity["reference"] == image
+    assert identity["containerd_image_id"] == containerd_id
     assert identity["runtime_image_id"] == runtime_id
 
 
@@ -257,6 +261,7 @@ def test_loaded_image_identity_rejects_rootfs_mismatch(monkeypatch):
         "status": {
             "id": "sha256:" + "2" * 64,
             "repoTags": ["docker.io/library/" + image],
+            "repoDigests": ["docker.io/library/import@sha256:" + "5" * 64],
         },
         "info": {"imageSpec": {"rootfs": {"diff_ids": ["sha256:" + "4" * 64]}}},
     }
@@ -284,6 +289,7 @@ def test_loaded_image_identity_rejects_unexpected_tag(monkeypatch):
         "status": {
             "id": "sha256:" + "2" * 64,
             "repoTags": ["docker.io/library/interlock-kubernetes-enforcement:other"],
+            "repoDigests": ["docker.io/library/import@sha256:" + "5" * 64],
         },
         "info": {"imageSpec": {"rootfs": {"diff_ids": [layer]}}},
     }

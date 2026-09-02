@@ -357,7 +357,11 @@ def inspect_loaded_image(
     status = payload.get("status", {})
     if expected_tag not in status.get("repoTags", []):
         raise AcceptanceError("loaded image tag does not match the exact source image")
-    runtime_image_id = image_digest(status.get("id", ""))
+    containerd_image_id = image_digest(status.get("id", ""))
+    runtime_image_ids = {image_digest(item) for item in status.get("repoDigests", [])}
+    if len(runtime_image_ids) != 1:
+        raise AcceptanceError("loaded image runtime digest is missing or ambiguous")
+    runtime_image_id = runtime_image_ids.pop()
     runtime_layers = [
         image_digest(item)
         for item in payload.get("info", {})
@@ -373,6 +377,7 @@ def inspect_loaded_image(
     return {
         "reference": image,
         "build_image_id": build_image_id,
+        "containerd_image_id": containerd_image_id,
         "runtime_image_id": runtime_image_id,
         "rootfs_diff_ids_sha256": rootfs_digest,
     }
