@@ -8,6 +8,10 @@ import sys
 
 import yaml
 
+from scripts.run_kubernetes_enforcement_acceptance import (
+    KIND_IMAGE_LOAD_TIMEOUT_SECONDS,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "deploy" / "kubernetes-enforcement"
 NAMESPACES = {
@@ -173,6 +177,10 @@ def test_ci_runs_live_acceptance_and_reverifies_exact_head_evidence():
     assert "run_kubernetes_enforcement_acceptance.py" in steps
     assert "verify_kubernetes_enforcement_evidence.py" in steps
     assert "if-no-files-found" in steps and "error" in steps
+
+
+def test_kind_image_import_allows_for_slow_local_docker_transfers():
+    assert KIND_IMAGE_LOAD_TIMEOUT_SECONDS >= 1200
 
 
 def test_lab_bootstrap_direct_execution_resolves_repository_modules(tmp_path):

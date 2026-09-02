@@ -35,6 +35,7 @@ except ModuleNotFoundError:  # direct script execution
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "deploy" / "kubernetes-enforcement"
+KIND_IMAGE_LOAD_TIMEOUT_SECONDS = 1200
 ENTRYPOINT = "/app/deploy/kubernetes-enforcement/scripts/lab_entrypoint.py"
 CLUSTER_PREFIX = "interlock-k8s-evidence-"
 IMAGE_REPOSITORY = "interlock-kubernetes-enforcement"
@@ -657,7 +658,7 @@ def acceptance(output: Path, source_sha: str) -> None:
             )
             run(
                 [str(kind_path), "load", "docker-image", image, "--name", cluster_name],
-                timeout=300,
+                timeout=KIND_IMAGE_LOAD_TIMEOUT_SECONDS,
             )
             node_image_id = image_digest(
                 run(
