@@ -31,6 +31,7 @@ MCP_HOST = "mcp.interlock-mcp.svc.cluster.local"
 MCP_SERVICE_URL = f"http://{MCP_HOST}:8080"
 GATEWAY_URL = "http://interlock.interlock-gateway.svc.cluster.local:8001"
 RESULT_PREFIX = "INTERLOCK_K8S_RESULT "
+MCP_TOOL_NAME = "get"
 
 
 def _emit(case_id: str, actual_result: str, failure_category: str) -> None:
@@ -86,7 +87,7 @@ class MCPHandler(BaseHTTPRequestHandler):
             result: dict[str, Any] = {
                 "tools": [
                     {
-                        "name": "echo",
+                        "name": MCP_TOOL_NAME,
                         "description": "Return a fixed lab acknowledgement.",
                         "inputSchema": {
                             "type": "object",
@@ -159,7 +160,7 @@ def bootstrap() -> int:
 
     server_id = "_test_kubernetes_enforcement"
     tool = {
-        "name": "echo",
+        "name": MCP_TOOL_NAME,
         "description": "Return a fixed lab acknowledgement.",
         "inputSchema": {
             "type": "object",
@@ -172,7 +173,7 @@ def bootstrap() -> int:
         {
             "url": MCP_SERVICE_URL + "/mcp",
             "description": "Disposable Kubernetes enforcement fixture",
-            "allowed_tools": ["echo"],
+            "allowed_tools": [MCP_TOOL_NAME],
             "blocked_tools": [],
             "environment": "non_production",
             "probes_enabled": False,
@@ -262,7 +263,7 @@ def run_probe(args: argparse.Namespace) -> int:
                 headers={"x-api-key": key},
                 json={
                     "server_id": "_test_kubernetes_enforcement",
-                    "tool_name": "echo",
+                    "tool_name": MCP_TOOL_NAME,
                     "arguments": {},
                 },
                 timeout=8.0,
@@ -308,7 +309,7 @@ def run_probe(args: argparse.Namespace) -> int:
                 headers={"x-api-key": key},
                 json={
                     "server_id": "_test_kubernetes_enforcement",
-                    "tool_name": "echo",
+                    "tool_name": MCP_TOOL_NAME,
                     "arguments": {},
                 },
                 timeout=2.0,

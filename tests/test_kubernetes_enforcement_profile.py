@@ -1,5 +1,6 @@
 """Static security invariants for the disposable Kubernetes enforcement profile."""
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -196,6 +197,32 @@ def test_acceptance_waits_for_api_stability_before_loaded_image_inspection():
     inspect_position = acceptance_body.index("loaded_image = inspect_loaded_image(")
 
     assert load_position < stability_position < inspect_position
+
+
+def test_lab_fixture_tool_is_allowed_by_its_key_bound_readonly_role():
+    lab_source = (PROFILE / "scripts" / "lab_entrypoint.py").read_text(encoding="utf-8")
+    lab_tree = ast.parse(lab_source)
+    tool_name = next(
+        ast.literal_eval(node.value)
+        for node in lab_tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "MCP_TOOL_NAME"
+            for target in node.targets
+        )
+    )
+    policy_tree = ast.parse((ROOT / "core" / "policy.py").read_text(encoding="utf-8"))
+    policies = next(
+        ast.literal_eval(node.value)
+        for node in policy_tree.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "ROLE_POLICIES"
+    )
+
+    assert tool_name in policies["readonly_agent"]["allowed_tools"]
+    assert lab_source.count('"tool_name": MCP_TOOL_NAME') == 2
+    assert lab_source.count('"name": MCP_TOOL_NAME') == 2
 
 
 def test_lab_bootstrap_direct_execution_resolves_repository_modules(tmp_path):
