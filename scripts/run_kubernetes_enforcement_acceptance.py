@@ -66,15 +66,20 @@ def run(
     timeout: int = 300,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    completed = subprocess.run(
-        args,
-        cwd=ROOT,
-        input=input_text,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            args,
+            cwd=ROOT,
+            input=input_text,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise AcceptanceError(f"{Path(args[0]).name} command timed out") from exc
     if check and completed.returncode != 0:
         command_name = Path(args[0]).name
         raise AcceptanceError(
@@ -541,7 +546,7 @@ def acceptance(output: Path, source_sha: str) -> None:
     context = "kind-" + cluster_name
     run_id = "sha256:" + sha256_bytes((source_sha + cluster_name).encode())
     run_started_at = utc_now()
-    cluster_created = False
+    cluster_owned = False
     cases: list[dict[str, Any]] = []
     report: dict[str, Any] | None = None
     raw_key = "lf_developer_" + secrets.token_urlsafe(32)
@@ -579,6 +584,10 @@ def acceptance(output: Path, source_sha: str) -> None:
             existing = run([str(kind_path), "get", "clusters"]).stdout.splitlines()
             if cluster_name in existing:
                 raise AcceptanceError("fresh cluster name already exists")
+            # From this point onward the exact generated name is owned by this
+            # run. Cleanup must be attempted even if kind times out after
+            # partially creating the cluster.
+            cluster_owned = True
             run(
                 [
                     str(kind_path),
@@ -589,9 +598,8 @@ def acceptance(output: Path, source_sha: str) -> None:
                     "--config",
                     str(PROFILE / "kind" / "cluster.yaml"),
                 ],
-                timeout=300,
+                timeout=1200,
             )
-            cluster_created = True
 
             kubectl(context, "apply", "-f", str(calico_path), timeout=180)
             kubectl(
@@ -934,7 +942,7 @@ def acceptance(output: Path, source_sha: str) -> None:
                 raise AcceptanceError("mutated direct-access evidence was accepted")
             report = provisional
         finally:
-            if cluster_created:
+            if cluster_owned:
                 run(
                     [str(kind_path), "delete", "cluster", "--name", cluster_name],
                     timeout=180,

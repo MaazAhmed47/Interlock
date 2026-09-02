@@ -2,12 +2,14 @@
 
 import copy
 import json
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from scripts.kubernetes_enforcement_cases import REQUIRED_CASES
+from scripts.run_kubernetes_enforcement_acceptance import AcceptanceError, run
 from scripts.verify_kubernetes_enforcement_evidence import (
     EvidenceVerificationError,
     expected_profile_digests,
@@ -191,6 +193,16 @@ def test_probe_parser_requires_exactly_one_machine_record():
         parse_probe_output(doubled)
     with pytest.raises(EvidenceVerificationError, match="malformed probe result"):
         parse_probe_output("INTERLOCK_K8S_RESULT {")
+
+
+def test_command_timeout_is_fail_closed_and_does_not_echo_arguments(monkeypatch):
+    def timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(["kind", "sensitive"], 1)
+
+    monkeypatch.setattr("subprocess.run", timeout)
+    with pytest.raises(AcceptanceError, match="kind command timed out") as raised:
+        run(["kind", "sensitive"], timeout=1)
+    assert "sensitive" not in str(raised.value)
 
 
 @pytest.mark.parametrize(
