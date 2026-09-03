@@ -14,9 +14,46 @@ jobs:
     name: Backend tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout pull-request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+
+      - name: Checkout event SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify checked-out source identity
+        id: source
+        shell: bash
+        run: |
+          event_name='${{ github.event_name }}'
+          if [ "$event_name" = "pull_request" ]; then
+            expected='${{ github.event.pull_request.head.sha }}'
+          else
+            expected='${{ github.sha }}'
+          fi
+          if [ -z "$expected" ]; then
+            echo "::error::expected source SHA is missing"
+            exit 1
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::checked-out source SHA does not match the event source"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "::error::checked-out source tree is not clean"
+            exit 1
+          fi
+          echo "sha=$actual" >> "$GITHUB_OUTPUT"
+          echo "Verified source SHA: $actual"
 
       - uses: actions/setup-python@v5
         with:
@@ -123,7 +160,7 @@ jobs:
           echo "run_nonce=$run_nonce" >> "$GITHUB_OUTPUT"
           echo "session_token=$session_token" >> "$GITHUB_OUTPUT"
           echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
-          echo "Verified PostgreSQL security source SHA: $actual"
+          echo "Verified source SHA: $actual"
 
       - name: Install PostgreSQL test dependencies
         run: |
@@ -222,6 +259,7 @@ jobs:
             echo "::error::expected source SHA is missing"
             exit 1
           fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           actual="$(git rev-parse HEAD)"
           if [ "$actual" != "$expected" ]; then
             echo "::error::checked-out source SHA does not match the event source"
@@ -238,6 +276,7 @@ jobs:
           fi
           echo "sha=$actual" >> "$GITHUB_OUTPUT"
           echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
+          echo "Verified source SHA: $actual"
 
       - name: Set up pinned Python
         uses: actions/setup-python@v5
@@ -297,8 +336,13 @@ jobs:
           else
             expected='${{ github.sha }}'
           fi
+          if [ -z "$expected" ]; then
+            echo "::error::expected source SHA is missing"
+            exit 1
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           actual="$(git rev-parse HEAD)"
-          if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
+          if [ "$actual" != "$expected" ]; then
             echo "::error::checked-out source SHA does not match the event source"
             exit 1
           fi
@@ -313,6 +357,7 @@ jobs:
           fi
           echo "sha=$actual" >> "$GITHUB_OUTPUT"
           echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
+          echo "Verified source SHA: $actual"
 
       - uses: actions/setup-python@v5
         with:
@@ -348,7 +393,51 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout pull-request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Checkout event SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checked-out source identity
+        id: source
+        shell: bash
+        run: |
+          event_name='${{ github.event_name }}'
+          if [ "$event_name" = "pull_request" ]; then
+            expected='${{ github.event.pull_request.head.sha }}'
+          else
+            expected='${{ github.sha }}'
+          fi
+          if [ -z "$expected" ]; then
+            echo "::error::expected source SHA is missing"
+            exit 1
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::checked-out source SHA does not match the event source"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "::error::checked-out source tree is not clean"
+            exit 1
+          fi
+          evidence_dir="dependency-audit-evidence-$actual-${{ github.run_id }}-${{ github.run_attempt }}"
+          if [ -e "$evidence_dir" ]; then
+            echo "::error::fresh evidence directory already exists"
+            exit 1
+          fi
+          mkdir "$evidence_dir"
+          echo "sha=$actual" >> "$GITHUB_OUTPUT"
+          echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
+          echo "Verified source SHA: $actual"
 
       - uses: actions/setup-python@v5
         with:
@@ -378,7 +467,9 @@ jobs:
       - name: Record Python audit JSON
         id: pip_audit_json
         if: always()
-        run: pip-audit --progress-spinner off --format=json --output pip-audit.json
+        run: >-
+          pip-audit --progress-spinner off --format=json
+          --output ${{ steps.source.outputs.evidence_dir }}/pip-audit-${{ steps.source.outputs.sha }}.json
 
       - name: Install frontend dependencies
         id: npm_install
@@ -397,7 +488,7 @@ jobs:
           python scripts/audit_npm.py
           --npm-dir interlock-web
           --scope production
-          --write interlock-web/npm-audit-production.json
+          --write ${{ steps.source.outputs.evidence_dir }}/npm-audit-production-${{ steps.source.outputs.sha }}.json
 
       - name: Gate build/development dependencies (blocking)
         id: npm_development
@@ -406,17 +497,14 @@ jobs:
           python scripts/audit_npm.py
           --npm-dir interlock-web
           --scope development
-          --write interlock-web/npm-audit-all.json
+          --write ${{ steps.source.outputs.evidence_dir }}/npm-audit-all-${{ steps.source.outputs.sha }}.json
 
       - name: Upload audit artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dependency-audit-${{ github.sha }}
-          path: |
-            pip-audit.json
-            interlock-web/npm-audit-production.json
-            interlock-web/npm-audit-all.json
+          name: dependency-audit-${{ steps.source.outputs.sha }}
+          path: ${{ steps.source.outputs.evidence_dir }}
           if-no-files-found: warn
           retention-days: 30
 
@@ -452,9 +540,46 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout pull-request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+
+      - name: Checkout event SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Verify checked-out source identity
+        id: source
+        shell: bash
+        run: |
+          event_name='${{ github.event_name }}'
+          if [ "$event_name" = "pull_request" ]; then
+            expected='${{ github.event.pull_request.head.sha }}'
+          else
+            expected='${{ github.sha }}'
+          fi
+          if [ -z "$expected" ]; then
+            echo "::error::expected source SHA is missing"
+            exit 1
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::checked-out source SHA does not match the event source"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "::error::checked-out source tree is not clean"
+            exit 1
+          fi
+          echo "sha=$actual" >> "$GITHUB_OUTPUT"
+          echo "Verified source SHA: $actual"
 
       # Scans the commits introduced by the push/PR. Known historical findings
       # (all triaged as demo/test placeholder values) do not re-trigger.
@@ -463,6 +588,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
 
   frontend:
     name: Dashboard build
@@ -471,7 +597,44 @@ jobs:
       run:
         working-directory: interlock-web
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout pull-request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Checkout event SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checked-out source identity
+        id: source
+        shell: bash
+        run: |
+          event_name='${{ github.event_name }}'
+          if [ "$event_name" = "pull_request" ]; then
+            expected='${{ github.event.pull_request.head.sha }}'
+          else
+            expected='${{ github.sha }}'
+          fi
+          if [ -z "$expected" ]; then
+            echo "::error::expected source SHA is missing"
+            exit 1
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::checked-out source SHA does not match the event source"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "::error::checked-out source tree is not clean"
+            exit 1
+          fi
+          echo "sha=$actual" >> "$GITHUB_OUTPUT"
+          echo "Verified source SHA: $actual"
 
       - uses: actions/setup-node@v4
         with:
@@ -489,7 +652,44 @@ jobs:
     name: Helm chart
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout pull-request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Checkout event SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checked-out source identity
+        id: source
+        shell: bash
+        run: |
+          event_name='${{ github.event_name }}'
+          if [ "$event_name" = "pull_request" ]; then
+            expected='${{ github.event.pull_request.head.sha }}'
+          else
+            expected='${{ github.sha }}'
+          fi
+          if [ -z "$expected" ]; then
+            echo "::error::expected source SHA is missing"
+            exit 1
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::checked-out source SHA does not match the event source"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "::error::checked-out source tree is not clean"
+            exit 1
+          fi
+          echo "sha=$actual" >> "$GITHUB_OUTPUT"
+          echo "Verified source SHA: $actual"
 
       - uses: azure/setup-helm@v4
         with:
@@ -505,7 +705,44 @@ jobs:
     name: Docker image build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout pull-request head
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Checkout event SHA
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checked-out source identity
+        id: source
+        shell: bash
+        run: |
+          event_name='${{ github.event_name }}'
+          if [ "$event_name" = "pull_request" ]; then
+            expected='${{ github.event.pull_request.head.sha }}'
+          else
+            expected='${{ github.sha }}'
+          fi
+          if [ -z "$expected" ]; then
+            echo "::error::expected source SHA is missing"
+            exit 1
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::checked-out source SHA does not match the event source"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "::error::checked-out source tree is not clean"
+            exit 1
+          fi
+          echo "sha=$actual" >> "$GITHUB_OUTPUT"
+          echo "Verified source SHA: $actual"
 
       - name: Build runtime image
-        run: docker build -t interlock:ci .
+        run: docker build -t interlock:${{ steps.source.outputs.sha }} .
