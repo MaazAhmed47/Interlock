@@ -33,6 +33,10 @@ POLICY = ROOT / ".github" / "dependency-audit-policy.json"
 GATE = ROOT / "scripts" / "audit_npm.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "tests.yml"
 LOCKFILE = ROOT / "interlock-web" / "package-lock.json"
+VERIFIED_SOURCE_GUARD = (
+    "always() && steps.source.outcome == 'success' "
+    "&& steps.source.outputs.verified == 'true'"
+)
 
 REQUIRED_FIELDS = (
     "id",
@@ -556,8 +560,8 @@ def test_python_and_npm_audits_run_independently():
     for required in ("pip_audit", "npm_install", "npm_production", "npm_development"):
         assert required in steps, f"missing audit step id {required}"
         assert (
-            steps[required].get("if") == "always()"
-        ), f"step {required} must run even after an earlier ecosystem fails"
+            steps[required].get("if") == VERIFIED_SOURCE_GUARD
+        ), f"step {required} must continue only after verified source"
 
 
 def test_a_single_verdict_step_preserves_overall_failure():
@@ -570,7 +574,7 @@ def test_a_single_verdict_step_preserves_overall_failure():
     for name in ("PIP_AUDIT", "NPM_PRODUCTION", "NPM_DEVELOPMENT"):
         assert name in run, f"verdict ignores {name}"
     assert "exit 1" in run, "verdict must fail the job"
-    assert verdict[0].get("if") == "always()"
+    assert verdict[0].get("if") == VERIFIED_SOURCE_GUARD
 
 
 def test_audit_job_covers_python_and_npm_separately():
