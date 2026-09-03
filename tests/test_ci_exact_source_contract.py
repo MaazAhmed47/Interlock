@@ -27,6 +27,9 @@ CI_JOBS = {
 PR_SHA = "${{ github.event.pull_request.head.sha }}"
 PUSH_SHA = "${{ github.sha }}"
 VERIFIED_SHA = "${{ steps.source.outputs.sha }}"
+VERIFIED_SOURCE = "steps.source.outputs.verified == 'true'"
+SOURCE_SUCCESS = "steps.source.outcome == 'success'"
+SOURCE_VERIFIER = "python -I scripts/verify_ci_source.py"
 FAILURE_SWALLOWING = ("|| true", "exit 0", "set +e", "| true")
 
 
@@ -65,16 +68,15 @@ def _assert_exact_source_job(job_id: str, job: dict) -> None:
     assert identity.get("continue-on-error") is not True
     assert "if" not in identity
     command = str(identity.get("run", ""))
+    assert command.startswith("set -euo pipefail\n")
     assert "github.event.pull_request.head.sha" in command
     assert "github.sha" in command
-    assert "expected source SHA is missing" in command
     assert 'git config --global --add safe.directory "$GITHUB_WORKSPACE"' in command
     assert "safe.directory '*'" not in command
-    assert 'actual="$(git rev-parse HEAD)"' in command
-    assert 'if [ "$actual" != "$expected" ]' in command
-    assert "git status --porcelain --untracked-files=all" in command
-    assert 'echo "sha=$actual" >> "$GITHUB_OUTPUT"' in command
-    assert "Verified source SHA: $actual" in command
+    assert SOURCE_VERIFIER in command
+    assert '--expected "$expected"' in command
+    assert '--github-output "$GITHUB_OUTPUT"' in command
+    assert "$(" not in command
     for swallowed in FAILURE_SWALLOWING:
         assert swallowed not in command
 
@@ -121,7 +123,7 @@ def test_dependency_reports_and_docker_image_use_the_verified_source_identity():
     workflow = _workflow()
     dependency = _named_steps(workflow["jobs"]["dependency-audit"])
     identity = dependency["Verify checked-out source identity"]["run"]
-    assert "dependency-audit-evidence-$actual-" in identity
+    assert "dependency-audit-evidence-$expected-" in identity
     for name in (
         "Record Python audit JSON",
         "Gate production dependencies (npm audit --omit=dev, blocking)",
@@ -135,6 +137,64 @@ def test_dependency_reports_and_docker_image_use_the_verified_source_identity():
 
     docker = _named_steps(workflow["jobs"]["docker"])["Build runtime image"]
     assert docker["run"] == f"docker build -t interlock:{VERIFIED_SHA} ."
+
+
+def _assert_dependency_audit_fails_closed_after_source_failure(job: dict) -> None:
+    named = _named_steps(job)
+    source_index = job["steps"].index(named["Verify checked-out source identity"])
+    protected_steps = {
+        "Install dependencies and pip-audit",
+        "Audit Python dependencies (pip-audit, blocking)",
+        "Record Python audit JSON",
+        "Install frontend dependencies",
+        "Gate production dependencies (npm audit --omit=dev, blocking)",
+        "Gate build/development dependencies (blocking)",
+        "Upload audit artifacts",
+        "Dependency audit verdict",
+    }
+    assert protected_steps <= set(named)
+
+    for step in job["steps"][source_index + 1 :]:
+        condition = str(step.get("if", ""))
+        if condition:
+            assert VERIFIED_SOURCE in condition
+            assert SOURCE_SUCCESS in condition
+        if step.get("name") in protected_steps:
+            # With source verification failed, the default success() gate blocks
+            # steps without `if`; every explicit gate requires verified=true.
+            runs_with_failed_source = (
+                bool(condition) and VERIFIED_SOURCE not in condition
+            )
+            assert not runs_with_failed_source, step.get("name")
+            assert step.get("continue-on-error") is not True
+
+    upload = named["Upload audit artifacts"]
+    assert VERIFIED_SHA in upload["with"]["name"]
+    assert upload["with"]["path"] == "${{ steps.source.outputs.evidence_dir }}"
+
+
+def test_dependency_audit_source_failure_blocks_every_downstream_operation():
+    _assert_dependency_audit_fails_closed_after_source_failure(
+        _workflow()["jobs"]["dependency-audit"]
+    )
+
+
+def test_dependency_audit_rejects_identity_bypass_mutations():
+    job = _workflow()["jobs"]["dependency-audit"]
+    for step_name in (
+        "Audit Python dependencies (pip-audit, blocking)",
+        "Record Python audit JSON",
+        "Install frontend dependencies",
+        "Gate production dependencies (npm audit --omit=dev, blocking)",
+        "Gate build/development dependencies (blocking)",
+        "Upload audit artifacts",
+        "Dependency audit verdict",
+    ):
+        for bypass in ("always()", "failure()", "!cancelled()"):
+            mutated = copy.deepcopy(job)
+            _named_steps(mutated)[step_name]["if"] = bypass
+            with pytest.raises(AssertionError):
+                _assert_dependency_audit_fails_closed_after_source_failure(mutated)
 
 
 def test_contract_rejects_merge_ref_reordering_unverified_artifacts_and_swallowing():
@@ -165,6 +225,11 @@ def test_contract_rejects_merge_ref_reordering_unverified_artifacts_and_swallowi
     identity["run"] = f"{identity['run']}\ncommand || true"
     mutations.append(swallowed)
 
+    missing_verifier = copy.deepcopy(base)
+    identity = _named_steps(missing_verifier)["Verify checked-out source identity"]
+    identity["run"] = identity["run"].replace(SOURCE_VERIFIER, "python -c 'pass'")
+    mutations.append(missing_verifier)
+
     for mutated in mutations:
         with pytest.raises((AssertionError, KeyError)):
             _assert_exact_source_job("backend", mutated)
@@ -193,3 +258,16 @@ def test_workflow_has_no_status_swallowing_in_identity_or_critical_named_steps()
                 command = str(step.get("run", ""))
                 for swallowed in FAILURE_SWALLOWING:
                     assert swallowed not in command, f"{job_id}: {step.get('name')}"
+
+
+def test_no_always_condition_can_bypass_failed_source_verification():
+    workflow = _workflow()
+    for job_id, job in workflow["jobs"].items():
+        source_index = job["steps"].index(
+            _named_steps(job)["Verify checked-out source identity"]
+        )
+        for step in job["steps"][source_index + 1 :]:
+            condition = str(step.get("if", ""))
+            if "always()" in condition:
+                assert VERIFIED_SOURCE in condition, f"{job_id}: {step.get('name')}"
+                assert SOURCE_SUCCESS in condition, f"{job_id}: {step.get('name')}"

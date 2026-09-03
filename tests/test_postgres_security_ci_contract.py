@@ -79,16 +79,17 @@ def _assert_exact_source_binding(job):
 
     identity = steps["Verify checked-out source identity"]
     assert identity["id"] == "source"
-    assert "git rev-parse HEAD" in identity["run"]
+    assert identity["run"].startswith("set -euo pipefail\n")
+    assert "python -I scripts/verify_ci_source.py" in identity["run"]
+    assert '--expected "$expected"' in identity["run"]
+    assert '--github-output "$GITHUB_OUTPUT"' in identity["run"]
     assert "github.event.pull_request.head.sha" in identity["run"]
     assert "github.sha" in identity["run"]
-    assert "expected source SHA is missing" in identity["run"]
     assert (
         'git config --global --add safe.directory "$GITHUB_WORKSPACE"'
         in identity["run"]
     )
-    assert 'if [ "$actual" != "$expected" ]' in identity["run"]
-    assert "git status --porcelain --untracked-files=all" in identity["run"]
+    assert "$(" not in identity["run"]
 
     artifact = steps["Upload PostgreSQL security report"]
     assert (
@@ -210,7 +211,7 @@ def test_exact_source_binding_rejects_merge_ref_and_unverified_artifacts():
         if step.get("name") == "Verify checked-out source identity"
     )
     identity["run"] = identity["run"].replace(
-        'if [ "$actual" != "$expected" ]', 'if [ "$actual" = "$expected" ]'
+        "python -I scripts/verify_ci_source.py", "python -c 'pass'"
     )
     mutations.append(no_identity_assertion)
 

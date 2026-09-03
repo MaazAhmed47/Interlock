@@ -32,28 +32,22 @@ jobs:
         id: source
         shell: bash
         run: |
+          set -euo pipefail
           event_name='${{ github.event_name }}'
           if [ "$event_name" = "pull_request" ]; then
             expected='${{ github.event.pull_request.head.sha }}'
           else
             expected='${{ github.sha }}'
           fi
-          if [ -z "$expected" ]; then
-            echo "::error::expected source SHA is missing"
+          if ! git config --global --add safe.directory "$GITHUB_WORKSPACE"; then
+            echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          actual="$(git rev-parse HEAD)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::checked-out source SHA does not match the event source"
+          if ! python -I scripts/verify_ci_source.py \
+            --expected "$expected" \
+            --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
-          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-            echo "::error::checked-out source tree is not clean"
-            exit 1
-          fi
-          echo "sha=$actual" >> "$GITHUB_OUTPUT"
-          echo "Verified source SHA: $actual"
 
       - uses: actions/setup-python@v5
         with:
@@ -125,42 +119,42 @@ jobs:
       - name: Verify checked-out source identity
         id: source
         run: |
+          set -euo pipefail
           event_name='${{ github.event_name }}'
           if [ "$event_name" = "pull_request" ]; then
             expected='${{ github.event.pull_request.head.sha }}'
           else
             expected='${{ github.sha }}'
           fi
-          if [ -z "$expected" ]; then
-            echo "::error::expected source SHA is missing"
-            exit 1
-          fi
           # checkout's safe-directory setting is made with a temporary HOME;
           # register only this job's exact workspace for subsequent git reads.
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          actual="$(git rev-parse HEAD)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::checked-out source SHA does not match the event source"
+          if ! git config --global --add safe.directory "$GITHUB_WORKSPACE"; then
+            echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-            echo "::error::checked-out source tree is not clean"
+          if ! python -I scripts/verify_ci_source.py --expected "$expected" --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
-          run_nonce='${{ github.run_id }}-${{ github.run_attempt }}-'"$actual"
-          session_token="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          run_nonce='${{ github.run_id }}-${{ github.run_attempt }}-'"$expected"
+          session_file="$RUNNER_TEMP/postgres-session-token"
+          if ! python -c 'import secrets; print(secrets.token_urlsafe(32))' > "$session_file"; then
+            echo "::error::source verification failed: unable to create session token"
+            exit 1
+          fi
+          if ! IFS= read -r session_token < "$session_file" || [ -z "$session_token" ]; then
+            echo "::error::source verification failed: invalid session token"
+            exit 1
+          fi
           echo "::add-mask::$session_token"
-          evidence_dir="postgres-security-evidence-$actual-${{ github.run_id }}-${{ github.run_attempt }}"
+          evidence_dir="postgres-security-evidence-$expected-${{ github.run_id }}-${{ github.run_attempt }}"
           if [ -e "$evidence_dir" ]; then
             echo "::error::fresh evidence directory already exists"
             exit 1
           fi
           mkdir "$evidence_dir"
-          echo "sha=$actual" >> "$GITHUB_OUTPUT"
           echo "run_nonce=$run_nonce" >> "$GITHUB_OUTPUT"
           echo "session_token=$session_token" >> "$GITHUB_OUTPUT"
           echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
-          echo "Verified source SHA: $actual"
 
       - name: Install PostgreSQL test dependencies
         run: |
@@ -208,17 +202,17 @@ jobs:
           --run-nonce ${{ steps.source.outputs.run_nonce }}
 
       - name: Verify PostgreSQL cleanup
-        if: always() && steps.source.outcome == 'success' && steps.authorize.outcome == 'success'
+        if: always() && steps.source.outcome == 'success' && steps.source.outputs.verified == 'true' && steps.authorize.outcome == 'success'
         env: *postgres-test-env
         run: python -m scripts.postgres_test_database verify-clean
 
       - name: Clear disposable PostgreSQL session marker
-        if: always() && steps.source.outcome == 'success' && steps.authorize.outcome == 'success'
+        if: always() && steps.source.outcome == 'success' && steps.source.outputs.verified == 'true' && steps.authorize.outcome == 'success'
         env: *postgres-test-env
         run: python -m scripts.postgres_test_database clear
 
       - name: Upload PostgreSQL security report
-        if: always() && steps.source.outcome == 'success'
+        if: always() && steps.source.outcome == 'success' && steps.source.outputs.verified == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: postgres-security-${{ steps.source.outputs.sha }}
@@ -249,34 +243,26 @@ jobs:
         id: source
         shell: bash
         run: |
+          set -euo pipefail
           event_name='${{ github.event_name }}'
           if [ "$event_name" = "pull_request" ]; then
             expected='${{ github.event.pull_request.head.sha }}'
           else
             expected='${{ github.sha }}'
           fi
-          if [ -z "$expected" ]; then
-            echo "::error::expected source SHA is missing"
+          if ! git config --global --add safe.directory "$GITHUB_WORKSPACE"; then
+            echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          actual="$(git rev-parse HEAD)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::checked-out source SHA does not match the event source"
+          if ! python -I scripts/verify_ci_source.py --expected "$expected" --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
-          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-            echo "::error::checked-out source tree is not clean"
-            exit 1
-          fi
-          evidence_dir="phase2-docker-evidence-$actual-${{ github.run_id }}-${{ github.run_attempt }}"
+          evidence_dir="phase2-docker-evidence-$expected-${{ github.run_id }}-${{ github.run_attempt }}"
           if [ -e "$evidence_dir" ]; then
             echo "::error::fresh evidence directory already exists"
             exit 1
           fi
-          echo "sha=$actual" >> "$GITHUB_OUTPUT"
           echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
-          echo "Verified source SHA: $actual"
 
       - name: Set up pinned Python
         uses: actions/setup-python@v5
@@ -299,7 +285,7 @@ jobs:
           "${{ steps.source.outputs.evidence_dir }}"
 
       - name: Upload Docker Phase 2 evidence
-        if: always() && steps.source.outcome == 'success'
+        if: always() && steps.source.outcome == 'success' && steps.source.outputs.verified == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: phase2-docker-${{ steps.source.outputs.sha }}
@@ -330,34 +316,26 @@ jobs:
         id: source
         shell: bash
         run: |
+          set -euo pipefail
           event_name='${{ github.event_name }}'
           if [ "$event_name" = "pull_request" ]; then
             expected='${{ github.event.pull_request.head.sha }}'
           else
             expected='${{ github.sha }}'
           fi
-          if [ -z "$expected" ]; then
-            echo "::error::expected source SHA is missing"
+          if ! git config --global --add safe.directory "$GITHUB_WORKSPACE"; then
+            echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          actual="$(git rev-parse HEAD)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::checked-out source SHA does not match the event source"
+          if ! python -I scripts/verify_ci_source.py --expected "$expected" --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
-          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-            echo "::error::checked-out source tree is not clean"
-            exit 1
-          fi
-          evidence_dir="kubernetes-enforcement-evidence-$actual-${{ github.run_id }}-${{ github.run_attempt }}"
+          evidence_dir="kubernetes-enforcement-evidence-$expected-${{ github.run_id }}-${{ github.run_attempt }}"
           if [ -e "$evidence_dir" ]; then
             echo "::error::fresh evidence directory already exists"
             exit 1
           fi
-          echo "sha=$actual" >> "$GITHUB_OUTPUT"
           echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
-          echo "Verified source SHA: $actual"
 
       - uses: actions/setup-python@v5
         with:
@@ -379,7 +357,7 @@ jobs:
           --source-sha "${{ steps.source.outputs.sha }}"
 
       - name: Upload enforcement evidence
-        if: always() && steps.source.outcome == 'success'
+        if: always() && steps.source.outcome == 'success' && steps.source.outputs.verified == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: kubernetes-enforcement-${{ steps.source.outputs.sha }}
@@ -409,35 +387,27 @@ jobs:
         id: source
         shell: bash
         run: |
+          set -euo pipefail
           event_name='${{ github.event_name }}'
           if [ "$event_name" = "pull_request" ]; then
             expected='${{ github.event.pull_request.head.sha }}'
           else
             expected='${{ github.sha }}'
           fi
-          if [ -z "$expected" ]; then
-            echo "::error::expected source SHA is missing"
+          if ! git config --global --add safe.directory "$GITHUB_WORKSPACE"; then
+            echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          actual="$(git rev-parse HEAD)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::checked-out source SHA does not match the event source"
+          if ! python -I scripts/verify_ci_source.py --expected "$expected" --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
-          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-            echo "::error::checked-out source tree is not clean"
-            exit 1
-          fi
-          evidence_dir="dependency-audit-evidence-$actual-${{ github.run_id }}-${{ github.run_attempt }}"
+          evidence_dir="dependency-audit-evidence-$expected-${{ github.run_id }}-${{ github.run_attempt }}"
           if [ -e "$evidence_dir" ]; then
             echo "::error::fresh evidence directory already exists"
             exit 1
           fi
           mkdir "$evidence_dir"
-          echo "sha=$actual" >> "$GITHUB_OUTPUT"
           echo "evidence_dir=$evidence_dir" >> "$GITHUB_OUTPUT"
-          echo "Verified source SHA: $actual"
 
       - uses: actions/setup-python@v5
         with:
@@ -456,24 +426,24 @@ jobs:
 
       # Each ecosystem is audited independently: a Python advisory must not stop
       # the npm gates from running and reporting, and vice versa. Every audit
-      # step therefore runs with `if: always()` and records its own outcome id,
-      # and a final step fails the job if ANY of them failed. No step uses
-      # continue-on-error, `|| true`, or any other exit-swallowing construct.
+      # step therefore runs after earlier audit failures only when the source
+      # verifier emitted verified=true. A final step fails the job if ANY audit
+      # failed. No step uses continue-on-error or status swallowing.
       - name: Audit Python dependencies (pip-audit, blocking)
         id: pip_audit
-        if: always()
+        if: always() && steps.source.outcome == 'success' && steps.source.outputs.verified == 'true'
         run: pip-audit --progress-spinner off
 
       - name: Record Python audit JSON
         id: pip_audit_json
-        if: always()
+        if: always() && steps.source.outcome == 'success' && steps.source.outputs.verified == 'true'
         run: >-
           pip-audit --progress-spinner off --format=json
           --output ${{ steps.source.outputs.evidence_dir }}/pip-audit-${{ steps.source.outputs.sha }}.json
 
       - name: Install frontend dependencies
         id: npm_install
-        if: always()
+        if: always() && steps.source.outcome == 'success' && steps.source.outputs.verified == 'true'
         working-directory: interlock-web
         run: npm ci
 
@@ -483,7 +453,7 @@ jobs:
       # production advisory can never be relabelled as a build-only finding.
       - name: Gate production dependencies (npm audit --omit=dev, blocking)
         id: npm_production
-        if: always()
+        if: always() && steps.source.outcome == 'success' && steps.source.outputs.verified == 'true'
         run: >-
           python scripts/audit_npm.py
           --npm-dir interlock-web
@@ -492,7 +462,7 @@ jobs:
 
       - name: Gate build/development dependencies (blocking)
         id: npm_development
-        if: always()
+        if: always() && steps.source.outcome == 'success' && steps.source.outputs.verified == 'true'
         run: >-
           python scripts/audit_npm.py
           --npm-dir interlock-web
@@ -500,7 +470,7 @@ jobs:
           --write ${{ steps.source.outputs.evidence_dir }}/npm-audit-all-${{ steps.source.outputs.sha }}.json
 
       - name: Upload audit artifacts
-        if: always()
+        if: always() && steps.source.outcome == 'success' && steps.source.outputs.verified == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dependency-audit-${{ steps.source.outputs.sha }}
@@ -511,7 +481,7 @@ jobs:
       # Single authoritative verdict. Any failed or skipped audit fails the job,
       # so running the ecosystems independently never softens the result.
       - name: Dependency audit verdict
-        if: always()
+        if: always() && steps.source.outcome == 'success' && steps.source.outputs.verified == 'true'
         env:
           PIP_AUDIT: ${{ steps.pip_audit.outcome }}
           PIP_AUDIT_JSON: ${{ steps.pip_audit_json.outcome }}
@@ -519,6 +489,7 @@ jobs:
           NPM_PRODUCTION: ${{ steps.npm_production.outcome }}
           NPM_DEVELOPMENT: ${{ steps.npm_development.outcome }}
         run: |
+          set -euo pipefail
           failed=0
           for name in PIP_AUDIT PIP_AUDIT_JSON NPM_INSTALL NPM_PRODUCTION NPM_DEVELOPMENT; do
             outcome="${!name}"
@@ -558,28 +529,22 @@ jobs:
         id: source
         shell: bash
         run: |
+          set -euo pipefail
           event_name='${{ github.event_name }}'
           if [ "$event_name" = "pull_request" ]; then
             expected='${{ github.event.pull_request.head.sha }}'
           else
             expected='${{ github.sha }}'
           fi
-          if [ -z "$expected" ]; then
-            echo "::error::expected source SHA is missing"
+          if ! git config --global --add safe.directory "$GITHUB_WORKSPACE"; then
+            echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          actual="$(git rev-parse HEAD)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::checked-out source SHA does not match the event source"
+          if ! python -I scripts/verify_ci_source.py \
+            --expected "$expected" \
+            --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
-          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-            echo "::error::checked-out source tree is not clean"
-            exit 1
-          fi
-          echo "sha=$actual" >> "$GITHUB_OUTPUT"
-          echo "Verified source SHA: $actual"
 
       # Scans the commits introduced by the push/PR. Known historical findings
       # (all triaged as demo/test placeholder values) do not re-trigger.
@@ -613,28 +578,22 @@ jobs:
         id: source
         shell: bash
         run: |
+          set -euo pipefail
           event_name='${{ github.event_name }}'
           if [ "$event_name" = "pull_request" ]; then
             expected='${{ github.event.pull_request.head.sha }}'
           else
             expected='${{ github.sha }}'
           fi
-          if [ -z "$expected" ]; then
-            echo "::error::expected source SHA is missing"
+          if ! git config --global --add safe.directory "$GITHUB_WORKSPACE"; then
+            echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          actual="$(git rev-parse HEAD)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::checked-out source SHA does not match the event source"
+          if ! python -I scripts/verify_ci_source.py \
+            --expected "$expected" \
+            --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
-          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-            echo "::error::checked-out source tree is not clean"
-            exit 1
-          fi
-          echo "sha=$actual" >> "$GITHUB_OUTPUT"
-          echo "Verified source SHA: $actual"
 
       - uses: actions/setup-node@v4
         with:
@@ -668,28 +627,22 @@ jobs:
         id: source
         shell: bash
         run: |
+          set -euo pipefail
           event_name='${{ github.event_name }}'
           if [ "$event_name" = "pull_request" ]; then
             expected='${{ github.event.pull_request.head.sha }}'
           else
             expected='${{ github.sha }}'
           fi
-          if [ -z "$expected" ]; then
-            echo "::error::expected source SHA is missing"
+          if ! git config --global --add safe.directory "$GITHUB_WORKSPACE"; then
+            echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          actual="$(git rev-parse HEAD)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::checked-out source SHA does not match the event source"
+          if ! python -I scripts/verify_ci_source.py \
+            --expected "$expected" \
+            --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
-          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-            echo "::error::checked-out source tree is not clean"
-            exit 1
-          fi
-          echo "sha=$actual" >> "$GITHUB_OUTPUT"
-          echo "Verified source SHA: $actual"
 
       - uses: azure/setup-helm@v4
         with:
@@ -721,28 +674,22 @@ jobs:
         id: source
         shell: bash
         run: |
+          set -euo pipefail
           event_name='${{ github.event_name }}'
           if [ "$event_name" = "pull_request" ]; then
             expected='${{ github.event.pull_request.head.sha }}'
           else
             expected='${{ github.sha }}'
           fi
-          if [ -z "$expected" ]; then
-            echo "::error::expected source SHA is missing"
+          if ! git config --global --add safe.directory "$GITHUB_WORKSPACE"; then
+            echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          actual="$(git rev-parse HEAD)"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::checked-out source SHA does not match the event source"
+          if ! python -I scripts/verify_ci_source.py \
+            --expected "$expected" \
+            --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
-          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-            echo "::error::checked-out source tree is not clean"
-            exit 1
-          fi
-          echo "sha=$actual" >> "$GITHUB_OUTPUT"
-          echo "Verified source SHA: $actual"
 
       - name: Build runtime image
         run: docker build -t interlock:${{ steps.source.outputs.sha }} .
