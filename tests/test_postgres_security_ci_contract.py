@@ -79,9 +79,12 @@ def _assert_exact_source_binding(job):
 
     identity = steps["Verify checked-out source identity"]
     assert identity["id"] == "source"
+    assert identity["shell"] == "bash"
     assert identity["run"].startswith("set -euo pipefail\n")
-    assert "python -I scripts/verify_ci_source.py" in identity["run"]
+    verifier = 'python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py"'
+    assert verifier in identity["run"]
     assert '--expected "$expected"' in identity["run"]
+    assert '--repo "$GITHUB_WORKSPACE"' in identity["run"]
     assert '--github-output "$GITHUB_OUTPUT"' in identity["run"]
     assert "github.event.pull_request.head.sha" in identity["run"]
     assert "github.sha" in identity["run"]
@@ -211,7 +214,8 @@ def test_exact_source_binding_rejects_merge_ref_and_unverified_artifacts():
         if step.get("name") == "Verify checked-out source identity"
     )
     identity["run"] = identity["run"].replace(
-        "python -I scripts/verify_ci_source.py", "python -c 'pass'"
+        'python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py"',
+        "python -c 'pass'",
     )
     mutations.append(no_identity_assertion)
 

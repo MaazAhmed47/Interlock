@@ -43,8 +43,9 @@ jobs:
             echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          if ! python -I scripts/verify_ci_source.py \
+          if ! python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py" \
             --expected "$expected" \
+            --repo "$GITHUB_WORKSPACE" \
             --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
@@ -118,6 +119,7 @@ jobs:
 
       - name: Verify checked-out source identity
         id: source
+        shell: bash
         run: |
           set -euo pipefail
           event_name='${{ github.event_name }}'
@@ -132,7 +134,10 @@ jobs:
             echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          if ! python -I scripts/verify_ci_source.py --expected "$expected" --github-output "$GITHUB_OUTPUT"; then
+          if ! python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py" \
+            --expected "$expected" \
+            --repo "$GITHUB_WORKSPACE" \
+            --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
           run_nonce='${{ github.run_id }}-${{ github.run_attempt }}-'"$expected"
@@ -254,7 +259,10 @@ jobs:
             echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          if ! python -I scripts/verify_ci_source.py --expected "$expected" --github-output "$GITHUB_OUTPUT"; then
+          if ! python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py" \
+            --expected "$expected" \
+            --repo "$GITHUB_WORKSPACE" \
+            --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
           evidence_dir="phase2-docker-evidence-$expected-${{ github.run_id }}-${{ github.run_attempt }}"
@@ -327,7 +335,10 @@ jobs:
             echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          if ! python -I scripts/verify_ci_source.py --expected "$expected" --github-output "$GITHUB_OUTPUT"; then
+          if ! python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py" \
+            --expected "$expected" \
+            --repo "$GITHUB_WORKSPACE" \
+            --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
           evidence_dir="kubernetes-enforcement-evidence-$expected-${{ github.run_id }}-${{ github.run_attempt }}"
@@ -398,7 +409,10 @@ jobs:
             echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          if ! python -I scripts/verify_ci_source.py --expected "$expected" --github-output "$GITHUB_OUTPUT"; then
+          if ! python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py" \
+            --expected "$expected" \
+            --repo "$GITHUB_WORKSPACE" \
+            --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
           evidence_dir="dependency-audit-evidence-$expected-${{ github.run_id }}-${{ github.run_attempt }}"
@@ -540,8 +554,9 @@ jobs:
             echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          if ! python -I scripts/verify_ci_source.py \
+          if ! python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py" \
             --expected "$expected" \
+            --repo "$GITHUB_WORKSPACE" \
             --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
@@ -589,8 +604,9 @@ jobs:
             echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          if ! python -I scripts/verify_ci_source.py \
+          if ! python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py" \
             --expected "$expected" \
+            --repo "$GITHUB_WORKSPACE" \
             --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
@@ -638,8 +654,9 @@ jobs:
             echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          if ! python -I scripts/verify_ci_source.py \
+          if ! python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py" \
             --expected "$expected" \
+            --repo "$GITHUB_WORKSPACE" \
             --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi
@@ -685,8 +702,9 @@ jobs:
             echo "::error::source verification failed: unable to configure Git safe directory"
             exit 1
           fi
-          if ! python -I scripts/verify_ci_source.py \
+          if ! python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py" \
             --expected "$expected" \
+            --repo "$GITHUB_WORKSPACE" \
             --github-output "$GITHUB_OUTPUT"; then
             exit 1
           fi

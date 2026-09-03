@@ -128,8 +128,9 @@ def test_phase2_ci_job_is_exact_head_and_blocking():
     assert push_checkout["with"]["ref"] == "${{ github.sha }}"
     source = next(step for step in steps if step.get("id") == "source")
     assert source["run"].startswith("set -euo pipefail\n")
-    assert "python -I scripts/verify_ci_source.py" in source["run"]
+    assert 'python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py"' in source["run"]
     assert '--expected "$expected"' in source["run"]
+    assert '--repo "$GITHUB_WORKSPACE"' in source["run"]
     assert '--github-output "$GITHUB_OUTPUT"' in source["run"]
     setup = next(step for step in steps if step["name"] == "Set up pinned Python")
     assert setup["with"]["python-version"] == "3.12"

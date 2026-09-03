@@ -29,7 +29,7 @@ PUSH_SHA = "${{ github.sha }}"
 VERIFIED_SHA = "${{ steps.source.outputs.sha }}"
 VERIFIED_SOURCE = "steps.source.outputs.verified == 'true'"
 SOURCE_SUCCESS = "steps.source.outcome == 'success'"
-SOURCE_VERIFIER = "python -I scripts/verify_ci_source.py"
+SOURCE_VERIFIER = 'python -I "$GITHUB_WORKSPACE/scripts/verify_ci_source.py"'
 FAILURE_SWALLOWING = ("|| true", "exit 0", "set +e", "| true")
 
 
@@ -65,6 +65,7 @@ def _assert_exact_source_job(job_id: str, job: dict) -> None:
 
     identity = named["Verify checked-out source identity"]
     assert identity.get("id") == "source"
+    assert identity.get("shell") == "bash"
     assert identity.get("continue-on-error") is not True
     assert "if" not in identity
     command = str(identity.get("run", ""))
@@ -75,6 +76,7 @@ def _assert_exact_source_job(job_id: str, job: dict) -> None:
     assert "safe.directory '*'" not in command
     assert SOURCE_VERIFIER in command
     assert '--expected "$expected"' in command
+    assert '--repo "$GITHUB_WORKSPACE"' in command
     assert '--github-output "$GITHUB_OUTPUT"' in command
     assert "$(" not in command
     for swallowed in FAILURE_SWALLOWING:
@@ -229,6 +231,13 @@ def test_contract_rejects_merge_ref_reordering_unverified_artifacts_and_swallowi
     identity = _named_steps(missing_verifier)["Verify checked-out source identity"]
     identity["run"] = identity["run"].replace(SOURCE_VERIFIER, "python -c 'pass'")
     mutations.append(missing_verifier)
+
+    relative_verifier = copy.deepcopy(base)
+    identity = _named_steps(relative_verifier)["Verify checked-out source identity"]
+    identity["run"] = identity["run"].replace(
+        SOURCE_VERIFIER, "python -I scripts/verify_ci_source.py"
+    )
+    mutations.append(relative_verifier)
 
     for mutated in mutations:
         with pytest.raises((AssertionError, KeyError)):
