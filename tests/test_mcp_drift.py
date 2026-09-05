@@ -161,14 +161,14 @@ for effect in ("execute", "delete", "share", "export"):
     assert "effect_escalated" in drift["types"]
 print("  OK")
 
-print("Test 10: metadata source downgrade is high risk ...")
+print("Test 10: metadata source downgrade is visible but monitored ...")
 new_metadata = {
     **BASE_METADATA,
     "verification_level": "heuristic",
 }
 drift = classify(BASE_TOOL, new_metadata)
-assert drift["severity"] == "high"
-assert drift["action"] == "deny"
+assert drift["severity"] == "moderate"
+assert drift["action"] == "monitor"
 assert "metadata_downgraded" in drift["types"]
 print("  OK")
 
@@ -244,7 +244,7 @@ assert drift["action"] == "deny"
 assert "constraint_relaxed" in drift["types"]
 print("  OK")
 
-print("Test 15: nested required and type changes are detected ...")
+print("Test 15: nested contract tightening and type changes are monitored ...")
 prev_tool = {
     **BASE_TOOL,
     "inputSchema": {
@@ -272,8 +272,8 @@ new_tool = {
     },
 }
 drift = classify_tool_drift(prev_tool, new_tool, BASE_METADATA, BASE_METADATA)
-assert drift["severity"] == "high"
-assert drift["action"] == "deny"
+assert drift["severity"] == "moderate"
+assert drift["action"] == "monitor"
 assert "param_type_changed" in drift["types"]
 assert "required_field_added" in drift["types"]
 print("  OK")

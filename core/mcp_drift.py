@@ -213,6 +213,24 @@ VERIFICATION_RANK = {
     "interlock_meta": 4,
 }
 
+# Exact input-parameter names whose addition creates a caller-selectable
+# delegation or impersonation surface. This is deliberately a closed set, not
+# a substring or natural-language heuristic: related prose and names merely
+# containing "delegate" or "impersonate" do not establish authority expansion.
+AUTHORITY_EXPANDING_INPUT_FIELDS = {
+    "delegated_user_id",
+    "impersonate_user",
+    "impersonated_user_id",
+    "on_behalf_of",
+}
+
+# A newly introduced required boolean with one of these exact names is a
+# safety-positive confirmation gate. Names that merely contain "confirm" and
+# non-boolean fields do not receive this narrow downgrade.
+SAFETY_CONFIRMATION_INPUT_FIELDS = {
+    "confirmation",
+}
+
 
 def classify_tool_drift(
     previous_tool: dict,
@@ -291,12 +309,37 @@ def classify_tool_drift(
     curr_required = _schema_required(current_tool)
     added_required = sorted((curr_required - prev_required) - renamed_new)
     removed_required = sorted((prev_required - curr_required) - renamed_old)
-    if added_required:
+    newly_added_fields = set(effective_added)
+    curr_types = _schema_field_types(current_tool)
+    required_by_severity: Dict[str, List[str]] = {
+        "minor": [],
+        "moderate": [],
+        "high": [],
+    }
+    for field in added_required:
+        if field in newly_added_fields:
+            severity = (
+                "minor" if _is_safety_confirmation_field(field, curr_types) else "high"
+            )
+        elif _is_sensitive_field(field) or _is_authority_expanding_field(field):
+            severity = "high"
+        else:
+            severity = "moderate"
+        required_by_severity[severity].append(field)
+    for required_severity, fields in required_by_severity.items():
+        if not fields:
+            continue
+        if required_severity == "minor":
+            reason = f"Safety confirmation fields added and required: {fields}."
+        elif required_severity == "moderate":
+            reason = f"Existing optional schema fields became required: {fields}."
+        else:
+            reason = f"Required schema fields added or tightened: {fields}."
         findings.append(
             _finding(
                 "required_field_added",
-                "high",
-                f"Required schema fields added: {added_required}.",
+                required_severity,
+                reason,
             )
         )
     if removed_required:
@@ -310,7 +353,6 @@ def classify_tool_drift(
         )
 
     prev_types = _schema_field_types(previous_tool)
-    curr_types = _schema_field_types(current_tool)
     type_changed = sorted(
         field
         for field in (prev_types.keys() & curr_types.keys())
@@ -337,6 +379,18 @@ def classify_tool_drift(
                 "sensitive_field_added",
                 "high",
                 f"Sensitive schema fields added: {sensitive_added}.",
+            )
+        )
+
+    authority_added = [
+        field for field in effective_added if _is_authority_expanding_field(field)
+    ]
+    if authority_added:
+        findings.append(
+            _finding(
+                "authority_parameter_added",
+                "high",
+                f"Authority-expanding input parameters added: {authority_added}.",
             )
         )
 
@@ -468,7 +522,7 @@ def classify_tool_drift(
         findings.append(
             _finding(
                 "metadata_downgraded",
-                "high",
+                "moderate",
                 f"Metadata verification downgraded from {prev_verification} to {curr_verification}.",
             )
         )
@@ -866,6 +920,27 @@ def _constraint_widenings(
 def _is_sensitive_field(field: str) -> bool:
     normalized = field.lower().replace("-", "_")
     return any(token in normalized for token in SENSITIVE_FIELD_TOKENS)
+
+
+def _input_field_leaf(field: str) -> Optional[str]:
+    normalized = str(field or "").lower().replace("-", "_")
+    if not normalized.startswith("input."):
+        return None
+    return normalized.rsplit(".", 1)[-1]
+
+
+def _is_authority_expanding_field(field: str) -> bool:
+    leaf = _input_field_leaf(field)
+    return leaf in AUTHORITY_EXPANDING_INPUT_FIELDS if leaf else False
+
+
+def _is_safety_confirmation_field(field: str, current_types: Dict[str, str]) -> bool:
+    leaf = _input_field_leaf(field)
+    return bool(
+        leaf
+        and leaf in SAFETY_CONFIRMATION_INPUT_FIELDS
+        and current_types.get(field) == "boolean"
+    )
 
 
 def _is_high_risk_scope(scope: str) -> bool:

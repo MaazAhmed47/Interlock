@@ -41,8 +41,10 @@ CLI = ROOT / "scripts" / "generate_detection_quality_evidence.py"
 EXPECTED_GAPS = {
     "DQV1-GAP-FN1",
     "DQV1-GAP-FN5-UNCORROBORATED",
-    "DQV1-GAP-FN7",
     "DQV1-GAP-FN10",
+}
+RESOLVED_LEGACY_CASE_IDS = {
+    "DQV1-GAP-FN7",
     "DQV1-GAP-FP2",
     "DQV1-GAP-HM1",
     "DQV1-GAP-HM3",
@@ -173,26 +175,26 @@ def test_scoring_math_and_denominators_are_explicit(
     metrics = report.aggregate_metrics
     assert metrics.evaluated_case_count == 16
     assert metrics.total_corpus_case_count == 16
-    assert metrics.confirmed_true_positives == 4
-    assert metrics.confirmed_false_positives == 3
-    assert metrics.confirmed_true_negatives == 2
-    assert metrics.confirmed_false_negatives_or_known_misses == 4
+    assert metrics.confirmed_true_positives == 5
+    assert metrics.confirmed_false_positives == 0
+    assert metrics.confirmed_true_negatives == 5
+    assert metrics.confirmed_false_negatives_or_known_misses == 3
     assert metrics.corpus_bound_precision.model_dump() == {
-        "numerator": 4,
-        "denominator": 7,
-        "value": 0.571429,
+        "numerator": 5,
+        "denominator": 5,
+        "value": 1.0,
         "qualification": "corpus-bound",
     }
     assert metrics.corpus_bound_recall.model_dump() == {
-        "numerator": 4,
+        "numerator": 5,
         "denominator": 8,
-        "value": 0.5,
+        "value": 0.625,
         "qualification": "corpus-bound",
     }
     assert metrics.corpus_bound_false_positive_rate.model_dump() == {
-        "numerator": 3,
+        "numerator": 0,
         "denominator": 5,
-        "value": 0.6,
+        "value": 0.0,
         "qualification": "corpus-bound",
     }
 
@@ -237,15 +239,16 @@ def test_every_documented_unresolved_gap_is_visible_and_linked(
     assert "DQV1-RESOLVED-FN2" not in blind_spots
     assert "DQV1-RESOLVED-FN5" in markdown
     assert "DQV1-RESOLVED-FN5" not in blind_spots
+    assert RESOLVED_LEGACY_CASE_IDS.isdisjoint(blind_spots)
+    assert all(case_id in markdown for case_id in RESOLVED_LEGACY_CASE_IDS)
 
 
-def test_every_confusion_class_is_explicit_in_json_and_markdown(
+def test_present_confusion_classes_are_explicit_in_json_and_markdown(
     corpus: Corpus, report: EvidenceReport
 ) -> None:
     current_classes = {case.confusion_class for case in report.cases}
     assert current_classes == {
         "true_positive",
-        "false_positive",
         "true_negative",
         "false_negative",
         "inconclusive",
@@ -592,7 +595,7 @@ def test_unsafe_values_never_reach_generated_json_or_markdown(corpus: Corpus) ->
 def test_blind_spot_references_are_stable_test_identifiers(corpus: Corpus) -> None:
     """Every unresolved blind spot must carry a reformat-proof reference."""
     blind_spots = [case for case in corpus.cases if case.known_blind_spot]
-    assert len(blind_spots) == 7
+    assert len(blind_spots) == 3
     for case in blind_spots:
         assert TEST_IDENTIFIER_PATTERN.fullmatch(case.source_ref), case.case_id
         assert case.source_url.startswith("https://github.com/"), case.case_id
